@@ -12,10 +12,30 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: DB_TYPE
-        value: sqlite
+        value: postgres
+      - key: DB_HOST
+        fromDatabase:
+          name: accounting-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: accounting-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: accounting-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: accounting-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: accounting-db
+          property: password
       - key: PYTHON_VERSION
         value: "3.12.0"
-    disk:
-      name: accounting-data
-      mountPath: /opt/render/project/src
-      sizeGB: 1
+
+databases:
+  - name: accounting-db
+    plan: free
