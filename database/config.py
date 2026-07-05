@@ -14,6 +14,19 @@ DB_NAME = os.getenv("DB_NAME", "accounting_unified")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 
+# Single-variable configuration (e.g. Render's DATABASE_URL). Overrides the
+# individual DB_* settings above when present.
+_database_url = os.getenv("DATABASE_URL")
+if _database_url:
+    from urllib.parse import urlparse
+    _parsed = urlparse(_database_url)
+    DB_TYPE = "postgres"
+    DB_HOST = _parsed.hostname or DB_HOST
+    DB_PORT = str(_parsed.port or 5432)
+    DB_NAME = (_parsed.path or "/").lstrip("/") or DB_NAME
+    DB_USER = _parsed.username or DB_USER
+    DB_PASSWORD = _parsed.password or DB_PASSWORD
+
 # SQLite Fallback Path
 SQLITE_DB_PATH = os.path.join(os.path.abspath("."), "accounting_unified.db")
 DB_PATH = SQLITE_DB_PATH
