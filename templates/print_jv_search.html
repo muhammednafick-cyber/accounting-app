@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Print Voucher{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="card">
+        <div class="card-header">
+            <h2>Print Voucher</h2>
+        </div>
+        <div class="card-body">
+            <form action="{{ url_for('print_bp.print_jv') }}" method="GET" class="form-group">
+                <label for="voucher_number">Voucher Number:</label>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="voucher_number" name="voucher_number" class="form-control" placeholder="Enter Voucher Number (e.g., JV-00001)" required>
+                    <button type="submit" class="btn btn-primary">Print Preview</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Valuation{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Stock Valuation Report</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="as_of_date">As of Date:</label>
+            <input type="text" id="as_of_date" name="as_of_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+
+    <script>
+        function exportReport() {
+            const asOfDate = document.getElementById('as_of_date').value;
+            // Uses the same data as closing inventory
+            window.location.href = `/export_report/closing_inventory?as_of_date=${asOfDate}`;
+        }
+    </script>
+{% endblock %}

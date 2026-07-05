@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ voucher_type }} Register{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>{{ voucher_type }} Register</h1>
+    <form class="dashboard-section">
+        <input type="hidden" id="voucher_type" value="{{ voucher_type }}">
+        <div class="entry">
+            <label for="from_date">From Date:</label>
+            <input type="text" id="from_date" name="from_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <div class="entry">
+            <label for="to_date">To Date:</label>
+            <input type="text" id="to_date" name="to_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+
+    <script>
+        function exportReport() {
+            const voucherType = document.getElementById('voucher_type').value;
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            window.location.href = `/export_report/register?voucher_type=${encodeURIComponent(voucherType)}&from_date=${fromDate}&to_date=${toDate}`;
+        }
+        
+        // Auto-load if dates are not set (optional, maybe show current month)
+    </script>
+{% endblock %}

@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Inventory{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        .select2-container { width: 20% !important; } /* Set dropdown width */
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #d0d0d0; border-radius: 5px; }
+        button { 
+            padding: 10px 20px; 
+            background-color: #3498db; 
+            color: white; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            margin-right: 10px;
+        }
+        button:hover { background-color: #2980b9; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #d0d0d0; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        #inventoryMessage, #deleteInventoryMessage { margin-top: 10px; font-weight: bold; }
+
+        /* FIX for missing bottom border in Select2 dropdown */
+        .select2-container .select2-selection--single {
+            height: 38px !important; /* Adjust height */
+            border: 1px solid #d0d0d0 !important; /* Ensure full border */
+            border-radius: 5px !important;
+            display: flex;
+            align-items: center;
+        }
+        
+        /* Ensuring the bottom border appears */
+        .select2-selection {
+            border-bottom: 1px solid #d0d0d0 !important;
+        }
+
+        /* Import section styling from voucher.html */
+        .import-section {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px solid #e0e0e0;
+            background-color: #f9f9f9;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <h1>Manage Inventory</h1>
+
+    <h2>Add Inventory</h2>
+    <form id="addInventoryForm" class="dashboard-section" method="POST" action="/add_inventory">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="form-group">
+            <label for="item_code">Item Code:</label>
+            <input type="text" name="item_code" id="item_code" placeholder="Item Code" required>
+        </div>
+        <div class="form-group">
+            <label for="name">Item Name:</label>
+            <input type="text" name="name" id="name" placeholder="Item Name" required>
+        </div>
+        <div class="form-group">
+            <label for="stock_group_name">Group:</label>
+            <select name="stock_group_name" id="stock_group_name" class="select2" required>
+                <option value="">Select Group</option>
+                {% if inventory_groups %}
+                    {% for group in inventory_groups %}
+                        <option value="{{ group[1] }}">{{ group[1] }}</option>
+                    {% endfor %}
+                {% else %}
+                    <option disabled selected>No inventory groups available. Add a group first.</option>
+                {% endif %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="unit_price">Unit Price:</label>
+            <input type="number" name="unit_price" id="unit_price" placeholder="Unit Price" step="0.01" min="0" required>
+        </div>
+        <button type="submit">Add Inventory</button>
+        <button type="button" onclick="showImportSection()">Import</button>
+        <div id="importSection" class="import-section">
+            <input type="file" id="excelFile" accept=".xlsx" />
+            <button type="button" onclick="downloadTemplate()">Download Template</button>
+            <button type="button" onclick="importExcel()">Upload</button>
+        </div>
+    </form>
+    <div id="inventoryMessage"></div>
+
+    <h2>Delete Inventory</h2>
+    <form id="deleteInventoryForm" class="dashboard-section" method="POST" action="/delete_inventory">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <div class="form-group">
+            <label for="item_name">Item Name:</label>
+            <select name="item_name" id="item_name" class="select2" required>
+                <option value="">Select Item</option>
+                {% if inventory %}
+                    {% for item in inventory %}
+                        <option value="{{ item[1] }}">{{ item[1] }}</option>
+                    {% endfor %}
+                {% else %}
+                    <option disabled selected>No items available. Add an item first.</option>
+                {% endif %}
+            </select>
+        </div>
+        <button type="submit">Delete Inventory</button>
+    </form>
+    <div id="deleteInventoryMessage"></div>
+
+    <h2>Existing Inventory</h2>
+    <table id="inventoryTable">
+        <thead>
+            <tr>
+                <th>Item Code</th>
+                <th>Name</th>
+                <th>Group Code</th>
+                <th>Group Name</th>
+                <th>Unit Price</th>
+                <th>Stock Quantity</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if inventory %}
+                {% for item in inventory %}
+                <tr>
+                    <td>{{ item[0] }}</td>
+                    <td>{{ item[1] }}</td>
+                    <td>{{ item[2] }}</td>
+                    <td>{{ item[3] }}</td>
+                    <td>{{ item[4] }}</td>
+                    <td>{{ item[5] }}</td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="6">No inventory found.</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+    <button onclick="window.location.href='/export_inventory'">Export to Excel</button>
+
+    <script>
+        $(document).ready(function() {
+            // Apply Select2 to the dropdowns without allowClear
+            $('.select2').select2({
+                placeholder: "Select an option",
+                allowClear: false // Disable the clear (X) option
+            });
+
+            document.getElementById('addInventoryForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const formData = new FormData(this);
+                fetch('/add_inventory', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => {
+                            throw new Error(`HTTP ${response.status}: ${err.message || response.statusText}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const messageDiv = document.getElementById('inventoryMessage');
+                    messageDiv.textContent = data.message;
+                    messageDiv.style.color = data.success ? '#2ecc71' : '#e74c3c';
+                    if (data.success) {
+                        this.reset();
+                        setTimeout(() => location.reload(), 1000);
+                    }
+                })
+                .catch(error => {
+                    const messageDiv = document.getElementById('inventoryMessage');
+                    messageDiv.textContent = 'Error: ' + error.message;
+                    messageDiv.style.color = '#e74c3c';
+                });
+            });
+
+            document.getElementById('deleteInventoryForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const formData = new FormData(this);
+                fetch('/delete_inventory', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => {
+                            throw new Error(`HTTP ${response.status}: ${err.message || response.statusText}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const messageDiv = document.getElementById('deleteInventoryMessage');
+                    messageDiv.textContent = data.message;
+                    messageDiv.style.color = data.success ? '#2ecc71' : '#e74c3c';
+                    if (data.success) {
+                        setTimeout(() => location.reload(), 1000);
+                    }
+                })
+                .catch(error => {
+                    const messageDiv = document.getElementById('deleteInventoryMessage');
+                    messageDiv.textContent = 'Error: ' + error.message;
+                    messageDiv.style.color = '#e74c3c';
+                });
+            });
+        });
+
+        function showImportSection() {
+            document.getElementById('importSection').style.display = 'block';
+            console.log("Showed import section"); // Debug
+        }
+
+        function downloadTemplate() {
+            window.location.href = '/download_inventory_template';
+            console.log("Downloading inventory template"); // Debug
+        }
+
+        function importExcel() {
+            const fileInput = document.getElementById('excelFile');
+            const file = fileInput.files[0];
+            if (!file) {
+                alert('Please select an Excel file.');
+                console.log("No file selected for import"); // Debug
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+                console.log("Excel data:", jsonData); // Debug
+
+                const inventoryData = jsonData.map(row => ({
+                    item_code: row['Item Code'],
+                    item_name: row['Item Name'],
+                    group_name: row['Group Name'],
+                    unit_price: row['Unit Price']
+                }));
+
+                console.log("Converted JSON:", JSON.stringify(inventoryData)); // Debug
+
+                $.ajax({
+                    url: '/queue_inventory_import',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        file_name: file.name,
+                        json_data: JSON.stringify(inventoryData)
+                    }),
+                    success: function(response) {
+                        $('#inventoryMessage').text(response.message).css('color', response.success ? '#2ecc71' : '#e74c3c');
+                        console.log("Import response:", response); // Debug
+                        if (response.success) {
+                            fileInput.value = '';
+                            document.getElementById('importSection').style.display = 'none';
+                            setTimeout(() => location.reload(), 1000);
+                        }
+                    },
+                    error: function(xhr) {
+                        $('#inventoryMessage').text('Error importing inventory: ' + xhr.responseText).css('color', '#e74c3c');
+                        console.error("Import error:", xhr.responseText); // Debug
+                    }
+                });
+            };
+            reader.readAsArrayBuffer(file);
+            console.log(`Started reading file: ${file.name}`); // Debug
+        }
+    </script>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}VAT Summary{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>VAT Summary</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="from_date">From Date:</label>
+            <input type="text" id="from_date" name="from_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <div class="entry">
+            <label for="to_date">To Date:</label>
+            <input type="text" id="to_date" name="to_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="fetchSummary()">Show Summary</button>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+    
+    <div id="vatResult" style="margin-top: 20px;">
+        <table class="table-bordered">
+            <tr>
+                <td><strong>Output VAT (Sales)</strong></td>
+                <td id="outputVat">0.00</td>
+            </tr>
+            <tr>
+                <td><strong>Input VAT (Purchase)</strong></td>
+                <td id="inputVat">0.00</td>
+            </tr>
+            <tr>
+                <td><strong>Net VAT Payable / (Refundable)</strong></td>
+                <td id="netVat">0.00</td>
+            </tr>
+        </table>
+    </div>
+
+    <script>
+        function fetchSummary() {
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            
+            fetch(`/get_vat_summary?from_date=${fromDate}&to_date=${toDate}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('outputVat').innerText = parseFloat(data.summary.output_vat).toFixed(2);
+                    document.getElementById('inputVat').innerText = parseFloat(data.summary.input_vat).toFixed(2);
+                    document.getElementById('netVat').innerText = parseFloat(data.summary.net_vat).toFixed(2);
+                });
+        }
+        function exportReport() {
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            window.location.href = `/export_report/vat_summary?from_date=${fromDate}&to_date=${toDate}`;
+        }
+    </script>
+{% endblock %}

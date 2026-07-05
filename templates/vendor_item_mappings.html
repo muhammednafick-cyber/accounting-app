@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block title %}Vendor Item Mappings{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-8">
+            <h2><i class="bi bi-arrow-left-right"></i> Vendor Item Mappings</h2>
+            <p class="text-muted">Map vendor item names (from invoices) to your application's item names.</p>
+        </div>
+        <div class="col-4 text-end">
+            <a href="{{ url_for('master_bp.download_vendor_mapping_template') }}" class="btn btn-outline-secondary">
+                <i class="bi bi-download"></i> Download Template
+            </a>
+            <button class="btn btn-success" onclick="document.getElementById('importFile').click()">
+                <i class="bi bi-upload"></i> Import Excel
+            </button>
+            <input type="file" id="importFile" accept=".xlsx,.xls" hidden onchange="handleImport(this)">
+        </div>
+    </div>
+
+    <!-- Add New Mapping Form -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5><i class="bi bi-plus-circle"></i> Add New Mapping</h5>
+        </div>
+        <div class="card-body">
+            <form id="addMappingForm" method="POST" action="{{ url_for('master_bp.add_vendor_mapping') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="vendor_name" class="form-label">Vendor Name</label>
+                        <input type="text" class="form-control" id="vendor_name" name="vendor_name"
+                            placeholder="e.g., ABC Suppliers" required list="vendorList">
+                        <datalist id="vendorList">
+                            {% for v in vendors %}
+                            <option value="{{ v }}">
+                                {% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="vendor_item_name" class="form-label">Vendor Item Name</label>
+                        <input type="text" class="form-control" id="vendor_item_name" name="vendor_item_name"
+                            placeholder="Item name as on invoice" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="app_item_code" class="form-label">App Item Name</label>
+                        <input type="text" class="form-control" id="app_item_code" name="app_item_code"
+                            placeholder="Your item name" required list="itemList">
+                        <datalist id="itemList">
+                            {% for item in items %}
+                            <option value="{{ item.item_name }}">
+                                {% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-plus"></i> Add Mapping
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Filter by Vendor</label>
+                    <select id="filterVendor" class="form-select" onchange="filterMappings()">
+                        <option value="">All Vendors</option>
+                        {% for v in vendors %}
+                        <option value="{{ v }}" {% if selected_vendor==v %}selected{% endif %}>{{ v }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Search</label>
+                    <input type="text" id="searchInput" class="form-control" placeholder="Search mappings..."
+                        onkeyup="searchMappings()">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mappings Table -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5><i class="bi bi-table"></i> Existing Mappings ({{ mappings|length }})</h5>
+        </div>
+        <div class="card-body">
+            {% if mappings %}
+            <div class="table-responsive">
+                <table class="table table-striped table-hover" id="mappingsTable">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Vendor Name</th>
+                            <th>Vendor Item Name</th>
+                            <th>App Item Name</th>
+                            <th style="width: 100px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for m in mappings %}
+                        <tr>
+                            <td>{{ m.vendor }}</td>
+                            <td>{{ m.vendor_item }}</td>
+                            <td>{{ m.app_item }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('master_bp.delete_vendor_mapping') }}"
+                                    style="display: inline;" onsubmit="return confirm('Delete this mapping?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    <input type="hidden" name="vendor_name" value="{{ m.vendor }}">
+                                    <input type="hidden" name="vendor_item_name" value="{{ m.vendor_item }}">
+                                    <button type="submit" class="btn btn-sm btn-danger" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> No mappings found. Add your first mapping above or import from Excel.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+    function filterMappings() {
+        const vendor = document.getElementById('filterVendor').value;
+        if (vendor) {
+            window.location.href = `{{ url_for('master_bp.vendor_item_mappings') }}?vendor=${encodeURIComponent(vendor)}`;
+        } else {
+            window.location.href = `{{ url_for('master_bp.vendor_item_mappings') }}`;
+        }
+    }
+
+    function searchMappings() {
+        const input = document.getElementById('searchInput').value.toLowerCase();
+        const table = document.getElementById('mappingsTable');
+        if (!table) return;
+        const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+
+        for (let row of rows) {
+            const cells = row.getElementsByTagName('td');
+            let found = false;
+            for (let cell of cells) {
+                if (cell.textContent.toLowerCase().includes(input)) {
+                    found = true;
+                    break;
+                }
+            }
+            row.style.display = found ? '' : 'none';
+        }
+    }
+
+    async function handleImport(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        try {
+            const data = await file.arrayBuffer();
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+            if (!jsonData || jsonData.length === 0) {
+                alert('No data found in the Excel file.');
+                return;
+            }
+
+            // Send to server
+            const response = await fetch('{{ url_for("master_bp.import_vendor_mappings") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: jsonData })
+            });
+
+            const result = await response.json();
+            alert(result.message);
+
+            if (result.success) {
+                window.location.reload();
+            }
+        } catch (err) {
+            alert('Error importing file: ' + err.message);
+        }
+
+        input.value = '';
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,482 @@
+{% extends "base.html" %}
+
+{% block title %}Chart of Accounts{% endblock %}
+
+{% block extra_head %}
+<style>
+    .coa-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+        padding: 12px 16px;
+        background: var(--card-bg, #fff);
+        border: 1px solid var(--border-color, #dee2e6);
+        border-radius: 6px;
+    }
+    .coa-toolbar label { font-size: 0.85rem; font-weight: 500; margin-bottom: 0; }
+    .coa-toolbar input[type="text"] {
+        width: 130px;
+        padding: 4px 8px;
+        font-size: 0.85rem;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+    }
+    .coa-toolbar .btn { padding: 5px 14px; font-size: 0.85rem; }
+    .coa-toolbar .expand-btns { margin-left: auto; display: flex; gap: 6px; }
+
+    .coa-table-wrap { overflow-x: auto; }
+    .coa-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+    }
+    .coa-table thead th {
+        background: #2563ab;
+        color: #fff;
+        border-bottom: 2px solid #1a4a8a;
+        padding: 8px 12px;
+        text-align: left;
+        font-weight: 600;
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+    .coa-table thead th.num { text-align: right; }
+
+    .coa-table tbody tr { border-bottom: 1px solid #edf0f4; transition: background 0.1s; }
+    .coa-table tbody tr:hover { background: #f0f5ff; }
+
+    .coa-table td { padding: 6px 12px; vertical-align: middle; }
+    .coa-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* Hierarchy levels */
+    .row-nature   { background: #1a3c6e; color: #fff; font-weight: 700; }
+    .row-nature td { padding: 7px 12px; }
+    .row-nature:hover { background: #1a3c6e !important; }
+
+    .row-mastergroup { background: #e8eef8; font-weight: 600; color: #1a3c6e; }
+    .row-mastergroup td { padding: 6px 12px; }
+
+    .row-group { background: #f3f6fb; font-weight: 600; color: #2563ab; }
+    .row-subgroup { background: #fff; font-weight: 500; color: #16a085; }
+    .row-ledger   { background: #fff; color: #333; }
+
+    .indent-1 { padding-left: 28px !important; }
+    .indent-2 { padding-left: 44px !important; }
+    .indent-3 { padding-left: 60px !important; }
+    .indent-4 { padding-left: 76px !important; }
+
+    .toggle-icon {
+        display: inline-block;
+        width: 18px;
+        cursor: pointer;
+        user-select: none;
+        color: #555;
+        font-size: 0.75rem;
+        margin-right: 4px;
+    }
+    .toggle-icon.leaf { cursor: default; color: transparent; }
+
+    .amount-link {
+        color: #0563c1;
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .amount-link:hover { text-decoration: underline; }
+
+    .positive { color: #1a6633; }
+    .negative { color: #a00; }
+
+    .coa-table tfoot td {
+        font-weight: 700;
+        border-top: 2px solid #cdd8e8;
+        background: #f3f6fb;
+        padding: 7px 12px;
+    }
+    #outOfBalance {
+        display: none;
+        margin-top: 8px;
+        padding: 6px 14px;
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 4px;
+        font-size: 0.82rem;
+        color: #7a5c00;
+    }
+
+    .loading-overlay {
+        display: none;
+        position: fixed; inset: 0;
+        background: rgba(255,255,255,0.6);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+    }
+    .loading-overlay.show { display: flex; }
+    .spinner-border { width: 2.5rem; height: 2.5rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner-border text-primary" role="status"></div>
+</div>
+
+<div class="d-flex align-items-center mb-3 gap-3">
+    <h2 class="mb-0" style="font-size:1.4rem;">Chart of Accounts</h2>
+</div>
+
+<!-- Toolbar -->
+<div class="coa-toolbar">
+    <label>From Date</label>
+    <input type="text" id="fromDate" placeholder="DD-MM-YYYY" readonly>
+    <label>To Date</label>
+    <input type="text" id="toDate" placeholder="DD-MM-YYYY" readonly>
+    <button class="btn btn-primary" onclick="loadBalances()">Apply</button>
+    <button class="btn btn-outline-secondary" onclick="clearDates()">Clear</button>
+    <button class="btn btn-outline-success" onclick="exportToExcel()">
+        <i class="bi bi-file-earmark-excel"></i> Export to Excel
+    </button>
+    <div class="expand-btns">
+        <button class="btn btn-outline-secondary btn-sm" onclick="expandAll()">Expand All</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="collapseAll()">Collapse All</button>
+    </div>
+</div>
+
+<!-- Table -->
+<div class="coa-table-wrap">
+    <table class="coa-table" id="coaTable">
+        <thead>
+            <tr>
+                <th style="min-width:360px;">Account / Name</th>
+                <th class="num" style="min-width:150px;">Net Change</th>
+                <th class="num" style="min-width:150px;">Balance at Date</th>
+            </tr>
+        </thead>
+        <tbody id="coaBody">
+            <!-- Populated by JS -->
+        </tbody>
+        <tfoot>
+            <tr>
+                <td>Total</td>
+                <td class="num" id="footNetChange">—</td>
+                <td class="num" id="footBalance">—</td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+
+<div id="outOfBalance">
+    ⚠ Out of balance — Difference: Net Change <span id="oobNC"></span> | Balance <span id="oobBal"></span>
+</div>
+
+<script>
+// ── Data from server ──────────────────────────────────────────────
+const COA_TREE = {{ chart | tojson }};
+
+// ── State ─────────────────────────────────────────────────────────
+let balances = {};           // ledger_name → {net_change, balance}
+let collapsed = new Set();   // rowKeys that are collapsed
+
+// ── Flatpickr date pickers ─────────────────────────────────────────
+flatpickr("#fromDate", { dateFormat: "d-m-Y", allowInput: true });
+flatpickr("#toDate",   { dateFormat: "d-m-Y", allowInput: true });
+
+// ── Helpers ────────────────────────────────────────────────────────
+function fmt(val) {
+    if (val === null || val === undefined) return '';
+    const n = parseFloat(val);
+    if (isNaN(n)) return '';
+    const abs = Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    return n < 0 ? `(${abs})` : abs;
+}
+function fmtClass(val) {
+    const n = parseFloat(val);
+    if (isNaN(n) || n === 0) return '';
+    return n < 0 ? 'negative' : 'positive';
+}
+function toISODate(ddmmyyyy) {
+    if (!ddmmyyyy) return null;
+    const parts = ddmmyyyy.split('-');
+    if (parts.length !== 3) return null;
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+}
+
+// ── Sum balances for a list of ledger names ─────────────────────────
+function sumLedgers(ledgerList) {
+    let nc = 0, bal = 0;
+    for (const l of ledgerList) {
+        const b = balances[l.ledger_name];
+        if (b) { nc += b.net_change || 0; bal += b.balance || 0; }
+    }
+    return { nc, bal };
+}
+
+// ── Aggregate grand total from full API response (includes orphan __diff__) ──
+function aggregateAll() {
+    let totalNC = 0, totalBal = 0;
+    for (const b of Object.values(balances)) {
+        totalNC  += b.net_change || 0;
+        totalBal += b.balance    || 0;
+    }
+    return { totalNC, totalBal };
+}
+
+// ── Build row HTML ─────────────────────────────────────────────────
+function makeRow(key, indentClass, rowClass, label, nc, bal, hasChildren, ledgerName) {
+    const icon = hasChildren
+        ? `<span class="toggle-icon" onclick="toggleRow('${CSS.escape(key)}')" id="icon_${key.replace(/[^a-z0-9]/gi,'_')}">▼</span>`
+        : `<span class="toggle-icon leaf">·</span>`;
+
+    const ncFmt  = fmt(nc);
+    const balFmt = fmt(bal);
+
+    const ncCell = ncFmt
+        ? (ledgerName
+            ? `<a class="amount-link ${fmtClass(nc)}" onclick="openLedger('${encodeURIComponent(ledgerName)}')">${ncFmt}</a>`
+            : `<span class="${fmtClass(nc)}">${ncFmt}</span>`)
+        : '';
+    const balCell = balFmt
+        ? (ledgerName
+            ? `<a class="amount-link ${fmtClass(bal)}" onclick="openLedger('${encodeURIComponent(ledgerName)}')">${balFmt}</a>`
+            : `<span class="${fmtClass(bal)}">${balFmt}</span>`)
+        : '';
+
+    return `<tr class="${rowClass}" data-key="${key}" data-parent="">
+        <td class="${indentClass}">${icon}${label}</td>
+        <td class="num">${ncCell}</td>
+        <td class="num">${balCell}</td>
+    </tr>`;
+}
+
+// ── Render the full table ──────────────────────────────────────────
+function renderTable() {
+    let html = '';
+    for (const [nature, masterGroups] of Object.entries(COA_TREE)) {
+        const natKey = `nat_${nature}`;
+        let natNC = 0, natBal = 0;
+
+        // Pre-aggregate
+        for (const [mgName, mgData] of Object.entries(masterGroups)) {
+            for (const [gName, gData] of Object.entries(mgData.groups)) {
+                const dl = sumLedgers(gData.direct_ledgers || []);
+                natNC += dl.nc; natBal += dl.bal;
+                for (const [sgName, sgData] of Object.entries(gData.sub_groups || {})) {
+                    const sl = sumLedgers(sgData.ledgers || []);
+                    natNC += sl.nc; natBal += sl.bal;
+                }
+            }
+        }
+
+        html += makeRow(natKey, '', 'row-nature', nature, natNC, natBal, Object.keys(masterGroups).length > 0, null);
+
+        if (collapsed.has(natKey)) continue;
+
+        for (const [mgName, mgData] of Object.entries(masterGroups)) {
+            const mgKey = `mg_${nature}_${mgName}`;
+            let mgNC = 0, mgBal = 0;
+            for (const [gName, gData] of Object.entries(mgData.groups)) {
+                const dl = sumLedgers(gData.direct_ledgers || []);
+                mgNC += dl.nc; mgBal += dl.bal;
+                for (const [sgName, sgData] of Object.entries(gData.sub_groups || {})) {
+                    const sl = sumLedgers(sgData.ledgers || []);
+                    mgNC += sl.nc; mgBal += sl.bal;
+                }
+            }
+
+            html += makeRow(mgKey, 'indent-1', 'row-mastergroup', mgName, mgNC, mgBal, Object.keys(mgData.groups).length > 0, null);
+
+            if (collapsed.has(mgKey)) continue;
+
+            for (const [gName, gData] of Object.entries(mgData.groups)) {
+                const gKey = `g_${nature}_${mgName}_${gName}`;
+                const directSum = sumLedgers(gData.direct_ledgers || []);
+                let gNC = directSum.nc, gBal = directSum.bal;
+                for (const [sgName, sgData] of Object.entries(gData.sub_groups || {})) {
+                    const sl = sumLedgers(sgData.ledgers || []);
+                    gNC += sl.nc; gBal += sl.bal;
+                }
+
+                const hasChildren = Object.keys(gData.sub_groups || {}).length > 0 || (gData.direct_ledgers || []).length > 0;
+                html += makeRow(gKey, 'indent-2', 'row-group', gName, gNC, gBal, hasChildren, null);
+
+                if (collapsed.has(gKey)) continue;
+
+                // Sub groups
+                for (const [sgName, sgData] of Object.entries(gData.sub_groups || {})) {
+                    const sgKey = `sg_${nature}_${mgName}_${gName}_${sgName}`;
+                    const sl = sumLedgers(sgData.ledgers || []);
+                    html += makeRow(sgKey, 'indent-3', 'row-subgroup', sgName, sl.nc, sl.bal, (sgData.ledgers || []).length > 0, null);
+
+                    if (collapsed.has(sgKey)) continue;
+
+                    for (const l of (sgData.ledgers || [])) {
+                        const b = balances[l.ledger_name] || {};
+                        const lKey = `l_${l.ledger_name}`;
+                        html += makeRow(lKey, 'indent-4', 'row-ledger', l.ledger_name, b.net_change, b.balance, false, l.ledger_name);
+                    }
+                }
+
+                // Direct ledgers
+                for (const l of (gData.direct_ledgers || [])) {
+                    const b = balances[l.ledger_name] || {};
+                    const lKey = `l_${l.ledger_name}`;
+                    html += makeRow(lKey, 'indent-3', 'row-ledger', l.ledger_name, b.net_change, b.balance, false, l.ledger_name);
+                }
+            }
+        }
+    }
+    document.getElementById('coaBody').innerHTML = html;
+
+    const { totalNC, totalBal } = aggregateAll();
+
+    // Grand total must always be 0 in a balanced double-entry system
+    document.getElementById('footNetChange').innerHTML = '0.00';
+    document.getElementById('footBalance').innerHTML   = '0.00';
+
+    // Show out-of-balance warning if computed total deviates from zero
+    const oob = document.getElementById('outOfBalance');
+    const threshold = 0.01;
+    if (Math.abs(totalNC) > threshold || Math.abs(totalBal) > threshold) {
+        document.getElementById('oobNC').textContent  = fmt(totalNC)  || '0.00';
+        document.getElementById('oobBal').textContent = fmt(totalBal) || '0.00';
+        oob.style.display = 'block';
+    } else {
+        oob.style.display = 'none';
+    }
+}
+
+// ── Toggle collapse ────────────────────────────────────────────────
+function toggleRow(key) {
+    if (collapsed.has(key)) collapsed.delete(key);
+    else collapsed.add(key);
+    renderTable();
+}
+
+function expandAll()   { collapsed.clear(); renderTable(); }
+function collapseAll() {
+    for (const [nature, mgs] of Object.entries(COA_TREE)) {
+        collapsed.add(`nat_${nature}`);
+    }
+    renderTable();
+}
+
+// ── Open ledger entries ────────────────────────────────────────────
+function openLedger(encodedName) {
+    const name = decodeURIComponent(encodedName);
+    const from = toISODate(document.getElementById('fromDate').value);
+    const to   = toISODate(document.getElementById('toDate').value);
+    let url = `/report/ledger-transactions?ledger=${encodeURIComponent(name)}`;
+    if (from) url += `&from_date=${from}`;
+    if (to)   url += `&to_date=${to}`;
+    window.open(url, '_blank');
+}
+
+// ── Load balances from API ─────────────────────────────────────────
+function loadBalances() {
+    const from = toISODate(document.getElementById('fromDate').value);
+    const to   = toISODate(document.getElementById('toDate').value);
+    let url = '/api/coa-balances';
+    const params = [];
+    if (from) params.push(`from_date=${from}`);
+    if (to)   params.push(`to_date=${to}`);
+    if (params.length) url += '?' + params.join('&');
+
+    document.getElementById('loadingOverlay').classList.add('show');
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            balances = data;
+            renderTable();
+        })
+        .catch(e => console.error('COA balances error:', e))
+        .finally(() => document.getElementById('loadingOverlay').classList.remove('show'));
+}
+
+function clearDates() {
+    document.getElementById('fromDate')._flatpickr.clear();
+    document.getElementById('toDate')._flatpickr.clear();
+    loadBalances();
+}
+
+// ── Export to Excel ────────────────────────────────────────────────
+function exportToExcel() {
+    const rows = [['Account / Name', 'Net Change', 'Balance at Date']];
+
+    function collectRows(masterGroups, nature) {
+        rows.push([nature, '', '']);
+        for (const [mgName, mgData] of Object.entries(masterGroups)) {
+            let mgNC = 0, mgBal = 0;
+            for (const [gName, gData] of Object.entries(mgData.groups)) {
+                const dl = sumLedgers(gData.direct_ledgers || []);
+                mgNC += dl.nc; mgBal += dl.bal;
+                for (const sgData of Object.values(gData.sub_groups || {})) {
+                    const sl = sumLedgers(sgData.ledgers || []);
+                    mgNC += sl.nc; mgBal += sl.bal;
+                }
+            }
+            rows.push(['  ' + mgName, mgNC || '', mgBal || '']);
+
+            for (const [gName, gData] of Object.entries(mgData.groups)) {
+                const directSum = sumLedgers(gData.direct_ledgers || []);
+                let gNC = directSum.nc, gBal = directSum.bal;
+                for (const sgData of Object.values(gData.sub_groups || {})) {
+                    const sl = sumLedgers(sgData.ledgers || []);
+                    gNC += sl.nc; gBal += sl.bal;
+                }
+                rows.push(['    ' + gName, gNC || '', gBal || '']);
+
+                for (const [sgName, sgData] of Object.entries(gData.sub_groups || {})) {
+                    const sl = sumLedgers(sgData.ledgers || []);
+                    rows.push(['      ' + sgName, sl.nc || '', sl.bal || '']);
+                    for (const l of (sgData.ledgers || [])) {
+                        const b = balances[l.ledger_name] || {};
+                        rows.push(['        ' + l.ledger_name, b.net_change || 0, b.balance || 0]);
+                    }
+                }
+                for (const l of (gData.direct_ledgers || [])) {
+                    const b = balances[l.ledger_name] || {};
+                    rows.push(['      ' + l.ledger_name, b.net_change || 0, b.balance || 0]);
+                }
+            }
+        }
+    }
+
+    for (const [nature, masterGroups] of Object.entries(COA_TREE)) {
+        collectRows(masterGroups, nature);
+    }
+    rows.push(['Total', 0, 0]);
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // Column widths
+    ws['!cols'] = [{ wch: 50 }, { wch: 18 }, { wch: 18 }];
+
+    // Number format for amount columns
+    for (let r = 1; r < rows.length; r++) {
+        ['B', 'C'].forEach(col => {
+            const cell = ws[col + (r + 1)];
+            if (cell && typeof cell.v === 'number') {
+                cell.t = 'n';
+                cell.z = '#,##0.00;(#,##0.00)';
+            }
+        });
+    }
+
+    const fromVal = document.getElementById('fromDate').value;
+    const toVal   = document.getElementById('toDate').value;
+    const period  = (fromVal || toVal) ? `_${fromVal || 'start'}_to_${toVal || 'today'}` : '';
+    const fileName = `Chart_of_Accounts${period}.xlsx`;
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Chart of Accounts');
+    XLSX.writeFile(wb, fileName);
+}
+
+// ── Initial load ───────────────────────────────────────────────────
+loadBalances();
+</script>
+{% endblock %}

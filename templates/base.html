@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}Accounting App{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260705_1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='overlay.css') }}">
+    <!-- Global Dependencies -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    {% block extra_head %}{% endblock %}
+</head>
+
+<body>
+    <!-- Global Overlay -->
+    <div id="uploadOverlay">
+        <div class="spinner"></div>
+        <div class="message">Uploading in progress...</div>
+        <div class="sub-message">Please wait. Do not close or refresh this tab.<br>You can open a new tab to continue
+            working.</div>
+    </div>
+
+    <nav class="navbar">
+        <div class="nav-brand">
+            <h1>📊 Accounting App</h1>
+            {% if session.get('company_name') %}
+            <span class="company-badge">{{ session.get('company_name') }}</span>
+            {% endif %}
+        </div>
+
+        {% if current_user.is_authenticated %}
+        <ul class="nav-menu">
+            <li><a href="{{ url_for('dashboard_bp.dashboard') }}">Dashboard</a></li>
+
+            {% if can_access('accounting_master') %}
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">Accounting Master</a>
+                <ul class="dropdown-menu">
+                    {% if can_access('accounting_master.chart_of_accounts') %}
+                    <li><a href="{{ url_for('master_bp.chart_of_accounts') }}">Chart of Accounts</a></li>
+                    {% endif %}
+                    {% if can_access('accounting_master.groups') %}
+                    <li><a href="{{ url_for('master_bp.manage_groups') }}">Manage Groups</a></li>
+                    {% endif %}
+                    {% if can_access('accounting_master.sub_groups') %}
+                    <li><a href="{{ url_for('master_bp.manage_sub_groups') }}">Manage Sub Groups</a></li>
+                    {% endif %}
+                    {% if can_access('accounting_master.ledgers') %}
+                    <li><a href="{{ url_for('master_bp.manage_ledgers') }}">Manage Ledgers</a></li>
+                    {% endif %}
+                    {% if can_access('accounting_master.credit_terms') %}
+                    <li><a href="{{ url_for('master_bp.manage_credit_terms') }}">Manage Credit Terms</a></li>
+                    {% endif %}
+                    {% if can_access('accounting_master.cost_centers') %}
+                    <li><a href="{{ url_for('master_bp.manage_cost_centers') }}">Manage Cost Centers</a></li>
+                    {% endif %}
+                </ul>
+            </li>
+            {% endif %}
+
+            {% if can_access('modules') %}
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">Modules</a>
+                <ul class="dropdown-menu">
+                    <!-- Fixed Assets Submenu -->
+                    {% if can_access('modules.fixed_assets') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Fixed Assets</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('fixed_asset_bp.assets') }}">Asset Register</a></li>
+                            <li><a href="{{ url_for('fixed_asset_bp.add_asset') }}">New Asset</a></li>
+                            <li><a href="{{ url_for('fixed_asset_bp.run_depreciation') }}">Run Depreciation</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+
+                    <!-- Recurring Entries Submenu -->
+                    {% if can_access('modules.recurring') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Recurring</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('recurring_bp.templates') }}">Templates</a></li>
+                            <li><a href="{{ url_for('recurring_bp.add_template') }}">New Template</a></li>
+                            <li><a href="{{ url_for('recurring_bp.process_entries') }}">Process Due Entries</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+
+                    {% if can_access('modules.settlement') %}
+                    <li>
+                        <a href="{{ url_for('settlement_bp.index') }}">Settlement / Matching</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </li>
+            {% endif %}
+
+            {% if company and company.inventory_applicable == 1 and can_access('inventory_master') %}
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">Inventory Master</a>
+                <ul class="dropdown-menu">
+                    {% if can_access('inventory_master.inventory_groups') %}
+                    <li><a href="{{ url_for('master_bp.manage_inventory_groups') }}">Manage Inventory Groups</a></li>
+                    {% endif %}
+                    {% if can_access('inventory_master.inventory') %}
+                    <li><a href="{{ url_for('master_bp.manage_inventory') }}">Manage Inventory</a></li>
+                    {% endif %}
+                    {% if can_access('inventory_master.vendor_item_mappings') %}
+                    <li><a href="{{ url_for('master_bp.vendor_item_mappings') }}">Vendor Item Mappings</a></li>
+                    {% endif %}
+                </ul>
+            </li>
+            {% endif %}
+
+            {% if can_access('vouchers') %}
+            <li><a href="{{ url_for('voucher_bp.vouchers') }}">Vouchers</a></li>
+            {% endif %}
+
+            {% if can_access('reports') %}
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">Reports</a>
+                <ul class="dropdown-menu">
+                    {% if can_access('reports.all_reports') %}
+                    <li><a href="{{ url_for('report_bp.report_all') }}" style="font-weight:600;">📋 All Reports</a></li>
+                    <li><hr style="margin:4px 0;border-color:#e0e7f0;"></li>
+                    {% endif %}
+
+                    <!-- Financial Statements Submenu -->
+                    {% if can_access('reports.financial_statements') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Financial Statements</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('report_bp.report_balance_sheet') }}">Balance Sheet</a></li>
+                            <li><a href="{{ url_for('report_bp.report_profit_and_loss') }}">Profit and Loss</a></li>
+                            <li><a href="{{ url_for('report_bp.report_trial_balance') }}">Trial Balance</a></li>
+                            <li><a href="{{ url_for('report_bp.report_cash_flow') }}">Cash Flow Statement</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+
+                    <!-- Registers Submenu -->
+                    {% if can_access('reports.registers') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Registers</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('report_bp.report_daybook') }}">Daybook</a></li>
+                            {% if company and company.inventory_applicable == 1 %}
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Sales') }}">Sales
+                                    Register</a></li>
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Purchase') }}">Purchase
+                                    Register</a></li>
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Sales Return') }}">Sales
+                                    Return Register</a></li>
+                            {% endif %}
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Contra') }}">Contra
+                                    Register</a></li>
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Payment') }}">Payment
+                                    Register</a></li>
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Receipt') }}">Receipt
+                                    Register</a></li>
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Journal') }}">Journal
+                                    Register</a></li>
+                        </ul>
+                    </li>
+
+                    {% endif %}
+
+                    <!-- Summaries Submenu -->
+                    {% if company and company.inventory_applicable == 1 and can_access('reports.summaries') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Summaries</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('report_bp.report_sales_summary') }}">Sales Summary</a></li>
+                            <li><a href="{{ url_for('report_bp.report_purchase_summary') }}">Purchase Summary</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+
+                    <!-- Ledger Books Submenu -->
+                    {% if can_access('reports.ledger_books') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Ledger Books</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('report_bp.report_ledger_transactions') }}">General Ledger</a></li>
+                            <li><a href="{{ url_for('report_bp.report_customer_ledger') }}">Customer Ledger</a></li>
+                            <li><a href="{{ url_for('report_bp.report_supplier_ledger') }}">Supplier Ledger</a></li>
+                            <li><a href="{{ url_for('report_bp.report_bank_book') }}">Bank Book</a></li>
+                            <li><a href="{{ url_for('report_bp.report_cash_book') }}">Cash Book</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+
+                    <!-- Inventory Reports Submenu -->
+                    {% if company and company.inventory_applicable == 1 and can_access('reports.inventory_reports') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Inventory Reports</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('report_bp.report_stock_summary') }}">Stock Summary</a></li>
+                            <li><a href="{{ url_for('report_bp.report_stock_valuation') }}">Stock Valuation</a></li>
+                            <li><a href="{{ url_for('report_bp.report_stock_movement') }}">Stock Movement</a></li>
+                            <li><a href="{{ url_for('report_bp.report_closing_inventory') }}">Closing Inventory</a></li>
+                            <li><a href="{{ url_for('report_bp.report_slow_moving') }}">Slow/Non-Moving Stock</a></li>
+                            <li><a href="{{ url_for('report_bp.report_negative_stock') }}">Negative Stock</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+
+                    <!-- VAT Reports Submenu -->
+                    {% if can_access('reports.vat_reports') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">VAT Reports</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('report_bp.report_vat_summary') }}">VAT Summary</a></li>
+                            <li><a href="{{ url_for('report_bp.report_vat_detailed') }}">VAT Detailed</a></li>
+                            <li><a href="{{ url_for('report_bp.report_vat_expense') }}">Expense VAT</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+
+                    <!-- Other Submenu -->
+                    {% if can_access('reports.other') %}
+                    <li class="dropdown-submenu">
+                        <a href="#" class="dropdown-toggle">Other</a>
+                        <ul class="dropdown-menu">
+                            <li><a href="{{ url_for('report_bp.report_ageing') }}">Ageing Report</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+                </ul>
+            </li>
+            {% endif %}
+
+            {% if can_access('print') %}
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">Print</a>
+                <ul class="dropdown-menu">
+                    {% if can_access('print.jv_print') %}
+                    <li><a href="{{ url_for('print_bp.print_jv') }}">JV print</a></li>
+                    {% endif %}
+                </ul>
+            </li>
+            {% endif %}
+
+            {% if can_access('import_queue') %}
+            <li><a href="{{ url_for('import_bp.import_queue') }}">Import Queue</a></li>
+            {% endif %}
+
+            {% if can_access('setup') %}
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">Setup</a>
+                <ul class="dropdown-menu">
+                    {% if can_access('setup.company_settings') %}
+                    <li><a href="{{ url_for('company_bp.company_settings') }}">Company Settings</a></li>
+                    {% endif %}
+                    {% if can_access('setup.financial_years') %}
+                    <li><a href="{{ url_for('financial_year_bp.manage_financial_years') }}">Manage Financial Years</a>
+                    </li>
+                    {% endif %}
+                    {% if can_access('setup.voucher_config') %}
+                    <li><a href="{{ url_for('admin_config_bp.voucher_config_page') }}">Voucher Configuration</a></li>
+                    {% endif %}
+                    {% if can_access('setup.user_management') %}
+                    <li><a href="{{ url_for('auth_bp.admin') }}">User Management</a></li>
+                    {% endif %}
+                </ul>
+            </li>
+            {% endif %}
+
+            {% if current_user.is_admin %}
+            <li class="dropdown">
+                <a href="#" class="dropdown-toggle">Admin</a>
+                <ul class="dropdown-menu">
+                    <li><a href="{{ url_for('ai_settings_bp.ai_settings') }}">AI Settings</a></li>
+                    <li><a href="{{ url_for('auth_bp.admin_management') }}">Admin Management</a></li>
+                </ul>
+            </li>
+            {% endif %}
+
+            <li><a href="{{ url_for('auth_bp.logout') }}" class="logout-btn">Logout ({{ current_user.username }})</a>
+            </li>
+        </ul>
+        {% else %}
+        <ul class="nav-menu">
+            <li><a href="{{ url_for('company_bp.company_gateway') }}">Select Company</a></li>
+            <li><a href="{{ url_for('auth_bp.signin') }}">Sign In</a></li>
+        </ul>
+        {% endif %}
+    </nav>
+
+    <main class="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    {% if current_user.is_authenticated and session.get('company_id') %}
+    <button id="globalChatFab" class="global-chat-fab" type="button" aria-label="Open assistant"
+        onclick="if(window.openGlobalChat) window.openGlobalChat(); else { document.getElementById('globalChatOverlay').hidden = false; document.getElementById('globalChatOverlay').removeAttribute('hidden'); }">
+        <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor"
+                d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm4 7a1 1 0 1 0 0 2a1 1 0 0 0 0-2Zm4 0a1 1 0 1 0 0 2a1 1 0 0 0 0-2Zm4 0a1 1 0 1 0 0 2a1 1 0 0 0 0-2Z" />
+        </svg>
+    </button>
+
+    <div id="globalChatOverlay" class="global-chat-overlay" hidden>
+        <div id="globalChatWindow" class="global-chat-window" role="dialog" aria-modal="true" aria-label="Assistant">
+            <div class="global-chat-header">
+                <div class="global-chat-header-left">
+                    <div class="global-chat-title">Voucher Assistant</div>
+                    <select id="globalChatVoucherType" class="global-chat-select" aria-label="Select voucher type">
+                        <option value="" selected>General Chat</option>
+                        <option disabled>── Vouchers ──</option>
+                        <option value="receipt">Receipt</option>
+                        <option value="payment">Payment</option>
+                        <option value="contra">Contra</option>
+                        <option value="expense">Expense</option>
+                        <option value="sales">Sales</option>
+                        <option value="purchase">Purchase</option>
+                        <option value="service_income">Service Income</option>
+                    </select>
+                </div>
+                <button id="globalChatClose" type="button" class="global-chat-close" aria-label="Close assistant"
+                    onclick="if(window.closeGlobalChat) window.closeGlobalChat(); else { document.getElementById('globalChatOverlay').hidden = true; document.getElementById('globalChatOverlay').setAttribute('hidden', ''); document.getElementById('globalChatOverlay').style.removeProperty('display'); }">
+                    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path fill="currentColor"
+                            d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12z" />
+                    </svg>
+                </button>
+            </div>
+            <div class="rv-drafts-meta">
+                Drafts: <span id="vaDraftCount">0</span>
+                <span id="vaChatStatus" style="margin-left: 10px;"></span>
+            </div>
+            <div class="rv-chat">
+                <div id="vaChatMessages" class="rv-chat-messages"></div>
+                <div id="vaChatQuick" class="rv-chat-quick"></div>
+                <div id="vaChatLedgerPicker" class="rv-chat-picker" hidden>
+                    <input id="vaChatLedgerSelect" class="rv-chat-picker-select" type="text" list="vaChatLedgerOptions"
+                        autocomplete="off" placeholder="Select ledger..." aria-label="Select ledger" />
+                    <datalist id="vaChatLedgerOptions"></datalist>
+                    <button id="vaChatLedgerPickBtn" type="button" class="btn btn-secondary">Select</button>
+                </div>
+                <!-- File input for Chatbot Import -->
+                <input type="file" id="vaChatFileInput" accept=".xlsx" hidden />
+                <!-- File input for AI Invoice Processing (PDF/Image) -->
+                <input type="file" id="vaAIInvoiceInput" accept=".pdf,.jpg,.jpeg,.png" hidden />
+                <div class="rv-chat-input-bar">
+                    <button id="vaChatMicBtn" type="button" class="btn" title="Speak"
+                        style="margin-right: 5px;">🎤</button>
+                    <input id="vaChatInput" type="text" autocomplete="off"
+                        placeholder="Example: received 5000 from ABC by cash today" />
+                    <button id="vaChatSendBtn" type="button" class="btn">Send</button>
+                </div>
+                <div class="rv-chat-actions">
+                    <button id="vaChatNewBtn" type="button" class="btn btn-secondary">New</button>
+                    <button id="vaChatSubmitBtn" type="button" class="btn btn-secondary">Submit</button>
+                    <button id="vaChatShowDraftsBtn" type="button" class="btn btn-secondary">Drafts</button>
+                    <button id="vaChatAddAllBtn" type="button" class="btn btn-primary">Add All Vouchers</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <footer class="footer">
+        <p>&copy; 2025 Accounting App. All rights reserved.</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=20260127_7"></script>
+</body>
+
+</html>

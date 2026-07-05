@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Movement{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<h1>Stock Movement</h1>
+<form class="dashboard-section">
+    <div class="entry">
+        <label for="item_name">Item:</label>
+        <select id="item_name" name="item_name" class="select2 input-standard-width" data-placeholder="Select Item"
+            required>
+            <option></option>
+            {% for item in items %}
+            <option value="{{ item.name }}">{{ item.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="entry">
+        <label for="stock_from_date">From Date:</label>
+        <input type="text" id="stock_from_date" name="stock_from_date" class="input-standard-width"
+            placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+    </div>
+    <div class="entry">
+        <label for="stock_to_date">To Date:</label>
+        <input type="text" id="stock_to_date" name="stock_to_date" class="input-standard-width" placeholder="DD-MM-YYYY"
+            pattern="\d{2}-\d{2}-\d{4}">
+    </div>
+    <button type="button" class="btn btn-info" onclick="exportStockMovement()">Export to Excel</button>
+</form>
+
+<script>
+    $(document).ready(function () {
+        $('.select2').select2({
+            allowClear: true,
+            placeholder: function () {
+                return $(this).data('placeholder');
+            }
+        });
+    });
+
+    function exportStockMovement() {
+        const itemName = document.getElementById('item_name').value;
+        const fromDate = document.getElementById('stock_from_date').value;
+        const toDate = document.getElementById('stock_to_date').value;
+        if (!itemName) {
+            alert('Please select an item.');
+            return;
+        }
+        window.location.href = `/export_report/stock_movement?item_name=${encodeURIComponent(itemName)}&from_date=${fromDate}&to_date=${toDate}`;
+    }
+</script>
+{% endblock %}

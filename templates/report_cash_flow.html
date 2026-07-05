@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Cash Flow Statement{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Cash Flow Statement</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="from_date">From Date:</label>
+            <input type="text" id="from_date" name="from_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <div class="entry">
+            <label for="to_date">To Date:</label>
+            <input type="text" id="to_date" name="to_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="fetchReport()">Show Report</button>
+        <button type="button" class="btn btn-primary" id="exportButton" onclick="exportCashFlow()">Export to Excel</button>
+    </form>
+    
+    <table id="reportTable" class="table-bordered" style="width: 100%; margin-top: 20px;">
+        <thead>
+            <tr>
+                <th>Particulars</th>
+                <th style="text-align: right;">Amount</th>
+            </tr>
+        </thead>
+        <tbody id="reportBody"></tbody>
+    </table>
+
+    <script>
+        function fetchReport() {
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            
+            fetch(`/get_cash_flow?from_date=${fromDate}&to_date=${toDate}`)
+                .then(response => response.json())
+                .then(data => {
+                    const cf = data.cash_flow;
+                    const tbody = document.getElementById('reportBody');
+                    tbody.innerHTML = '';
+                    
+                    function addRow(label, amount, bold=false, indent=false) {
+                        const row = document.createElement('tr');
+                        const style = bold ? 'font-weight: bold;' : '';
+                        const padding = indent ? 'padding-left: 20px;' : '';
+                        
+                        row.innerHTML = `
+                            <td style="${style} ${padding}">${label}</td>
+                            <td style="text-align: right; ${style}">${parseFloat(amount).toFixed(2)}</td>
+                        `;
+                        tbody.appendChild(row);
+                    }
+                    
+                    addRow('Cash Flow from Operating Activities', cf.operating, true);
+                    addRow('Net Profit before Tax', cf.details.net_profit, false, true);
+                    
+                    if (Math.abs(cf.details.depreciation) > 0.001) {
+                        addRow('Add: Depreciation', cf.details.depreciation, false, true);
+                    }
+                    
+                    addRow('Operating Profit before WC Changes', cf.details.operating_profit, true, true);
+                    
+                    if (Math.abs(cf.details.inventory_change) > 0.001) addRow('(Increase)/Decrease in Inventory', cf.details.inventory_change, false, true);
+                    if (Math.abs(cf.details.receivables_change) > 0.001) addRow('(Increase)/Decrease in Receivables', cf.details.receivables_change, false, true);
+                    if (Math.abs(cf.details.other_assets_change) > 0.001) addRow('(Increase)/Decrease in Other Assets', cf.details.other_assets_change, false, true);
+                    if (Math.abs(cf.details.payables_change) > 0.001) addRow('Increase/(Decrease) in Payables', cf.details.payables_change, false, true);
+                    if (Math.abs(cf.details.other_liabilities_change) > 0.001) addRow('Increase/(Decrease) in Other Liabilities', cf.details.other_liabilities_change, false, true);
+                    
+                    addRow('Cash Flow from Investing Activities', cf.investing, true);
+                    addRow('Purchase/Sale of Fixed Assets', cf.details.fixed_assets_change, false, true);
+                    
+                    addRow('Cash Flow from Financing Activities', cf.financing, true);
+                    addRow('Changes in Capital/Loans', cf.details.financing_change, false, true);
+                    
+                    addRow('Net Increase/Decrease in Cash', cf.net_change, true);
+
+                    addRow('Opening Cash & Cash Equivalents', cf.opening_balance, true);
+                    addRow('Closing Cash & Cash Equivalents', cf.closing_balance, true);
+                });
+        }
+        function exportCashFlow() {
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            window.location.href = `/export_report/cash_flow?from_date=${fromDate}&to_date=${toDate}`;
+        }
+    </script>
+{% endblock %}

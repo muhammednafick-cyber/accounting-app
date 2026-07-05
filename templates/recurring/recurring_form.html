@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="card">
+                <div class="card-header">
+                    <h3>New Recurring Template</h3>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Template Name</label>
+                                <input type="text" class="form-control" name="template_name" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Voucher Type</label>
+                                <select class="form-select" name="voucher_type" required>
+                                    <option value="Journal">Journal</option>
+                                    <option value="Expense">Expense</option>
+                                    <option value="Receipt">Receipt</option>
+                                    <option value="Payment">Payment</option>
+                                    <option value="Contra">Contra</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Frequency</label>
+                                <select class="form-select" name="frequency" required>
+                                    <option value="Monthly">Monthly</option>
+                                    <option value="Weekly">Weekly</option>
+                                    <option value="Daily">Daily</option>
+                                    <option value="Yearly">Yearly</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Next Due Date</label>
+                                <input type="date" class="form-control" name="next_due_date" required>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Narration</label>
+                            <input type="text" class="form-control" name="narration">
+                        </div>
+
+                        <h4 class="mt-4">Ledger Entries</h4>
+                        <table class="table table-bordered" id="ledgerTable">
+                            <thead>
+                                <tr>
+                                    <th>Ledger</th>
+                                    <th>Amount</th>
+                                    <th>Type</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ledgerTableBody">
+                                <tr>
+                                    <td>
+                                        <input type="text" class="form-control" name="ledger_name[]" list="ledgerList"
+                                            required placeholder="Search Ledger...">
+                                    </td>
+                                    <td>
+                                        <input type="number" step="0.01" class="form-control" name="ledger_amount[]"
+                                            required>
+                                    </td>
+                                    <td>
+                                        <select class="form-select" name="ledger_type[]">
+                                            <option value="Debit">Debit</option>
+                                            <option value="Credit">Credit</option>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <button type="button" class="btn btn-danger btn-sm"
+                                            onclick="removeRow(this)">X</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <button type="button" class="btn btn-secondary btn-sm mb-3" onclick="addRow()">+ Add
+                            Row</button>
+
+                        <datalist id="ledgerList">
+                            {% for ledger in ledgers %}
+                            <option value="{{ ledger.ledger_name }}">
+                                {{ ledger.ledger_name }}
+                            </option>
+                            {% endfor %}
+                        </datalist>
+
+                        <div class="d-flex justify-content-end gap-2">
+                            <a href="{{ url_for('recurring_bp.templates') }}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary">Save Template</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function addRow() {
+        const tbody = document.getElementById('ledgerTableBody');
+        const row = tbody.rows[0].cloneNode(true);
+        // Clear inputs
+        const inputs = row.querySelectorAll('input');
+        inputs.forEach(input => input.value = '');
+        tbody.appendChild(row);
+    }
+    function removeRow(btn) {
+        const tbody = document.getElementById('ledgerTableBody');
+        if (tbody.rows.length > 1) {
+            btn.closest('tr').remove();
+        }
+    }
+</script>
+{% endblock %}

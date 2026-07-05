@@ -1,0 +1,652 @@
+{% extends "base.html" %}
+
+{% block title %}Settlement / Allocation{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    .settlement-container {
+        display: flex;
+        gap: 20px;
+        margin-top: 20px;
+    }
+
+    .panel {
+        flex: 1;
+        border: 1px solid #ddd;
+        padding: 15px;
+        border-radius: 5px;
+        background: #f9f9f9;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .panel h3 {
+        margin-top: 0;
+    }
+
+    .entry-list {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        background: #fff;
+        flex-grow: 1;
+    }
+
+    .entry-item {
+        padding: 8px;
+        border-bottom: 1px solid #eee;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .entry-item:hover {
+        background-color: #eef;
+    }
+
+    .entry-item.selected {
+        background-color: #d1e7dd;
+    }
+
+    .entry-info {
+        flex: 1;
+        overflow: hidden;
+    }
+
+    .entry-amount-col {
+        width: 120px;
+        text-align: right;
+        padding-right: 10px;
+    }
+
+    .entry-type-col {
+        width: 60px;
+        text-align: center;
+        font-weight: bold;
+    }
+
+    .list-header {
+        display: flex;
+        padding: 8px;
+        background: #eee;
+        border-bottom: 1px solid #ccc;
+        font-weight: bold;
+        font-size: 0.9em;
+    }
+
+    .entry-details {
+        font-size: 0.9em;
+        color: #555;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .entry-amount {
+        font-weight: bold;
+    }
+
+    .dr {
+        color: red;
+    }
+
+    .cr {
+        color: green;
+    }
+
+    .controls {
+        margin-top: 20px;
+        padding: 15px;
+        border: 1px solid #ddd;
+        background: #fff;
+    }
+
+    .summary-box {
+        font-size: 1.2em;
+        margin-bottom: 10px;
+    }
+
+    /* Tabs */
+    .nav-tabs .nav-link {
+        cursor: pointer;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2>Settlement / Matching</h2>
+
+    <!-- Checks for Flash Messages -->
+    <div id="flash-messages"></div>
+
+    <div class="row mb-3">
+        <label class="col-sm-2 col-form-label">Select Ledger:</label>
+        <div class="col-sm-4">
+            <select id="ledger_select" class="form-control select2">
+                <option></option>
+                {% for l in ledgers %}
+                <option value="{{ l.ledger_name }}">{{ l.ledger_name }}</option>
+                {% endfor %}
+            </select>
+            <div class="mt-2">
+                <strong>Current Balance: </strong> <span id="current_balance_display" class="text-primary">-</span>
+            </div>
+        </div>
+        <div class="col-sm-2">
+            <button class="btn btn-primary" onclick="loadOpenEntries()">Load Entries</button>
+        </div>
+    </div>
+
+    <ul class="nav nav-tabs" id="myTab" role="tablist">
+        <li class="nav-item">
+            <a class="nav-link active" id="match-tab" data-bs-toggle="tab" data-bs-target="#match"
+                role="tab">Match/Settle</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history" role="tab"
+                onclick="loadHistory()">History</a>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="myTabContent">
+        <!-- Match Tab -->
+        <div class="tab-pane fade show active" id="match" role="tabpanel">
+            <div class="settlement-container">
+                <!-- Left: Open Entries -->
+                <div class="panel">
+                    <h3>Open Entries</h3>
+                    <div class="list-header">
+                        <div style="flex:1">Details</div>
+                        <div style="width:120px; text-align:right; padding-right:10px;">Amount</div>
+                        <div style="width:60px; text-align:center;">Type</div>
+                    </div>
+                    <div class="entry-list" id="open_entries_list">
+                        <!-- Populated by JS -->
+                        <div style="padding:10px; color:#777;">Select a ledger to view entries.</div>
+                    </div>
+                </div>
+
+                <!-- Right: Selected to Match -->
+                <div class="panel">
+                    <h3>Selected to Match</h3>
+                    <div class="list-header">
+                        <div style="flex:1">Details</div>
+                        <div style="width:120px; text-align:right; padding-right:10px;">Amount</div>
+                        <div style="width:60px; text-align:center;">Type</div>
+                    </div>
+                    <div class="entry-list" id="selected_entries_list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="summary-box">
+                            <div>Total Debit: <span id="total_dr" class="dr">0.00</span></div>
+                            <div>Total Credit: <span id="total_cr" class="cr">0.00</span></div>
+                            <div>Difference: <span id="diff_amount">0.00</span></div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="auto_post_check"
+                                onchange="toggleAutoPost()">
+                            <label class="form-check-label" for="auto_post_check">Auto Post Difference</label>
+                        </div>
+                        <div id="auto_post_options" style="display:none;">
+                            <label>Post Difference To:</label>
+                            <select id="auto_post_ledger" class="form-control select2" style="width:100%;">
+                                <option></option>
+                                {% for l in expense_ledgers %}
+                                <option value="{{ l.ledger_name }}">{{ l.ledger_name }}</option>
+                                {% endfor %}
+                            </select>
+
+                            {% if company and company.cost_center_applicable %}
+                            <div class="mt-2" id="cost_center_div">
+                                <label>Cost Center <span class="text-danger">*</span>:</label>
+                                <select id="cost_center_select" class="form-control select2" style="width:100%;">
+                                    <option></option>
+                                    {% for cc in cost_centers %}
+                                    <option value="{{ cc.center_code }}">{{ cc.center_name }} ({{ cc.center_code }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="mt-3">
+                            <label>Description / Remarks:</label>
+                            <input type="text" id="description" class="form-control" placeholder="Optional description">
+                        </div>
+                        <div class="mt-3 text-end">
+                            <button class="btn btn-success btn-lg" onclick="submitMatch()">Settle / Match</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Tab -->
+        <div class="tab-pane fade" id="history" role="tabpanel">
+            <div class="mt-3">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Settlement No</th>
+                            <th>Date</th>
+                            <th>Amount</th>
+                            <th>Description</th>
+                            <th>Auto-Post Ref</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history_table_body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- View Details Modal -->
+<div class="modal fade" id="settlementDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Settlement Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm text-nowrap">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Voucher</th>
+                                <th class="text-center">Date</th>
+                                <th>Narration</th>
+                                <th class="text-end">Matched Amount</th>
+                                <th class="text-center">Type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="settlement_details_body">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-success" id="btnExport"
+                    onclick="exportSettlementDetails()">Export</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentLedger = '';
+    let openEntries = [];
+    let selectedEntries = [];
+    let allLedgers = []; // To be populated
+
+    // Pass config to JS
+    const COST_CENTER_APPLICABLE = {{ 1 if company and company.cost_center_applicable else 0 }};
+
+    $(document).ready(function () {
+        $('.select2').select2({ placeholder: "Select", allowClear: true });
+
+        // Fetch ledgers for dropdowns (Filtered for Settlement)
+        fetch('/api/master/get_ledgers?settlement_filter=true')
+            .then(res => res.json())
+            .then(data => {
+                // data is list of ledgers
+                allLedgers = data; // store globally
+                const opts = data.map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+                $('#ledger_select').html('<option></option>' + opts);
+            })
+            .catch(err => console.error("Error fetching ledgers", err));
+
+        // Fetch ledgers for Auto Post Dropdown (Income/Expenses)
+        fetch('/api/master/get_ledgers?auto_post_filter=true')
+            .then(res => res.json())
+            .then(data => {
+                const opts = data.map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+                $('#auto_post_ledger').html('<option></option>' + opts);
+            })
+            .catch(err => console.error("Error fetching auto-post ledgers", err));
+
+        // Fetch Cost Centers if applicable
+        if (COST_CENTER_APPLICABLE) {
+            fetch('/api/master/get_cost_centers')
+                .then(res => res.json())
+                .then(data => {
+                    // data is list of {center_code, center_name}
+                    const opts = data.map(c => `<option value="${c.center_code}">${c.center_name}</option>`).join('');
+                    $('#cost_center_select').html('<option></option>' + opts);
+                })
+                .catch(err => console.error("Error fetching cost centers", err));
+        }
+    });
+
+    function loadOpenEntries() {
+        const ledger = $('#ledger_select').val();
+        if (!ledger) {
+            alert("Please select a ledger");
+            return;
+        }
+        currentLedger = ledger;
+        $('#open_entries_list').html('<div style="padding:10px;">Loading...</div>');
+        $('#current_balance_display').text("Loading...");
+
+        fetch(`/api/settlements/open-entries/${encodeURIComponent(ledger)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) { alert(data.error); return; }
+
+                // Update Balance
+                if (data.closing_balance !== undefined) {
+                    const bal = parseFloat(data.closing_balance);
+                    const type = bal >= 0 ? "Dr" : "Cr"; // Usually stored as signed? 
+                    // Wait, logic says: closing_balance = opening_balance if 'Debit' else -opening_balance
+                    // So Debit is positive.
+                    // But in add_voucher: Debit increases (+), Credit decreases (-) for Assets? 
+                    // Let's assume standard: + is Debit, - is Credit.
+                    const absBal = Math.abs(bal).toFixed(2);
+                    const balType = bal >= 0 ? "Dr" : "Cr";
+                    $('#current_balance_display').text(`${absBal} ${balType}`);
+                }
+
+                openEntries = data.entries;
+                selectedEntries = []; // clear selection
+                renderLists();
+                loadHistory(); // also refresh history if tab is not active but just in case
+            })
+            .catch(err => {
+                $('#open_entries_list').html('<div style="padding:10px; color:red;">Error loading entries</div>');
+                $('#current_balance_display').text("-");
+                console.error(err);
+            });
+    }
+
+    function renderLists() {
+        // Open Entries
+        const openContainer = $('#open_entries_list');
+        openContainer.empty();
+
+        // Filter out selected from open
+        const available = openEntries.filter(e => !selectedEntries.find(s => s.id === e.id));
+
+        if (available.length === 0) openContainer.html('<div style="padding:10px;">No open entries.</div>');
+
+        available.forEach(e => {
+            const el = createEntryElement(e, false);
+            openContainer.append(el);
+        });
+
+        // Selected Entries
+        const selContainer = $('#selected_entries_list');
+        selContainer.empty();
+
+        if (selectedEntries.length === 0) selContainer.html('<div style="padding:10px;">No entries selected.</div>');
+
+        selectedEntries.forEach(e => {
+            const el = createEntryElement(e, true);
+            selContainer.append(el);
+        });
+
+        updateTotals();
+    }
+
+    function createEntryElement(entry, isSelected) {
+        const div = document.createElement('div');
+        div.className = 'entry-item' + (isSelected ? ' selected' : '');
+        div.onclick = () => toggleSelection(entry);
+
+        const typeClass = entry.type === 'Debit' ? 'dr' : 'cr';
+
+        let amountContent = '';
+        if (isSelected) {
+            // Input for partial
+            amountContent = `
+                <div onclick="event.stopPropagation()">
+                    <input type="number" class="form-control form-control-sm text-end" style="width:100%;" 
+                    value="${entry.assigned}" onchange="updateAssignedAmount(${entry.id}, this.value)">
+                </div>
+             `;
+        } else {
+            // For open entries, show remaining
+            // Ensure remaining is a number
+            const rem = parseFloat(entry.remaining).toFixed(2);
+            amountContent = `<span class="entry-amount ${typeClass}">${rem}</span>`;
+        }
+
+        div.innerHTML = `
+            <div class="entry-info">
+                <div><strong>${entry.date}</strong> - ${entry.voucher_type} #${entry.voucher_number}</div>
+                <div class="entry-details" title="${entry.narration || ''}">${entry.narration || ''}</div>
+            </div>
+            <div class="entry-amount-col">
+                ${amountContent}
+            </div>
+            <div class="entry-type-col ${typeClass}">
+                ${entry.type}
+            </div>
+        `;
+        return div;
+    }
+
+    function toggleSelection(entry) {
+        const idx = selectedEntries.findIndex(s => s.id === entry.id);
+        if (idx >= 0) {
+            // Deselect
+            selectedEntries.splice(idx, 1);
+        } else {
+            // Select (default to full remaining)
+            selectedEntries.push({ ...entry, assigned: entry.remaining });
+        }
+        renderLists();
+    }
+
+    function updateAssignedAmount(id, val) {
+        const item = selectedEntries.find(s => s.id === id);
+        if (item) {
+            let v = parseFloat(val);
+            if (isNaN(v) || v <= 0) v = 0;
+            if (v > item.remaining) {
+                alert(`Cannot assign more than remaining amount (${item.remaining})`);
+                v = item.remaining;
+            }
+            item.assigned = v;
+            updateTotals();
+        }
+    }
+
+    function updateTotals() {
+        let dr = 0, cr = 0;
+        selectedEntries.forEach(e => {
+            if (e.type === 'Debit') dr += e.assigned;
+            else cr += e.assigned;
+        });
+
+        $('#total_dr').text(dr.toFixed(2));
+        $('#total_cr').text(cr.toFixed(2));
+
+        const diff = dr - cr;
+        $('#diff_amount').text(diff.toFixed(2));
+        if (Math.abs(diff) > 0.009) {
+            $('#diff_amount').css('color', 'orange');
+        } else {
+            $('#diff_amount').css('color', 'black');
+        }
+
+    }
+
+    function toggleAutoPost() {
+        const checked = $('#auto_post_check').is(':checked');
+        $('#auto_post_options').toggle(checked);
+    }
+
+    function submitMatch() {
+        if (selectedEntries.length === 0) {
+            alert("No entries selected");
+            return;
+        }
+
+        const autoPost = $('#auto_post_check').is(':checked');
+        const autoLedger = $('#auto_post_ledger').val();
+        const costCenter = $('#cost_center_select').val();
+        const desc = $('#description').val();
+
+        if (autoPost) {
+            if (!autoLedger) {
+                alert("Please select an Adjustment Ledger for auto-posting.");
+                return;
+            }
+            if (COST_CENTER_APPLICABLE && !costCenter) {
+                alert("Please select a Cost Center.");
+                return;
+            }
+        }
+
+        const payload = {
+            ledger_name: currentLedger,
+            entries: selectedEntries.map(e => ({ id: e.id, assigned: e.assigned, type: e.type })),
+            auto_post: autoPost,
+            auto_post_ledger: autoLedger,
+            cost_center: costCenter,
+            description: desc
+        };
+
+        fetch('/api/settlements/match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) {
+                    alert("Error: " + data.error);
+                } else {
+                    alert("Match successful! Settlement #" + data.settlement_number);
+                    loadOpenEntries(); // Refresh
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert("Request failed");
+            });
+    }
+
+    function loadHistory() {
+        if (!currentLedger) return;
+        const tbody = $('#history_table_body');
+        tbody.html('<tr><td colspan="6">Loading...</td></tr>');
+
+        fetch(`/api/settlements/history/${encodeURIComponent(currentLedger)}`)
+            .then(res => res.json())
+            .then(data => {
+                tbody.empty();
+                if (data.length === 0) {
+                    tbody.html('<tr><td colspan="6">No settlement history.</td></tr>');
+                    return;
+                }
+
+                data.forEach(s => {
+                    const row = `
+                        <tr>
+                            <td>${s.settlement_number}</td>
+                            <td>${s.settlement_date}</td>
+                            <td>${s.total_amount.toFixed(2)}</td>
+                            <td>${s.description || ''}</td>
+                            <td>${s.auto_posted_voucher_number || '-'}</td>
+                            <td>
+                                <button class="btn btn-sm btn-info text-white" onclick="viewSettlementDetails(${s.id})">View</button>
+                                <button class="btn btn-sm btn-danger" onclick="unmatchSettlement(${s.id})">Unmatch / Reverse</button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.append(row);
+                });
+            })
+            .catch(err => {
+                tbody.html('<tr><td colspan="6">Error loading history</td></tr>');
+            });
+    }
+
+    function unmatchSettlement(id) {
+        if (!confirm("Are you sure you want to reverse this settlement? This action cannot be undone.")) return;
+        fetch(`/api/settlements/unmatch/${id}`, { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) alert(data.error);
+                else {
+                    alert("Settlement reversed.");
+                    loadHistory();
+                    loadOpenEntries(); // Refresh open entries too
+                }
+            });
+    }
+
+    function viewSettlementDetails(id) {
+        $('#settlement_details_body').html('<tr><td colspan="5">Loading...</td></tr>');
+        const modal = new bootstrap.Modal(document.getElementById('settlementDetailsModal'));
+
+        // Store ID for export
+        $('#btnExport').data('settlement-id', id);
+
+        modal.show();
+
+        fetch(`/api/settlements/${id}/details`)
+            .then(res => res.json())
+            .then(data => {
+                const tbody = $('#settlement_details_body');
+                tbody.empty();
+
+                if (data.error) {
+                    tbody.html(`<tr><td colspan="5" class="text-danger">${data.error}</td></tr>`);
+                    return;
+                }
+
+                data.forEach(d => {
+                    // Format Date to dd-mm-yyyy
+                    let dateDisplay = d.date;
+                    if (d.date) {
+                        const parts = d.date.split('-');
+                        if (parts.length === 3) {
+                            // Assuming YYYY-MM-DD from DB
+                            dateDisplay = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                        }
+                    }
+
+                    const tr = `
+                        <tr>
+                            <td>${d.voucher_type} #${d.voucher_number}</td>
+                            <td class="text-center">${dateDisplay}</td>
+                            <td>${d.narration || ''}</td>
+                            <td class="text-end">${d.assigned_amount.toFixed(2)}</td>
+                            <td class="text-center">${d.allocation_type}</td>
+                        </tr>
+                    `;
+                    tbody.append(tr);
+                });
+            })
+            .catch(err => {
+                console.error(err);
+                $('#settlement_details_body').html('<tr><td colspan="5" class="text-danger">Error loading details.</td></tr>');
+            });
+    }
+
+    function exportSettlementDetails() {
+        const id = $('#btnExport').data('settlement-id');
+        if (id) {
+            window.location.href = `/api/settlements/${id}/export`;
+        }
+    }
+</script>
+{% endblock %}

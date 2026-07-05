@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Import Queue{% endblock %}
+
+{% block content %}
+<h1>Import Queue</h1>
+
+<div id="uploadInstruction" style="display:none; background-color: #e8f4fd; padding: 15px; margin: 15px 0; border-left: 5px solid #2196f3; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <h3 style="margin: 0 0 5px 0; color: #0d47a1;">Processing Upload...</h3>
+    <p style="margin: 0; color: #333;">Please do not close this tab. <br>
+    <strong>Tip:</strong> You can open a <a href="/dashboard" target="_blank" style="font-weight:bold; color:#2196f3;">New Tab</a> to continue working on other tasks while this runs.</p>
+</div>
+
+<p>
+    <a href="/download_missing_ledgers">
+        <button type="button">Download Missing Ledgers</button>
+    </a>
+</p>
+
+<table border="1">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>File Name</th>
+            <th>Voucher Type</th>
+            <th>Validation Status</th>
+            <th>Upload Status</th>
+            <th>Missing Ledger</th>
+            <th>Failure Reason</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody id="queueTable">
+        {% for entry in queue %}
+        <tr data-id="{{ entry[0] }}">
+            <td>{{ entry[1] or 'N/A' }}</td>
+            <td>{{ entry[2] or 'N/A' }}</td>
+            <td>{{ entry[3] or 'N/A' }}</td>
+            <td>{{ entry[4] or 'N/A' }}</td>
+            <td>{{ entry[5] or 'N/A' }}</td>
+            <td>{{ entry[6] or '' }}</td>
+            <td>{{ entry[7] or '' }}</td>
+            <td>
+                <button onclick="deleteEntry('{{ entry[0] }}')">Delete</button>
+                {% if entry[4] != 'Failed' and entry[5] in ['In Progress', 'Failed'] %}
+                    <button onclick="uploadEntry('{{ entry[0] }}', this)">{{ 'Retry Upload' if entry[5] == 'Failed' else 'Upload' }}</button>
+                {% else %}
+                    <button disabled title="{{ 'Validation failed — fix the file and upload it again' if entry[4] == 'Failed' else '' }}">Upload</button>
+                {% endif %}
+                {% if entry[6] %}
+                    <a href="/download_missing_ledgers?id={{ entry[0] }}" target="_blank">
+                        <button type="button">Download Missing Ledgers</button>
+                    </a>
+                {% endif %}
+                {% if entry[8] %}
+                     <a href="/download_missing_items?id={{ entry[0] }}" target="_blank">
+                        <button type="button">Download Missing Items</button>
+                    </a>
+                {% endif %}
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="8">No entries in queue</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<script>
+function deleteEntry(id) {
+    if (confirm("Are you sure you want to delete this entry?")) {
+        fetch(`/delete_import/${id}`, {
+            method: "DELETE",
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log("Delete response for id", id, JSON.stringify(data));
+            if (data.success) {
+                const row = document.querySelector(`tr[data-id="${id}"]`);
+                if (row) row.remove();
+                alert(data.message);
+            } else {
+                alert("Error: " + data.message);
+            }
+        })
+        .catch(error => {
+            console.error("Error deleting id", id, error);
+            alert("Error: " + error);
+        });
+    }
+}
+
+function uploadEntry(id, btnElement) {
+    if (!confirm("Upload this queued import now?")) {
+        return;
+    }
+
+    // UI Feedback
+    const originalText = btnElement.innerText;
+    btnElement.innerText = "Processing...";
+    btnElement.disabled = true;
+    // Optional: Add a spinning cursor or class
+    document.body.style.cursor = 'wait';
+
+    // Block UI
+    if (typeof blockUI === 'function') {
+        blockUI("Processing Upload...");
+    }
+
+    // Show instruction
+    const instructionDiv = document.getElementById('uploadInstruction');
+    if (instructionDiv) instructionDiv.style.display = 'block';
+
+    fetch(`/upload_import/${id}`, {
+        method: "POST",
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.body.style.cursor = 'default';
+        if (typeof unblockUI === 'function') unblockUI();
+        
+        console.log("Upload response for id", id, JSON.stringify(data));
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert("Upload failed: " + data.message);
+            // Reset button state
+            btnElement.innerText = originalText;
+            btnElement.disabled = false;
+            if (instructionDiv) instructionDiv.style.display = 'none';
+        }
+    })
+    .catch(error => {
+        document.body.style.cursor = 'default';
+        if (typeof unblockUI === 'function') unblockUI();
+
+        console.error("Error uploading id", id, error);
+        alert("Error: " + error);
+        // Reset button state
+        btnElement.innerText = originalText;
+        btnElement.disabled = false;
+        if (instructionDiv) instructionDiv.style.display = 'none';
+    });
+}
+</script>
+
+{% endblock %}

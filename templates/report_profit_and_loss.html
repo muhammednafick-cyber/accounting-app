@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}Profit and Loss{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+    .pl-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-bottom: 20px; }
+    .pl-table thead th {
+        background: #2563ab; color: #fff; padding: 8px 12px;
+        text-align: left; font-weight: 600;
+    }
+    .pl-table thead th.num { text-align: right; }
+    .pl-table tbody tr { border-bottom: 1px solid #edf0f4; }
+    .pl-table tbody tr:hover { background: #f0f5ff; }
+    .pl-table td { padding: 6px 12px; }
+    .pl-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pl-total { font-weight: 700; text-align: right; padding: 8px 12px;
+                border-top: 2px solid #cdd8e8; background: #f3f6fb; margin-bottom: 20px; }
+    .section-title { font-size: 1rem; font-weight: 700; margin: 16px 0 8px; color: #1a3c6e; }
+    .net-profit { font-size: 1rem; font-weight: 700; padding: 10px 12px;
+                  background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 4px; margin-top: 8px; }
+    .net-loss   { font-size: 1rem; font-weight: 700; padding: 10px 12px;
+                  background: #fce4ec; border: 1px solid #f48fb1; border-radius: 4px; margin-top: 8px; }
+    .gl-link { color: #0563c1; cursor: pointer; text-decoration: none; }
+    .gl-link:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 style="font-size:1.4rem; margin-bottom:16px;">Profit and Loss Account</h2>
+<div class="dashboard-section d-flex align-items-center gap-3 flex-wrap">
+    <label style="font-size:.85rem;font-weight:500;">From</label>
+    <input type="text" id="from_date" placeholder="DD-MM-YYYY" style="width:140px;" readonly>
+    <label style="font-size:.85rem;font-weight:500;">To</label>
+    <input type="text" id="to_date" placeholder="DD-MM-YYYY" style="width:140px;" readonly>
+    <button class="btn btn-primary" onclick="fetchProfitAndLoss()">Generate</button>
+    <button class="btn btn-outline-success" onclick="exportProfitAndLoss()">Export to Excel</button>
+</div>
+
+<div id="plResult" style="display:none; margin-top:16px;">
+    <div class="section-title">Income</div>
+    <table class="pl-table" id="incomeTable">
+        <thead><tr><th>Group</th><th>Ledger Name</th><th class="num">Amount</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <div class="pl-total" id="totalIncome"></div>
+
+    <div class="section-title">Expenses</div>
+    <table class="pl-table" id="expensesTable">
+        <thead><tr><th>Group</th><th>Ledger Name</th><th class="num">Amount</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <div class="pl-total" id="totalExpenses"></div>
+    <div id="netProfit"></div>
+</div>
+
+<script>
+flatpickr("#from_date", { dateFormat: "d-m-Y", allowInput: true });
+flatpickr("#to_date",   { dateFormat: "d-m-Y", allowInput: true });
+
+function toISO(ddmmyyyy) {
+    if (!ddmmyyyy) return '';
+    const p = ddmmyyyy.split('-');
+    return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : ddmmyyyy;
+}
+function fmt(v) {
+    return parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function glLink(ledger, amount, fromDate, toDate) {
+    let url = `/report/ledger-transactions?ledger=${encodeURIComponent(ledger)}`;
+    if (fromDate) url += `&from_date=${fromDate}`;
+    if (toDate)   url += `&to_date=${toDate}`;
+    return `<a class="gl-link" onclick="window.open('${url}','_blank')">${fmt(amount)}</a>`;
+}
+
+function fetchProfitAndLoss() {
+    const fromDate = document.getElementById('from_date').value;
+    const toDate   = document.getElementById('to_date').value;
+    const isoFrom  = toISO(fromDate);
+    const isoTo    = toISO(toDate);
+    $.get('/get_profit_and_loss', { from_date: fromDate, to_date: toDate }, function(data) {
+        const incomeTbody = $('#incomeTable tbody').empty();
+        for (const group in data.profit_and_loss.income) {
+            data.profit_and_loss.income[group].forEach((ledger, i) => {
+                incomeTbody.append(`<tr>
+                    <td>${i === 0 ? group : ''}</td>
+                    <td>${ledger.ledger_name}</td>
+                    <td class="num">${glLink(ledger.ledger_name, ledger.amount, isoFrom, isoTo)}</td>
+                </tr>`);
+            });
+        }
+        $('#totalIncome').text(`Total Income: ${fmt(data.total_income)}`);
+
+        const expTbody = $('#expensesTable tbody').empty();
+        for (const group in data.profit_and_loss.expenses) {
+            data.profit_and_loss.expenses[group].forEach((ledger, i) => {
+                expTbody.append(`<tr>
+                    <td>${i === 0 ? group : ''}</td>
+                    <td>${ledger.ledger_name}</td>
+                    <td class="num">${glLink(ledger.ledger_name, ledger.amount, isoFrom, isoTo)}</td>
+                </tr>`);
+            });
+        }
+        $('#totalExpenses').text(`Total Expenses: ${fmt(data.total_expenses)}`);
+
+        const np = data.net_profit;
+        const cls = np >= 0 ? 'net-profit' : 'net-loss';
+        const label = np >= 0 ? 'Net Profit' : 'Net Loss';
+        $('#netProfit').html(`<div class="${cls}">${label}: ${fmt(Math.abs(np))}</div>`);
+
+        $('#plResult').show();
+    });
+}
+
+function exportProfitAndLoss() {
+    const fromDate = document.getElementById('from_date').value;
+    const toDate   = document.getElementById('to_date').value;
+    window.location.href = `/export_report/profit_and_loss?from_date=${fromDate}&to_date=${toDate}`;
+}
+</script>
+{% endblock %}

@@ -1,0 +1,71 @@
+C:\Users\nafic\OneDrive\Documents\Accounting apps From 1611\web-accounting-app_with import v14\
+│
+├── accounting_app/                          # Main application package
+│   ├── __init__.py                          # Flask app initialization and configuration
+│   ├── models.py                            # Database models
+│   ├── auth_routes.py                       # Authentication routes
+│   ├── company_routes.py                    # [NEW] Company setup, settings & location routes
+│   ├── dashboard_routes.py                  # Dashboard route
+│   ├── master_routes.py                     # Master data routes
+│   ├── voucher_routes.py                    # Voucher entry and edit routes
+│   ├── report_routes.py                     # Report generation routes
+│   ├── export_routes.py                     # Export functionality routes
+│   │
+│   └── import_routes/                       # Import module package
+│       ├── __init__.py
+│       ├── master_imports.py
+│       ├── queue_routes.py
+│       ├── template_routes.py
+│       └── utils.py
+│
+├── database/                                # Database package
+│   ├── __init__.py
+│   ├── config.py                            # Database configuration
+│   ├── users_db.py                          # User management
+│   ├── company_db.py                        # [NEW] Company settings & 'Main Location' logic
+│   ├── accounts_db.py                       # Account groups and ledgers
+│   ├── inventory_db.py                      # Inventory groups and items
+│   ├── vouchers_db.py                       # Voucher CRUD operations
+│   └── reports_db.py                        # Report generation queries
+│
+├── templates/                               # Jinja2 HTML templates
+│   ├── base.html                            # Base template
+│   ├── signin.html                          # Login page
+│   ├── error.html                           # Error page
+│   ├── admin.html                           # Admin panel
+│   │
+│   ├── company_gateway.html                 # [NEW] Landing page: Select or Create Company
+│   ├── create_company.html                  # [NEW] Form to initialize new company data
+│   ├── company_settings.html                # [NEW] Toggle VAT, Inventory, Locations features
+│   ├── manage_locations.html                # [NEW] Add/Edit locations (defaults to Main)
+│   ├── dashboard.html                       # Main Dashboard (post-company selection)
+│   │
+│   ├── manage_accounting_master.html        # Accounting master menu
+│   ├── groups.html
+│   ├── ledger.html
+│   ├── cost_centers.html
+│   │
+│   ├── manage_inventory_master.html         # Inventory master menu
+│   ├── inventory_groups.html
+│   ├── inventory.html
+│   │
+│   ├── vouchers.html                        # Vouchers menu
+│   ├── voucher.html                         # Voucher entry/edit form
+│   │
+│   ├── report.html                          # Reports menu
+│   ├── report_ledger_transactions.html
+│   ├── report_trial_balance.html
+│   ├── report_stock_movement.html
+│   ├── report_balance_sheet.html
+│   ├── report_profit_and_loss.html
+│   ├── report_closing_inventory.html
+│   │
+│   └── import_queue.html                    # Import queue management
+│
+├── static/
+│   ├── script.js
+│   └── style.css
+│
+├── Nafi.db                        # SQLite database file
+├── app.py                                   # Application entry point
+└── requirements.txt

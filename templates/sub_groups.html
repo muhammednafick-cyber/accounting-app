@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Sub Groups{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    /* Enforce full width */
+    input,
+    select,
+    .select2-container {
+        width: 100% !important;
+    }
+
+    #subGroupMessage,
+    #deleteSubGroupMessage {
+        margin-top: 10px;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Manage Sub Groups</h1>
+
+<h2>Add Sub Group</h2>
+<form id="addSubGroupForm" method="POST" action="/add_sub_group">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="form-group">
+        <label for="group_code">Parent Group:</label>
+        <select name="group_code" id="group_code" class="select2" required>
+            <option></option> <!-- Placeholder -->
+            {% for group in groups %}
+            <option value="{{ group.group_code }}">{{ group.group_name }} ({{ group.nature }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="sub_group_name">Sub Group Name:</label>
+        <input type="text" name="sub_group_name" id="sub_group_name" placeholder="Sub Group Name" required>
+    </div>
+    <button type="submit">Add Sub Group</button>
+    <button type="button" onclick="showImportSection()">Import</button> <!-- NEW -->
+
+    <div id="importSection" class="import-section-container" style="display:none;">
+        <h3>Import Sub Groups from Excel</h3>
+        <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Sub Group Name, Parent Group Name
+        </p>
+
+        <div class="import-controls">
+            <input type="file" id="excelFile" class="import-file-input" accept=".xlsx" />
+            <button type="button" class="btn btn-secondary" onclick="downloadTemplate()">Download Template</button>
+            <button type="button" class="btn btn-primary" onclick="importExcel()">Upload & Import</button>
+        </div>
+
+        <div id="importProgressContainer" class="progress-container" style="display:none;">
+            <div id="importProgressBar" class="progress-bar" style="width: 0%;">0%</div>
+        </div>
+        <div id="importMessage" class="status-message" style="display:none;"></div>
+    </div>
+</form>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+    function showImportSection() {
+        document.getElementById('importSection').style.display = 'block';
+    }
+
+    function downloadTemplate() {
+        window.location.href = '/download_sub_group_template';
+    }
+
+    function importExcel() {
+        const fileInput = document.getElementById('excelFile');
+        const file = fileInput.files[0];
+        if (!file) {
+            alert('Please select an Excel file.');
+            return;
+        }
+
+        const msgDiv = document.getElementById('importMessage');
+        const progressContainer = document.getElementById('importProgressContainer');
+        const progressBar = document.getElementById('importProgressBar');
+
+        // Use global overlay if available, else local fallback
+        if (typeof blockUI === 'function') blockUI("Reading file...");
+
+        msgDiv.style.display = 'block';
+        msgDiv.innerText = "Reading file...";
+        msgDiv.className = "status-message info";
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+                if (jsonData.length === 0) {
+                    msgDiv.innerText = "Excel file is empty.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
+
+                if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
+                msgDiv.innerText = "Uploading " + jsonData.length + " rows...";
+                progressContainer.style.display = 'block';
+
+                const subGroupData = jsonData.map(row => ({
+                    "Sub Group Name": row['Sub Group Name'],
+                    "Parent Group Name": row['Parent Group Name']
+                }));
+
+                const payload = JSON.stringify({
+                    file_name: file.name,
+                    json_data: JSON.stringify(subGroupData)
+                });
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/queue_sub_group_import', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+
+                xhr.upload.onprogress = function (e) {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        progressBar.innerText = percent + '%';
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status === 200) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            msgDiv.innerText = response.message;
+                            msgDiv.className = response.success ? "status-message success" : "status-message error";
+
+                            if (response.success) {
+                                msgDiv.innerText += " Redirecting to Import Queue...";
+                                progressBar.style.width = '100%';
+                                progressBar.innerText = '100%';
+                                fileInput.value = '';
+
+                                if (typeof blockUI === 'function') blockUI("Upload successful! Redirecting...");
+                                window.onbeforeunload = null;
+                                setTimeout(() => window.location.href = '/report/import-queue', 1500);
+                            } else {
+                                if (typeof unblockUI === 'function') unblockUI();
+                            }
+                        } catch (e) {
+                            msgDiv.innerText = "Error parsing response.";
+                            msgDiv.className = "status-message error";
+                            if (typeof unblockUI === 'function') unblockUI();
+                        }
+                    } else {
+                        msgDiv.innerText = "Upload failed: " + xhr.statusText;
+                        msgDiv.className = "status-message error";
+                        if (typeof unblockUI === 'function') unblockUI();
+                    }
+                };
+
+                xhr.onerror = function () {
+                    msgDiv.innerText = "Network error.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                };
+
+                xhr.send(payload);
+
+            } catch (err) {
+                console.error('Error parsing Excel:', err);
+                msgDiv.innerText = "Error parsing Excel: " + err;
+                msgDiv.className = "status-message error";
+                if (typeof unblockUI === 'function') unblockUI();
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+</script>
+
+<div id="subGroupMessage"></div>
+
+<h2>Delete Sub Group</h2>
+<form id="deleteSubGroupForm" method="POST" action="/delete_sub_group">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="form-group">
+        <label for="delete_sub_group_name">Sub Group Name:</label>
+        <select name="sub_group_name" id="delete_sub_group_name" class="select2" required>
+            <option></option> <!-- Placeholder -->
+            {% if sub_groups %}
+            {% for sg in sub_groups %}
+            <option value="{{ sg.sub_group_name }}">{{ sg.sub_group_name }} (Under: {{ sg.group_code }})</option>
+            {% endfor %}
+            {% else %}
+            <option disabled selected>No sub groups available.</option>
+            {% endif %}
+        </select>
+    </div>
+    <button type="submit">Delete Sub Group</button>
+</form>
+<div id="deleteSubGroupMessage"></div>
+
+<h2>Existing Sub Groups</h2>
+<table border="1">
+    <tr>
+        <th>Sub Group Name</th>
+        <th>Parent Group</th>
+    </tr>
+    {% if sub_groups %}
+    {% for sg in sub_groups %}
+    <tr>
+        <td>{{ sg.sub_group_name }}</td>
+        <td>{{ sg.group_name }}</td>
+    </tr>
+    {% endfor %}
+    {% else %}
+    <tr>
+        <td colspan="2">No sub groups found.</td>
+    </tr>
+    {% endif %}
+</table>
+
+<script>
+    $(document).ready(function () {
+        $('.select2').select2({
+            placeholder: "Select an option",
+            allowClear: true
+        });
+
+        $('#addSubGroupForm').submit(function (e) {
+            e.preventDefault();
+            $.ajax({
+                url: '/add_sub_group',
+                type: 'POST',
+                data: $(this).serialize(),
+                success: function (response) {
+                    $('#subGroupMessage').text(response.message).css('color', response.success ? '#2ecc71' : '#e74c3c');
+                    if (response.success) {
+                        setTimeout(function () { location.reload(); }, 1000);
+                    }
+                },
+                error: function (xhr) {
+                    $('#subGroupMessage').text('Error adding sub group: ' + xhr.responseText).css('color', '#e74c3c');
+                }
+            });
+        });
+
+        $('#deleteSubGroupForm').submit(function (e) {
+            e.preventDefault();
+            $.ajax({
+                url: '/delete_sub_group',
+                type: 'POST',
+                data: $(this).serialize(),
+                success: function (response) {
+                    $('#deleteSubGroupMessage').text(response.message).css('color', response.success ? '#2ecc71' : '#e74c3c');
+                    if (response.success) {
+                        setTimeout(function () { location.reload(); }, 1000);
+                    }
+                },
+                error: function (xhr) {
+                    $('#deleteSubGroupMessage').text('Error deleting sub group: ' + xhr.responseText).css('color', '#e74c3c');
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

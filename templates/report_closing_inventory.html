@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Closing Inventory{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+    .filter-section {
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .filter-section label {
+        margin-right: 5px;
+    }
+
+    .filter-section input[type="date"] {
+        padding: 8px;
+        border: 1px solid #d0d0d0;
+        border-radius: 5px;
+        font-size: 0.9em;
+    }
+
+    .filter-section button {
+        padding: 10px 20px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+
+    .filter-section button:hover {
+        background-color: #2980b9;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+        background-color: #ffffff;
+    }
+
+    th,
+    td {
+        border: 1px solid #e0e0e0;
+        padding: 12px 15px;
+        text-align: left;
+    }
+
+    th {
+        background-color: #34495e;
+        color: #ffffff;
+        font-weight: 600;
+    }
+
+    td {
+        background-color: #ffffff;
+    }
+
+    tr:hover td {
+        background-color: #f1f5f9;
+    }
+
+    p {
+        font-weight: bold;
+        color: #2c3e50;
+    }
+
+    #exportButton {
+        padding: 10px 20px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        display: none;
+    }
+
+    #exportButton:hover {
+        background-color: #2980b9;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Closing Inventory Report</h1>
+<div class="filter-section">
+    <label for="as_of_date">As of:</label>
+    <input type="text" id="as_of_date" name="as_of_date" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+    <button onclick="fetchClosingInventory()">Generate</button>
+    <button id="exportButton" onclick="exportClosingInventory()">Export to Excel</button>
+</div>
+<div id="closingInventoryResult">
+    <table id="inventoryTable">
+        <thead>
+            <tr>
+                <th>Item Code</th>
+                <th>Item Name</th>
+                <th>Item Group</th>
+                <th>Location</th>
+                <th>Quantity</th>
+                <th>WAP</th>
+                <th>Cost Amount</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <p id="totalCostAmount"></p>
+</div>
+
+<script>
+    function fetchClosingInventory() {
+        const asOfDate = document.getElementById('as_of_date').value;
+        $.get('/get_closing_inventory', { as_of_date: asOfDate }, function (data) {
+            const tbody = $('#inventoryTable tbody');
+            tbody.empty();
+            data.closing_inventory.forEach(item => {
+                tbody.append(`
+                        <tr>
+                            <td>${item.item_code}</td>
+                            <td>${item.item_name}</td>
+                            <td>${item.group_name}</td>
+                            <td>${item.location_name || ''}</td>
+                            <td>${item.quantity.toFixed(2)}</td>
+                            <td>${item.wap.toFixed(2)}</td>
+                            <td>${item.cost_amount.toFixed(2)}</td>
+                        </tr>
+                    `);
+            });
+            $('#totalCostAmount').text(`Total Cost Amount: ${data.total_cost_amount.toFixed(2)}`);
+        });
+    }
+
+    function exportClosingInventory() {
+        const asOfDate = document.getElementById('as_of_date').value;
+        window.location.href = `/export_report/closing_inventory?as_of_date=${asOfDate}`;
+    }
+</script>
+{% endblock %}

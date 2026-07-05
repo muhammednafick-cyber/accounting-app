@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__postgres-accounting__query",
+      "PowerShell($env:PGPASSWORD = \"123456789\"; psql -U postgres -d accounting_unified -c \"CREATE INDEX IF NOT EXISTS idx_le_company_voucher ON ledger_entries\\(company_id, voucher_number\\); CREATE INDEX IF NOT EXISTS idx_le_company_ledger ON ledger_entries\\(company_id, ledger_name\\); CREATE INDEX IF NOT EXISTS idx_ie_company_voucher ON item_entries\\(company_id, voucher_number\\); CREATE INDEX IF NOT EXISTS idx_ie_company_item ON item_entries\\(company_id, item_name\\); CREATE INDEX IF NOT EXISTS idx_v_company_date ON vouchers\\(company_id, date\\); CREATE INDEX IF NOT EXISTS idx_v_company_type ON vouchers\\(company_id, voucher_type\\);\")",
+      "PowerShell(python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\), f\\) for f in ['accounting_app/import_routes/master_imports.py', 'accounting_app/import_routes/queue_routes.py', 'accounting_app/import_routes/utils.py', 'accounting_app/master_routes.py', 'database/vouchers_db.py', 'database/unified_db.py']]; print\\('All files parse OK'\\)\")"
+    ]
+  }
+}

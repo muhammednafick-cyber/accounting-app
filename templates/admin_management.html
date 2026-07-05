@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Management{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<style>
+    .admin-container {
+        padding: 20px;
+        max-width: 1000px;
+        margin: 0 auto;
+    }
+
+    .admin-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .admin-card h3 {
+        margin: 0 0 15px;
+        font-size: 1.5em;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 2px solid #007bff;
+        padding-bottom: 5px;
+    }
+
+    .admin-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+    }
+
+    .admin-table th,
+    .admin-table td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+        vertical-align: top;
+    }
+
+    .admin-table th {
+        background: #e9ecef;
+        color: #212529;
+        font-weight: 600;
+    }
+
+    .admin-form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .admin-form input[type="text"],
+    .admin-form input[type="email"],
+    .admin-form input[type="password"] {
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 1em;
+    }
+
+    .admin-form input[type="submit"] {
+        padding: 10px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .admin-form input[type="submit"]:hover {
+        background: #0056b3;
+    }
+
+    .edit-form {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+    }
+
+    .edit-form input[type="email"],
+    .edit-form input[type="password"] {
+        width: 140px;
+        padding: 5px;
+        font-size: 0.9em;
+    }
+
+    .btn-sm {
+        padding: 5px 10px;
+        font-size: 0.85em;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        color: white;
+    }
+
+    .btn-primary {
+        background: #007bff;
+    }
+
+    .btn-danger {
+        background: #dc3545;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1>Admin Management</h1>
+        <a href="{{ url_for('company_bp.company_gateway') }}" class="btn-sm btn-primary"
+            style="text-decoration: none; padding: 10px 20px; font-size: 1em;">Back to Gateway</a>
+    </div>
+
+    <!-- Admin List Card -->
+    <div class="admin-card">
+        <h3><i class="fas fa-user-shield"></i> Current Admins</h3>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user[1] }}</td>
+                    <td>{{ user[2] }}</td>
+                    <td>
+                        <form method="POST" class="edit-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                            <input type="hidden" name="action" value="edit">
+                            <input type="hidden" name="user_id" value="{{ user[0] }}">
+                            <input type="email" name="email" value="{{ user[2] }}" placeholder="New Email" required>
+                            <input type="password" name="new_password" placeholder="New Password">
+                            <button type="submit" class="btn-sm btn-primary">Update</button>
+                        </form>
+                        <form method="POST"
+                            onsubmit="return confirm('Are you sure you want to delete admin {{ user[1] }}?');"
+                            style="margin-top: 5px;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="user_id" value="{{ user[0] }}">
+                            <button type="submit" class="btn-sm btn-danger" {% if user[0]==current_user.id
+                                %}disabled{% endif %}>Delete Admin</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Create Admin Card -->
+    <div class="admin-card">
+        <h3><i class="fas fa-user-plus"></i> Create New Admin</h3>
+        <form method="POST" class="admin-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="action" value="create">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="email" name="email" placeholder="Email" required>
+            <input type="password" name="password" placeholder="Password" required>
+            <input type="submit" value="Create Admin">
+        </form>
+    </div>
+</div>
+{% endblock %}

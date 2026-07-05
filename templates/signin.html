@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Sign In - Prodata Elevate{% endblock %}
+
+{% block content %}
+    <div style="max-width: 400px; margin: 50px auto; padding: 20px; border: 1px solid #ccc; border-radius: 5px;">
+        <h2 style="text-align: center;">Sign In</h2>
+        {% if error %}
+            <p style="color: red; text-align: center;">{{ error }}</p>
+        {% endif %}
+        <form method="POST" style="display: flex; flex-direction: column; gap: 15px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div>
+                <label for="login_id" style="display: block; margin-bottom: 5px;">Username or Email:</label>
+                <input type="text" id="login_id" name="login_id" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+            </div>
+            <div>
+                <label for="password" style="display: block; margin-bottom: 5px;">Password:</label>
+                <input type="password" id="password" name="password" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+            </div>
+            <button type="submit" style="width: 100%; padding: 10px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">Sign In</button>
+        </form>
+    </div>
+{% endblock %}

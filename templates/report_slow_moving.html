@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Slow Moving Stock{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Slow / Non-Moving Stock</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="days">Days Threshold:</label>
+            <input type="number" id="days" name="days" value="90" class="input-standard-width">
+        </div>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+
+    <script>
+        function exportReport() {
+            const days = document.getElementById('days').value;
+            window.location.href = `/export_report/slow_moving?days=${days}`;
+        }
+    </script>
+{% endblock %}

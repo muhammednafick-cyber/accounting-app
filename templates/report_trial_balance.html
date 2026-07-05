@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}Trial Balance{% endblock %}
+
+{% block extra_head %}
+<style>
+    #trialBalanceTable { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-top: 16px; }
+    #trialBalanceTable thead th {
+        background: #2563ab; color: #fff; padding: 8px 12px;
+        text-align: left; font-weight: 600; position: sticky; top: 0; z-index: 2;
+    }
+    #trialBalanceTable thead th.num { text-align: right; }
+    #trialBalanceTable tbody tr { border-bottom: 1px solid #edf0f4; }
+    #trialBalanceTable tbody tr:hover { background: #f0f5ff; }
+    #trialBalanceTable td { padding: 6px 12px; }
+    #trialBalanceTable td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    #trialBalanceTable tfoot td {
+        font-weight: 700; border-top: 2px solid #cdd8e8;
+        background: #f3f6fb; padding: 7px 12px;
+    }
+    .gl-link { color: #0563c1; cursor: pointer; text-decoration: none; }
+    .gl-link:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 style="font-size:1.4rem; margin-bottom:16px;">Trial Balance</h2>
+<div class="dashboard-section d-flex align-items-center gap-3 flex-wrap">
+    <label style="font-size:.85rem;font-weight:500;">As of Date</label>
+    <input type="text" id="as_of_date" placeholder="DD-MM-YYYY" style="width:140px;" readonly>
+    <button class="btn btn-primary" onclick="fetchTrialBalance()">Show</button>
+    <button class="btn btn-outline-success" onclick="exportTrialBalance()">Export to Excel</button>
+</div>
+
+<div style="overflow-x:auto;">
+<table id="trialBalanceTable" style="display:none;">
+    <thead>
+        <tr>
+            <th>Ledger Name</th>
+            <th>Group Name</th>
+            <th class="num">Debit</th>
+            <th class="num">Credit</th>
+        </tr>
+    </thead>
+    <tbody id="trialBalanceBody"></tbody>
+    <tfoot id="trialBalanceFooter"></tfoot>
+</table>
+</div>
+
+<script>
+flatpickr("#as_of_date", { dateFormat: "d-m-Y", allowInput: true });
+
+function toISO(ddmmyyyy) {
+    if (!ddmmyyyy) return '';
+    const p = ddmmyyyy.split('-');
+    return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : ddmmyyyy;
+}
+function fmt(v) {
+    if (!v || v == 0) return '';
+    return parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function glLink(ledger, amount, asOfDate) {
+    const url = `/report/ledger-transactions?ledger=${encodeURIComponent(ledger)}&to_date=${asOfDate}`;
+    return `<a class="gl-link" onclick="window.open('${url}','_blank')">${fmt(amount)}</a>`;
+}
+
+function fetchTrialBalance() {
+    const asOfDate = document.getElementById('as_of_date').value;
+    if (!asOfDate) { alert('Please select a date.'); return; }
+    const iso = toISO(asOfDate);
+    fetch(`/get_trial_balance?as_of_date=${asOfDate}`)
+        .then(r => r.json())
+        .then(data => {
+            const tbody = document.getElementById('trialBalanceBody');
+            tbody.innerHTML = '';
+            data.trial_balance.forEach(t => {
+                tbody.insertAdjacentHTML('beforeend', `
+                    <tr>
+                        <td>${t.ledger_name}</td>
+                        <td>${t.group_name}</td>
+                        <td class="num">${t.debit ? glLink(t.ledger_name, t.debit, iso) : ''}</td>
+                        <td class="num">${t.credit ? glLink(t.ledger_name, t.credit, iso) : ''}</td>
+                    </tr>`);
+            });
+            document.getElementById('trialBalanceFooter').innerHTML =
+                `<tr><td colspan="2">Total</td>
+                 <td class="num">${fmt(data.total_debit)}</td>
+                 <td class="num">${fmt(data.total_credit)}</td></tr>`;
+            document.getElementById('trialBalanceTable').style.display = '';
+        });
+}
+
+function exportTrialBalance() {
+    const asOfDate = document.getElementById('as_of_date').value;
+    if (!asOfDate) { alert('Please select a date.'); return; }
+    window.location.href = `/export_report/trial_balance?as_of_date=${asOfDate}`;
+}
+</script>
+{% endblock %}

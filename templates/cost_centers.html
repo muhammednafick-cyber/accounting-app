@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Cost Centers{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    /* Enforce full width */
+    input,
+    select,
+    .select2-container {
+        width: 100% !important;
+    }
+
+    #costCenterMessage,
+    #deleteCostCenterMessage {
+        margin-top: 10px;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Manage Cost Centers</h1>
+
+<h2>Add Cost Center</h2>
+<form id="addCostCenterForm" method="POST" action="/add_cost_center">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="form-group">
+        <label for="center_code">Cost Center Code:</label>
+        <input type="text" name="center_code" id="center_code" placeholder="Cost Center Code" required>
+    </div>
+    <div class="form-group">
+        <label for="center_name">Cost Center Name:</label>
+        <input type="text" name="center_name" id="center_name" placeholder="Cost Center Name" required>
+    </div>
+    <button type="submit">Add Cost Center</button>
+    <button type="button" onclick="showImportSection()">Import</button>
+
+    <div id="importSection" class="import-section-container" style="display:none;">
+        <h3>Import Cost Centers from Excel</h3>
+        <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Cost Center Code, Cost Center Name
+        </p>
+
+        <div class="import-controls">
+            <input type="file" id="excelFile" class="import-file-input" accept=".xlsx" />
+            <button type="button" class="btn btn-secondary" onclick="downloadTemplate()">Download Template</button>
+            <button type="button" class="btn btn-primary" onclick="importExcel()">Upload & Import</button>
+        </div>
+
+        <div id="importProgressContainer" class="progress-container" style="display:none;">
+            <div id="importProgressBar" class="progress-bar" style="width: 0%;">0%</div>
+        </div>
+        <div id="importMessage" class="status-message" style="display:none;"></div>
+    </div>
+</form>
+<div id="costCenterMessage"></div>
+
+<h2>Delete Cost Center</h2>
+<form id="deleteCostCenterForm" method="POST" action="/delete_cost_center">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="form-group">
+        <label for="delete_center_name">Cost Center Name:</label>
+        <select name="center_name" id="delete_center_name" class="select2" required>
+            <option></option> <!-- Placeholder for search -->
+            {% if cost_centers %}
+            {% for center in cost_centers %}
+            <option value="{{ center['center_name'] }}">{{ center['center_name'] }}</option>
+            {% endfor %}
+            {% else %}
+            <option disabled selected>No cost centers available. Add a cost center first.</option>
+            {% endif %}
+        </select>
+    </div>
+    <button type="submit">Delete Cost Center</button>
+</form>
+<div id="deleteCostCenterMessage"></div>
+
+<h2>Existing Cost Centers</h2>
+<table border="1">
+    <tr>
+        <th>Cost Center Code</th>
+        <th>Cost Center Name</th>
+        <th>Status</th>
+        <th>Action</th>
+    </tr>
+    {% if cost_centers %}
+    {% for center in cost_centers %}
+    <tr>
+        <td>{{ center['center_code'] }}</td>
+        <td>{{ center['center_name'] }}</td>
+        <td>
+            {% if center['is_active'] == 1 %}
+            <span style="color: green; font-weight: bold;">Active</span>
+            {% else %}
+            <span style="color: red; font-weight: bold;">Inactive</span>
+            {% endif %}
+        </td>
+        <td>
+            <button type="button" onclick="toggleStatus('{{ center['center_name'] }}', {{ center['is_active'] }})"
+                style="background-color: {% if center['is_active'] == 1 %}#e74c3c{% else %}#2ecc71{% endif %}; padding: 5px 10px;">
+                {% if center['is_active'] == 1 %}Deactivate{% else %}Activate{% endif %}
+            </button>
+        </td>
+    </tr>
+    {% endfor %}
+    {% else %}
+    <tr>
+        <td colspan="4">No cost centers found.</td>
+    </tr>
+    {% endif %}
+</table>
+
+<script>
+    function toggleStatus(centerName, currentStatus) {
+        const newStatus = currentStatus === 1 ? false : true;
+        fetch('/toggle_cost_center_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                center_name: centerName,
+                is_active: newStatus
+            })
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+            });
+    }
+
+    $(document).ready(function () {
+        // Apply Select2 to the dropdowns without allowClear
+        $('.select2').select2({
+            placeholder: "Select a cost center",
+            allowClear: false // Disable the clear (X) option
+        });
+
+        document.getElementById('addCostCenterForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            fetch('/add_cost_center', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => {
+                            throw new Error(`HTTP ${response.status}: ${err.message || response.statusText}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const messageDiv = document.getElementById('costCenterMessage');
+                    messageDiv.textContent = data.message;
+                    messageDiv.style.color = data.success ? '#2ecc71' : '#e74c3c';
+                    if (data.success) {
+                        this.reset();
+                        setTimeout(() => location.reload(), 1000);
+                    }
+                })
+                .catch(error => {
+                    const messageDiv = document.getElementById('costCenterMessage');
+                    messageDiv.textContent = 'Error: ' + error.message;
+                    messageDiv.style.color = '#e74c3c';
+                });
+        });
+
+        document.getElementById('deleteCostCenterForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            fetch('/delete_cost_center', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => {
+                            throw new Error(`HTTP ${response.status}: ${err.message || response.statusText}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const messageDiv = document.getElementById('deleteCostCenterMessage');
+                    messageDiv.textContent = data.message;
+                    messageDiv.style.color = data.success ? '#2ecc71' : '#e74c3c';
+                    if (data.success) {
+                        setTimeout(() => location.reload(), 1000);
+                    }
+                })
+                .catch(error => {
+                    const messageDiv = document.getElementById('deleteCostCenterMessage');
+                    messageDiv.textContent = 'Error: ' + error.message;
+                    messageDiv.style.color = '#e74c3c';
+                });
+        });
+    });
+
+    function showImportSection() {
+        document.getElementById('importSection').style.display = 'block';
+        console.log("Showed import section"); // Debug
+    }
+
+    function downloadTemplate() {
+        window.location.href = '/download_cost_center_template';
+        console.log("Downloading cost center template"); // Debug
+    }
+
+    function importExcel() {
+        const fileInput = document.getElementById('excelFile');
+        const file = fileInput.files[0];
+        if (!file) {
+            alert('Please select an Excel file.');
+            return;
+        }
+
+        const msgDiv = document.getElementById('importMessage');
+        const progressContainer = document.getElementById('importProgressContainer');
+        const progressBar = document.getElementById('importProgressBar');
+
+        msgDiv.style.display = 'block';
+        msgDiv.innerText = "Reading file...";
+        msgDiv.className = "status-message info";
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        // Block UI
+        if (typeof blockUI === 'function') blockUI("Reading file...");
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+                if (jsonData.length === 0) {
+                    msgDiv.innerText = "Excel file is empty.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
+
+                msgDiv.innerText = "Uploading " + jsonData.length + " rows...";
+                progressContainer.style.display = 'block';
+
+                // Update Block UI message
+                if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
+
+                const costCenterData = jsonData.map(row => ({
+                    center_code: row['Cost Center Code'],
+                    center_name: row['Cost Center Name']
+                }));
+
+                const payload = JSON.stringify({
+                    file_name: file.name,
+                    json_data: JSON.stringify(costCenterData)
+                });
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/queue_cost_center_import', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+
+                xhr.upload.onprogress = function (e) {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        progressBar.innerText = percent + '%';
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status === 200) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            msgDiv.innerText = response.message;
+                            msgDiv.className = response.success ? "status-message success" : "status-message error";
+
+                            if (response.success) {
+                                msgDiv.innerText += " Redirecting to Import Queue...";
+                                progressBar.style.width = '100%';
+                                progressBar.innerText = '100%';
+                                fileInput.value = '';
+
+                                // Keep blocked but update message, remove unload handler
+                                if (typeof blockUI === 'function') blockUI("Upload successful! Redirecting...");
+                                window.onbeforeunload = null;
+
+                                setTimeout(() => window.location.href = '/report/import-queue', 1500);
+                            } else {
+                                if (typeof unblockUI === 'function') unblockUI();
+                            }
+                        } catch (e) {
+                            msgDiv.innerText = "Error parsing response: " + e;
+                            msgDiv.className = "status-message error";
+                            if (typeof unblockUI === 'function') unblockUI();
+                        }
+                    } else {
+                        msgDiv.innerText = "Upload failed: " + xhr.statusText;
+                        msgDiv.className = "status-message error";
+                        if (typeof unblockUI === 'function') unblockUI();
+                    }
+                };
+
+                xhr.onerror = function () {
+                    msgDiv.innerText = "Network error.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                };
+
+                xhr.send(payload);
+
+            } catch (err) {
+                console.error('Error parsing Excel:', err);
+                msgDiv.innerText = "Error parsing Excel: " + err;
+                msgDiv.className = "status-message error";
+                if (typeof unblockUI === 'function') unblockUI();
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: accounting-app
+    runtime: python
+    buildCommand: |
+      pip install -r requirements.txt
+      cd frontend && npm install && npm run build && cd ..
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    envVars:
+      - key: FLASK_DEBUG
+        value: "0"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_TYPE
+        value: sqlite
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+    disk:
+      name: accounting-data
+      mountPath: /opt/render/project/src
+      sizeGB: 1

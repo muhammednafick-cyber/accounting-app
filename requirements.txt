@@ -1,0 +1,16 @@
+flask==3.1.2
+Flask-WTF
+flask-login
+pandas
+xlsxwriter
+openpyxl
+
+requests
+pymupdf
+openai
+pdf2image
+Pillow
+
+psycopg2-binary
+python-dotenv
+gunicorn

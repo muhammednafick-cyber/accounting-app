@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Negative Stock Report{% endblock %}
+
+{% block extra_head %}
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            background-color: #ffffff;
+        }
+        th, td {
+            border: 1px solid #e0e0e0;
+            padding: 12px 15px;
+            text-align: left;
+        }
+        th {
+            background-color: #e74c3c;
+            color: #ffffff;
+            font-weight: 600;
+        }
+        td {
+            background-color: #ffffff;
+        }
+        tr:hover td {
+            background-color: #f1f5f9;
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+    <h1>Negative Stock Items</h1>
+    
+    {% if items %}
+    <table>
+        <thead>
+            <tr>
+                <th>Item Code</th>
+                <th>Item Name</th>
+                <th>Current Stock</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item[0] }}</td>
+                <td>{{ item[1] }}</td>
+                <td style="color: #e74c3c; font-weight: bold;">{{ item[2] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No items with negative stock found.</p>
+    {% endif %}
+
+{% endblock %}

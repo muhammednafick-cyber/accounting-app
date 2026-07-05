@@ -1,0 +1,394 @@
+{% extends "base.html" %}
+{% block title %}Manage Inventory{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    /* Layout overrides */
+    .form-row label {
+        display: inline-block;
+        width: 150px;
+    }
+
+    /* Enforce standard width */
+    .form-row input,
+    .form-row select,
+    .select2-container {
+        width: 250px !important;
+    }
+
+    /* Custom button colors */
+    .btn-template {
+        background: #27ae60 !important;
+        color: white;
+    }
+
+    .btn-download {
+        background: #9b59b6 !important;
+        color: white;
+    }
+
+    .form-section {
+        margin-top: 20px;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        background-color: #fafafa;
+    }
+
+    .form-row {
+        margin-bottom: 15px;
+    }
+
+    .top-actions {
+        margin: 20px 0;
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+    }
+
+    #inventoryImportMessage {
+        margin: 10px 0;
+        font-weight: bold;
+        font-size: 15px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Manage Inventory</h1>
+
+<div class="top-actions">
+    <a href="/export_inventory">
+        <button type="button" class="btn btn-download">Download Existing Inventory</button>
+    </a>
+</div>
+
+<div class="form-section">
+    <h2>Manage Units</h2>
+    <form id="addUnitForm">
+        <div class="form-row">
+            <label for="unit_code">Unit Code:</label>
+            <input type="text" id="unit_code" name="unit_code" placeholder="NOS, KG, LTR" required>
+        </div>
+        <div class="form-row">
+            <label for="unit_name">Unit Name:</label>
+            <input type="text" id="unit_name" name="unit_name" placeholder="Numbers, Kilogram" required>
+        </div>
+        <div class="form-row">
+            <button type="button" class="btn" onclick="submitAddUnit()">Add Unit</button>
+        </div>
+    </form>
+
+    <h3>Existing Units</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Unit Code</th>
+                <th>Unit Name</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in units %}
+            <tr>
+                <td>{{ u.unit_code }}</td>
+                <td>{{ u.unit_name }}</td>
+                <td>
+                    <button type="button" class="btn" style="background:#e74c3c;"
+                        onclick="deleteUnit('{{ u.unit_code }}')">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="form-section">
+    <h2>Add New Item</h2>
+    <form id="addInventoryForm">
+        <div class="form-row">
+            <label>Item Code:</label>
+            <input type="text" name="item_code" required>
+        </div>
+        <div class="form-row">
+            <label>Item Name:</label>
+            <input type="text" name="name" required>
+        </div>
+        <div class="form-row">
+            <label>Group:</label>
+            <select name="stock_group_name" class="select2" data-placeholder="Select Group" required>
+                <option></option>
+                {% for g in inventory_groups %}
+                <option value="{{ g.group_name }}">{{ g.group_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label>Unit Code:</label>
+            <input type="text" name="unit_code" value="NOS">
+        </div>
+
+        <div class="form-row">
+            <label>Opening Quantity:</label>
+            <input type="number" step="0.01" name="opening_quantity" placeholder="0">
+        </div>
+        <div class="form-row">
+            <label>Opening Price (Cost):</label>
+            <input type="number" step="0.01" name="opening_price" placeholder="0.00">
+        </div>
+        <div class="form-row">
+            <label>Purchase Date:</label>
+            <input type="text" name="purchase_date" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}"
+                value="{{ current_date }}">
+        </div>
+        <div class="form-row">
+            <label>Balancing Ledger:</label>
+            <select name="balancing_ledger" class="select2" data-placeholder="Select ledger to credit (optional)">
+                <option value=""></option>
+                {% for ledger in all_ledgers %}
+                <option value="{{ ledger }}">{{ ledger }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% if multiple_locations_enabled %}
+        <div class="form-row">
+            <label>Location:</label>
+            <select name="location_name" class="select2" data-placeholder="Select Location">
+                <option></option>
+                {% for loc in locations %}
+                <option value="{{ loc.location_name }}">{{ loc.location_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if company and company.vat_applicable == 1 %}
+        <div class="form-row">
+            <label>VAT %:</label>
+            <input type="number" step="0.01" name="vat_rate" value="0">
+        </div>
+        {% else %}
+        <input type="hidden" name="vat_rate" value="0">
+        {% endif %}
+        <button type="button" class="btn" onclick="submitAddInventory()">Add Item</button>
+    </form>
+</div>
+
+<hr>
+
+<div id="importSection" class="import-section-container">
+    <h3>Import Inventory Items from Excel</h3>
+    <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Item Code, Item Name, Group Name, Unit, VAT %.
+        Optional columns: Opening Quantity, Opening Price (Cost), Location.
+        <strong>If Opening Quantity is filled:</strong> Purchase Date and Balancing Ledger are also required.</p>
+
+    <div class="import-controls">
+        <input type="file" id="excelFile" class="import-file-input" accept=".xlsx, .xls" />
+        <a href="/download_inventory_template" style="text-decoration:none;">
+            <button type="button" class="btn btn-secondary">Download Template</button>
+        </a>
+        <button type="button" class="btn btn-primary" onclick="importInventory()">Upload & Import</button>
+    </div>
+
+    <div id="importProgressContainer" class="progress-container" style="display:none;">
+        <div id="importProgressBar" class="progress-bar" style="width: 0%;">0%</div>
+    </div>
+    <div id="importMessage" class="status-message" style="display:none;"></div>
+</div>
+
+
+<script>
+    $(document).ready(function () {
+        $('.select2').select2({
+            allowClear: true,
+            placeholder: function () {
+                return $(this).data('placeholder');
+            }
+        });
+    });
+
+    const multipleLocationsEnabled = {{ 'true' if multiple_locations_enabled else 'false' }};
+    // document.getElementById('invFile') listener removed as we use standard ID 'excelFile' and manual trigger
+
+    function importInventory() {
+        const fileInput = document.getElementById('excelFile');
+        const file = fileInput.files[0];
+        if (!file) {
+            alert("Please select an Excel file");
+            return;
+        }
+
+        const fiscalYear = "";
+
+        const msgDiv = document.getElementById('importMessage');
+        const progressContainer = document.getElementById('importProgressContainer');
+        const progressBar = document.getElementById('importProgressBar');
+
+        msgDiv.style.display = 'block';
+        msgDiv.innerText = "Reading file...";
+        msgDiv.className = "status-message info";
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        // Block UI
+        if (typeof blockUI === 'function') blockUI("Reading file...");
+
+        const reader = new FileReader();
+        reader.onload = e => {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+
+                if (jsonData.length === 0) {
+                    msgDiv.innerText = "Excel file is empty.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
+
+                msgDiv.innerText = "Uploading " + jsonData.length + " rows...";
+                progressContainer.style.display = 'block';
+
+                // Update Block UI message
+                if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
+
+                // Keys must match validate_import_data("Inventory")
+                const items = jsonData.map(row => ({
+                    "Item Code": row["Item Code"],
+                    "Item Name": row["Item Name"],
+                    "Group Name": row["Group Name"],
+                    "Unit": row["Unit"] || "NOS",
+
+                    "VAT 5%": parseFloat(row["VAT 5%"] ?? row["VAT %"] ?? 0) || 0,
+                    "Opening Quantity": row["Opening Quantity"] ?? "",
+                    "Opening Price (Cost)": row["Opening Price (Cost)"] ?? "",
+                    "Purchase Date": row["Purchase Date"] ?? "",
+                    "Balancing Ledger": row["Balancing Ledger"] ?? "",
+                    "Location": row["Location"] ?? ""
+                }));
+
+                const payload = JSON.stringify({
+                    file_name: file.name,
+                    json_data: JSON.stringify(items),
+                    fiscal_year: fiscalYear
+                });
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/queue_inventory_import', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+
+                xhr.upload.onprogress = function (e) {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        progressBar.innerText = percent + '%';
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status === 200) {
+                        try {
+                            const res = JSON.parse(xhr.responseText);
+                            msgDiv.innerText = res.message;
+                            msgDiv.className = res.success ? "status-message success" : "status-message error";
+
+                            if (res.success) {
+                                msgDiv.innerText += " Redirecting to Import Queue...";
+                                progressBar.style.width = '100%';
+                                progressBar.innerText = '100%';
+                                fileInput.value = '';
+
+                                // Keep blocked but update message, remove unload handler
+                                if (typeof blockUI === 'function') blockUI("Upload successful! Redirecting...");
+                                window.onbeforeunload = null;
+
+                                setTimeout(() => window.location.href = '/report/import-queue', 1500);
+                            } else {
+                                if (typeof unblockUI === 'function') unblockUI();
+                            }
+                        } catch (e) {
+                            msgDiv.innerText = "Error parsing response: " + e;
+                            msgDiv.className = "status-message error";
+                            if (typeof unblockUI === 'function') unblockUI();
+                        }
+                    } else {
+                        let errMsg = "Upload failed: " + xhr.statusText;
+                        try {
+                            const res = JSON.parse(xhr.responseText);
+                            if (res.message) errMsg = res.message;
+                        } catch (e) { /* keep default */ }
+                        msgDiv.innerText = errMsg;
+                        msgDiv.className = "status-message error";
+                        if (typeof unblockUI === 'function') unblockUI();
+                    }
+                };
+
+                xhr.onerror = function () {
+                    msgDiv.innerText = "Network error.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                };
+
+                xhr.send(payload);
+            } catch (err) {
+                console.error('Error parsing Excel:', err);
+                msgDiv.innerText = "Error parsing Excel: " + err;
+                msgDiv.className = "status-message error";
+                if (typeof unblockUI === 'function') unblockUI();
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    function submitAddUnit() {
+        const formData = new FormData(document.getElementById("addUnitForm"));
+        fetch("/add_unit", { method: "POST", body: formData })
+            .then(r => r.json())
+            .then(data => {
+                alert(data.success ? data.message : "Error: " + data.message);
+                if (data.success) location.reload();
+            });
+    }
+
+    function submitAddInventory() {
+        const formEl = document.getElementById("addInventoryForm");
+        const openingQtyVal = parseFloat(formEl.querySelector('input[name="opening_quantity"]').value || '0') || 0;
+        if (openingQtyVal > 0) {
+            const openingPriceEl = formEl.querySelector('input[name="opening_price"]');
+            const openingPriceVal = parseFloat(openingPriceEl.value || '0') || 0;
+            if (!openingPriceEl.value || openingPriceVal <= 0) {
+                alert("Opening price (cost) is required when opening quantity is entered");
+                return;
+            }
+            if (multipleLocationsEnabled) {
+                const locSel = formEl.querySelector('select[name="location_name"]');
+                if (!locSel || !locSel.value) {
+                    alert("Location is required when opening quantity is entered");
+                    return;
+                }
+            }
+        }
+        const formData = new FormData(formEl);
+        fetch("/add_inventory", { method: "POST", body: formData })
+            .then(r => r.json())
+            .then(data => {
+                alert(data.success ? data.message : "Error: " + data.message);
+                if (data.success) location.reload();
+            });
+    }
+
+    function deleteUnit(unitCode) {
+        if (!confirm("Delete unit " + unitCode + "?")) return;
+        fetch("/delete_unit/" + encodeURIComponent(unitCode), { method: "POST" })
+            .then(r => r.json())
+            .then(data => {
+                alert(data.success ? data.message : "Error: " + data.message);
+                if (data.success) location.reload();
+            });
+    }
+</script>
+{% endblock %}

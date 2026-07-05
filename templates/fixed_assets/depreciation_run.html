@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Run Depreciation</h2>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="date" class="form-label">Depreciation Up To Date</label>
+                    <input type="date" class="form-control" id="date" name="date" value="{{ target_date }}" required>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">calculate Preview</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if proposals %}
+    <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+        <input type="hidden" name="posting_date" value="{{ target_date }}">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3>Depreciation Preview</h3>
+                <button type="submit" class="btn btn-success">Post Depreciation Voucher</button>
+            </div>
+            <div class="card-body">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="selectAll" checked onclick="toggleAll(this)"></th>
+                            <th>Asset Name</th>
+                            <th>Method</th>
+                            <th>Period Start</th>
+                            <th>Period End</th>
+                            <th>Days for Dep.</th>
+                            <th class="text-end">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in proposals %}
+                        <tr>
+                            <td><input type="checkbox" name="asset_ids[]" value="{{ p.asset_id }}" checked
+                                    class="asset-checkbox"></td>
+                            <td>{{ p.asset_name }}</td>
+                            <td>{{ p.method }}</td>
+                            <td>{{ p.period_start | format_date }}</td>
+                            <td>{{ p.period_end | format_date }}</td>
+                            <td>{{ p.days }}</td>
+                            <td class="text-end">{{ p.amount }}</td>
+                        </tr>
+                        {% endfor %}
+                        <tr class="table-dark">
+                            <td colspan="6" class="text-end"><strong>Total Depreciation</strong></td>
+                            <td class="text-end"><strong>{{ proposals | sum(attribute='amount') | round(2) }}</strong>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </form>
+    {% elif target_date %}
+    <div class="alert alert-info">No active assets found requiring depreciation for this date.</div>
+    {% endif %}
+</div>
+
+<script>
+    function toggleAll(source) {
+        checkboxes = document.getElementsByClassName('asset-checkbox');
+        for (var i = 0, n = checkboxes.length; i < n; i++) {
+            checkboxes[i].checked = source.checked;
+        }
+    }
+</script>
+{% endblock %}

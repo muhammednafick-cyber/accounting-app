@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Locations/Godowns{% endblock %}
+
+{% block content %}
+<div class="content">
+    <h1>Manage Locations/Godowns</h1>
+
+    <!-- Add Location Form -->
+    <div class="dashboard-section">
+        <h2>Add New Location</h2>
+        <form id="addLocationForm">
+            <div>
+                <label for="location_code">Location Code: <span class="required">*</span></label>
+                <input type="text" id="location_code" name="location_code" required>
+            </div>
+            <div>
+                <label for="location_name">Location Name: <span class="required">*</span></label>
+                <input type="text" id="location_name" name="location_name" required>
+            </div>
+            <div>
+                <label for="address">Address:</label>
+                <textarea id="address" name="address" rows="2"></textarea>
+            </div>
+            <div>
+                <label for="contact_person">Contact Person:</label>
+                <input type="text" id="contact_person" name="contact_person">
+            </div>
+            <div>
+                <label for="phone">Phone:</label>
+                <input type="text" id="phone" name="phone">
+            </div>
+            <div>
+                <label for="is_default">Set as Default:</label>
+                <input type="checkbox" id="is_default" name="is_default">
+            </div>
+            <button type="submit">Add Location</button>
+        </form>
+        <div id="locationMessage" style="margin-top: 10px; font-weight: bold;"></div>
+    </div>
+
+    <!-- Existing Locations -->
+    <div class="dashboard-section">
+        <h2>Existing Locations</h2>
+        {% if locations %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Address</th>
+                    <th>Contact Person</th>
+                    <th>Phone</th>
+                    <th>Default</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for location in locations %}
+                <tr>
+                    <td>{{ location.location_code }}</td>
+                    <td>{{ location.location_name }}</td>
+                    <td>{{ location.address }}</td>
+                    <td>{{ location.contact_person }}</td>
+                    <td>{{ location.phone or '-' }}</td>
+                    <td>{{ '✓ Yes' if location.is_default == 1 else 'No' }}</td>
+                    <td>{{ 'Active' if location.is_active == 1 else 'Inactive' }}</td>
+                    <td>
+                        {% if location.is_active %}
+                        <button class="btn-warning"
+                            onclick="editLocation({{ location.id }}, '{{ location.location_code }}', '{{ location.location_name }}', '{{ location.address }}', '{{ location.contact_person }}', '{{ location.phone }}', {{ location.is_default }})">Edit</button>
+                        <button class="btn-danger" onclick="deleteLocation({{ location.id }})">Deactivate</button>
+                        {% else %}
+                        <button class="btn-success" onclick="activateLocation({{ location.id }})">Activate</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p>No locations found. Add your first location above.</p>
+        {% endif %}
+    </div>
+
+    <!-- Edit Location Modal (Hidden by default) -->
+    <div id="editLocationModal"
+        style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 1000; max-width: 500px; width: 90%;">
+        <h2>Edit Location</h2>
+        <form id="editLocationForm">
+            <input type="hidden" id="edit_location_id" name="location_id">
+            <div>
+                <label>Location Code: <span class="required">*</span></label>
+                <input type="text" id="edit_location_code" name="location_code" required>
+            </div>
+            <div>
+                <label>Location Name: <span class="required">*</span></label>
+                <input type="text" id="edit_location_name" name="location_name" required>
+            </div>
+            <div>
+                <label>Address:</label>
+                <textarea id="edit_address" name="address" rows="2"></textarea>
+            </div>
+            <div>
+                <label>Contact Person:</label>
+                <input type="text" id="edit_contact_person" name="contact_person">
+            </div>
+            <div>
+                <label>Phone:</label>
+                <input type="text" id="edit_phone" name="phone">
+            </div>
+            <div>
+                <label>Set as Default:</label>
+                <input type="checkbox" id="edit_is_default" name="is_default">
+            </div>
+            <div style="margin-top: 20px;">
+                <button type="submit" class="btn-success">Update Location</button>
+                <button type="button" class="btn-secondary" onclick="closeEditModal()">Cancel</button>
+            </div>
+        </form>
+        <div id="editLocationMessage" style="margin-top: 10px; font-weight: bold;"></div>
+    </div>
+
+    <!-- Modal Overlay -->
+    <div id="modalOverlay"
+        style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 999;"
+        onclick="closeEditModal()"></div>
+</div>
+
+<script>
+    // Add Location
+    document.getElementById('addLocationForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+
+        fetch('/add_location', {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(response => response.json())
+            .then(data => {
+                const messageDiv = document.getElementById('locationMessage');
+                messageDiv.style.color = data.success ? 'green' : 'red';
+                messageDiv.textContent = data.message;
+
+                if (data.success) {
+                    setTimeout(() => location.reload(), 1000);
+                }
+            })
+            .catch(error => {
+                document.getElementById('locationMessage').textContent = 'Error: ' + error.message;
+                document.getElementById('locationMessage').style.color = 'red';
+            });
+    });
+
+    // Edit Location
+    function editLocation(id, code, name, address, contact, phone, isDefault) {
+        document.getElementById('edit_location_id').value = id;
+        document.getElementById('edit_location_code').value = code;
+        document.getElementById('edit_location_name').value = name;
+        document.getElementById('edit_address').value = address || '';
+        document.getElementById('edit_contact_person').value = contact || '';
+        document.getElementById('edit_phone').value = phone || '';
+        document.getElementById('edit_is_default').checked = isDefault == 1;
+
+        document.getElementById('editLocationModal').style.display = 'block';
+        document.getElementById('modalOverlay').style.display = 'block';
+    }
+
+    function closeEditModal() {
+        document.getElementById('editLocationModal').style.display = 'none';
+        document.getElementById('modalOverlay').style.display = 'none';
+    }
+
+    document.getElementById('editLocationForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+
+        fetch('/update_location', {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(response => response.json())
+            .then(data => {
+                const messageDiv = document.getElementById('editLocationMessage');
+                messageDiv.style.color = data.success ? 'green' : 'red';
+                messageDiv.textContent = data.message;
+
+                if (data.success) {
+                    setTimeout(() => location.reload(), 1000);
+                }
+            })
+            .catch(error => {
+                document.getElementById('editLocationMessage').textContent = 'Error: ' + error.message;
+                document.getElementById('editLocationMessage').style.color = 'red';
+            });
+    });
+
+    // Delete Location
+    function deleteLocation(id) {
+        if (!confirm('Are you sure you want to deactivate this location?')) return;
+
+        const formData = new FormData();
+        formData.append('location_id', id);
+
+        fetch('/delete_location', {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                if (data.success) {
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+            });
+    }
+
+    function activateLocation(id) {
+        const formData = new FormData();
+        formData.append('location_id', id);
+
+        fetch('/activate_location', {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                if (data.success) {
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                alert('Error: ' + error.message);
+            });
+    }
+</script>
+{% endblock %}

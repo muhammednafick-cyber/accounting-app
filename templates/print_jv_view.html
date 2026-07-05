@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Print Voucher - {{ voucher.voucher_number }}</title>
+    <style>
+        body {
+            font-family: "Times New Roman", Times, serif;
+            margin: 0;
+            padding: 20px;
+            color: #000;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            border: 1px solid #000;
+            padding: 20px;
+            min-height: 900px;
+            position: relative;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 10px;
+        }
+        .company-name {
+            font-size: 24px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .voucher-title {
+            font-size: 20px;
+            font-weight: bold;
+            margin-top: 10px;
+            text-decoration: underline;
+        }
+        .info-section {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .info-item {
+            margin-bottom: 5px;
+        }
+        .label {
+            font-weight: bold;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            border: 1px solid #000;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f0f0f0;
+            text-align: center;
+        }
+        .amount-col {
+            text-align: right;
+            width: 120px;
+        }
+        .narration-section {
+            margin-top: 20px;
+            border: 1px solid #000;
+            padding: 10px;
+            min-height: 60px;
+        }
+        .footer {
+            margin-top: 80px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .signature-box {
+            text-align: center;
+            width: 200px;
+            border-top: 1px solid #000;
+            padding-top: 5px;
+        }
+        @media print {
+            body {
+                padding: 0;
+            }
+            .container {
+                border: none;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+        .no-print {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .btn {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            border-radius: 5px;
+            display: inline-block;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <button onclick="window.print()" class="btn">Print Voucher</button>
+        <a href="{{ url_for('print_bp.print_jv') }}" class="btn btn-secondary">Back to Search</a>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <div class="company-name">{{ session.get('company_name', 'Company Name') }}</div>
+            <div class="voucher-title">{{ voucher.voucher_type }} Voucher</div>
+        </div>
+
+        <div class="info-section">
+            <div class="left-info">
+                <div class="info-item">
+                    <span class="label">Voucher No:</span> {{ voucher.voucher_number }}
+                </div>
+                {% if voucher.location_name %}
+                <div class="info-item">
+                    <span class="label">Location:</span> {{ voucher.location_name }}
+                </div>
+                {% endif %}
+                {% if voucher.cost_center_name %}
+                <div class="info-item">
+                    <span class="label">Cost Center:</span> {{ voucher.cost_center_name }}
+                </div>
+                {% endif %}
+            </div>
+            <div class="right-info">
+                <div class="info-item">
+                    <span class="label">Date:</span> {{ voucher.date }}
+                </div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Particulars</th>
+                    <th>Type</th>
+                    <th class="amount-col">Debit</th>
+                    <th class="amount-col">Credit</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Item Entries -->
+                {% for item in item_entries %}
+                <tr>
+                    <td>
+                        <strong>{{ item.item_name }}</strong>
+                        <br>
+                        <small>Qty: {{ item.quantity }} @ {{ item.unit_price }}</small>
+                    </td>
+                    <td style="text-align: center;">{{ item.type }}</td>
+                    <td class="amount-col">
+                        {% if item.type == 'Debit' %}
+                        {{ "%.2f"|format(item.amount) }}
+                        {% endif %}
+                    </td>
+                    <td class="amount-col">
+                        {% if item.type == 'Credit' %}
+                        {{ "%.2f"|format(item.amount) }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+
+                <!-- Ledger Entries -->
+                {% for entry in ledger_entries %}
+                <tr>
+                    <td>{{ entry.ledger_name }}</td>
+                    <td style="text-align: center;">{{ entry.type }}</td>
+                    <td class="amount-col">
+                        {% if entry.type == 'Debit' %}
+                        {{ "%.2f"|format(entry.amount) }}
+                        {% endif %}
+                    </td>
+                    <td class="amount-col">
+                        {% if entry.type == 'Credit' %}
+                        {{ "%.2f"|format(entry.amount) }}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                {% set total_debit = namespace(value=0) %}
+                {% set total_credit = namespace(value=0) %}
+                
+                {% for item in item_entries %}
+                    {% if item.type == 'Debit' %}
+                        {% set total_debit.value = total_debit.value + item.amount %}
+                    {% else %}
+                        {% set total_credit.value = total_credit.value + item.amount %}
+                    {% endif %}
+                {% endfor %}
+
+                {% for entry in ledger_entries %}
+                    {% if entry.type == 'Debit' %}
+                        {% set total_debit.value = total_debit.value + entry.amount %}
+                    {% else %}
+                        {% set total_credit.value = total_credit.value + entry.amount %}
+                    {% endif %}
+                {% endfor %}
+                
+                <tr style="font-weight: bold; background-color: #f9f9f9;">
+                    <td colspan="2" style="text-align: right;">Total:</td>
+                    <td class="amount-col">{{ "%.2f"|format(total_debit.value) }}</td>
+                    <td class="amount-col">{{ "%.2f"|format(total_credit.value) }}</td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <div class="narration-section">
+            <span class="label">Narration:</span>
+            <p>{{ voucher.narration }}</p>
+        </div>
+
+        <div class="footer">
+            <div class="signature-box">
+                Prepared By
+            </div>
+            <div class="signature-box">
+                Verified By
+            </div>
+            <div class="signature-box">
+                Authorized By
+            </div>
+        </div>
+    </div>
+</body>
+</html>

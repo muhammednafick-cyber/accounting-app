@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Ledgers{% endblock %}
+
+{% block extra_head %}
+<style>
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 20px;
+    }
+    th, td {
+        border: 1px solid #ccc;
+        padding: 6px 8px;
+        text-align: left;
+    }
+    th {
+        background-color: #f2f2f2;
+    }
+    .form-section {
+        margin-top: 20px;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background-color: #fafafa;
+    }
+    .form-section h2 {
+        margin-top: 0;
+    }
+    .form-row {
+        margin-bottom: 8px;
+    }
+    .form-row label {
+        display: inline-block;
+        width: 150px;
+    }
+    .form-row input,
+    .form-row select {
+        padding: 4px 6px;
+        width: 250px;
+    }
+    .btn {
+        padding: 6px 10px;
+        cursor: pointer;
+        margin-right: 6px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<h1>Manage Ledgers</h1>
+
+<h2>Existing Ledgers</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Ledger Code</th>
+            <th>Ledger Name</th>
+            <th>Group Code</th>
+            <th>Group Name</th>
+            <th>Nature</th>
+            <th>Opening Balance</th>
+            <th>Type</th>
+            <th>Closing Balance</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% if ledgers %}
+            {% for ledger in ledgers %}
+            <tr>
+                <td>{{ ledger[0] }}</td>
+                <td>{{ ledger[1] }}</td>
+                <td>{{ ledger[2] }}</td>
+                <td>{{ ledger[3] }}</td>
+                <td>{{ ledger[4] }}</td>
+                <td>{{ ledger[5] }}</td>
+                <td>{{ ledger[6] }}</td>
+                <td>{{ ledger[7] }}</td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr>
+                <td colspan="8">No ledgers found.</td>
+            </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<div class="form-section">
+    <h2>Add New Ledger</h2>
+    <form id="addLedgerForm">
+        <div class="form-row">
+            <label for="ledger_code">Ledger Code:</label>
+            <input type="text" id="ledger_code" name="ledger_code" required>
+        </div>
+        <div class="form-row">
+            <label for="ledger_name">Ledger Name:</label>
+            <!-- Prefill from master_routes.py -> manage_ledgers -->
+            <input type="text" id="ledger_name" name="ledger_name"
+                   value="{{ prefill_ledger_name or '' }}" required>
+        </div>
+        <div class="form-row">
+            <label for="group_name">Group Name:</label>
+            <select id="group_name" name="group_name" required>
+                <option value="">-- Select Group --</option>
+                {% for g in groups %}
+                <option value="{{ g[1] }}">{{ g[1] }} ({{ g[2] }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label for="opening_balance">Opening Balance:</label>
+            <input type="number" step="0.01" id="opening_balance" name="opening_balance" value="0">
+        </div>
+        <div class="form-row">
+            <label for="opening_balance_type">Balance Type:</label>
+            <select id="opening_balance_type" name="opening_balance_type">
+                <option value="Debit">Debit</option>
+                <option value="Credit">Credit</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <button type="button" class="btn" onclick="submitAddLedger()">Save Ledger</button>
+        </div>
+    </form>
+</div>
+
+<div class="form-section">
+    <h2>Delete Ledger</h2>
+    <form id="deleteLedgerForm">
+        <div class="form-row">
+            <label for="delete_ledger_name">Ledger Name:</label>
+            <select id="delete_ledger_name" name="ledger_name">
+                <option value="">-- Select Ledger --</option>
+                {% for ledger in ledgers %}
+                <option value="{{ ledger[1] }}">{{ ledger[1] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <button type="button" class="btn" onclick="submitDeleteLedger()">Delete Ledger</button>
+        </div>
+    </form>
+</div>
+
+<script>
+function submitAddLedger() {
+    const form = document.getElementById("addLedgerForm");
+    const formData = new FormData(form);
+
+    fetch("/add_ledger", {
+        method: "POST",
+        body: formData,
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log("add_ledger response:", data);
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert("Error: " + data.message);
+        }
+    })
+    .catch(error => {
+        console.error("Error adding ledger:", error);
+        alert("Error: " + error);
+    });
+}
+
+function submitDeleteLedger() {
+    const select = document.getElementById("delete_ledger_name");
+    const ledgerName = select.value;
+    if (!ledgerName) {
+        alert("Please select a ledger to delete.");
+        return;
+    }
+    if (!confirm(`Are you sure you want to delete ledger '${ledgerName}'?`)) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("ledger_name", ledgerName);
+
+    fetch("/delete_ledger", {
+        method: "POST",
+        body: formData,
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log("delete_ledger response:", data);
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert("Error: " + data.message);
+        }
+    })
+    .catch(error => {
+        console.error("Error deleting ledger:", error);
+        alert("Error: " + error);
+    });
+}
+</script>
+
+{% endblock %}

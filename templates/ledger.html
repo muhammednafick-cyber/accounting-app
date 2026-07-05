@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+{% block title %}Manage Ledgers{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 600;
+    }
+
+    /* Enforce full width for this form */
+    input,
+    select,
+    .select2-container {
+        width: 100% !important;
+    }
+
+    /* Custom button colors */
+    button.template-btn {
+        background-color: #27ae60;
+        color: white;
+    }
+
+    button.template-btn:hover {
+        background-color: #219653;
+    }
+
+    button.download-btn {
+        background-color: #9b59b6;
+        color: white;
+    }
+
+    button.download-btn:hover {
+        background-color: #8e44ad;
+    }
+
+    #ledgerMessage,
+    #deleteLedgerMessage,
+    #ledgerImportMessage {
+        margin-top: 10px;
+        font-weight: bold;
+        font-size: 15px;
+    }
+
+    .import-header {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+
+    .top-buttons {
+        margin: 20px 0;
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Manage Ledgers</h1>
+
+<div class="top-buttons">
+    <a href="/export_ledger">
+        <button type="button" class="download-btn">Download Existing Ledgers</button>
+    </a>
+</div>
+
+<h2>Add New Ledger</h2>
+<form id="addLedgerForm">
+    <div class="form-group">
+        <label>Ledger Code</label>
+        <input type="text" name="ledger_code" required>
+    </div>
+    <div class="form-group">
+        <label>Ledger Name</label>
+        <input type="text" name="ledger_name" value="{{ prefill_ledger_name or '' }}" required>
+    </div>
+    <div class="form-group">
+        <label>Group Name</label>
+        <select name="group_name" id="group_name_select" class="select2" data-placeholder="Select Group" required
+            onchange="loadSubGroups()">
+            <option></option>
+            {% for g in groups %}
+            <option value="{{ g.group_name }}" data-code="{{ g.group_code }}">{{ g.group_name }} ({{ g.nature }})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- NEW: Sub Group Dropdown -->
+    <div class="form-group" id="sub_group_div" style="display:none;">
+        <label>Sub Group (Optional)</label>
+        <select name="sub_group_id" id="sub_group_select" class="select2" data-placeholder="Select Sub Group">
+            <option></option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>Opening Balance</label>
+        <input type="number" step="0.01" name="opening_balance" value="0">
+    </div>
+    <div class="form-group">
+        <label>Opening Balance Type</label>
+        <select name="opening_balance_type">
+            <option value="Debit">Debit</option>
+            <option value="Credit">Credit</option>
+        </select>
+    </div>
+    <button type="button" onclick="submitAddLedger()">Add Ledger</button>
+    <button type="button" class="btn" onclick="showImportSection()">Import Excel</button>
+    <div id="ledgerMessage"></div>
+
+    <div id="importSection" class="import-section-container" style="display:none;">
+        <h3>Import Ledgers from Excel</h3>
+        <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Ledger Code, Ledger Name, Group
+            Name, Opening Balance, Opening Balance Type</p>
+        <p style="margin-bottom:15px; color:#666;"><strong>Optional columns:</strong> Sub Group Name</p>
+
+        <div class="import-controls">
+            <input type="file" id="excelFile" class="import-file-input" accept=".xlsx,.xls" />
+            <a href="/download_ledger_template" style="text-decoration:none;">
+                <button type="button" class="btn btn-secondary">Download Template</button>
+            </a>
+            <button type="button" class="btn btn-primary" onclick="importLedgers()">Upload & Import</button>
+        </div>
+
+        <div id="importProgressContainer" class="progress-container" style="display:none;">
+            <div id="importProgressBar" class="progress-bar" style="width: 0%;">0%</div>
+        </div>
+        <div id="importMessage" class="status-message" style="display:none;"></div>
+    </div>
+</form>
+
+<script>
+    function loadSubGroups() {
+        var groupSelect = document.getElementById('group_name_select');
+        var selectedOption = groupSelect.options[groupSelect.selectedIndex];
+        var groupCode = selectedOption.getAttribute('data-code');
+        var subGroupDiv = document.getElementById('sub_group_div');
+        var subGroupSelect = $('#sub_group_select'); // Use jQuery for Select2 compatibility
+
+        if (groupCode) {
+            fetch('/get_sub_groups_by_group/' + groupCode)
+                .then(response => response.json())
+                .then(data => {
+                    subGroupSelect.empty().append('<option></option>'); // Clear existing
+                    if (data.success && data.sub_groups.length > 0) {
+                        subGroupDiv.style.display = 'block';
+                        data.sub_groups.forEach(sg => {
+                            subGroupSelect.append(new Option(sg.name, sg.id));
+                        });
+                    } else {
+                        subGroupDiv.style.display = 'none';
+                    }
+                    subGroupSelect.trigger('change'); // Notify Select2
+                })
+                .catch(error => console.error('Error fetching sub groups:', error));
+        } else {
+            subGroupDiv.style.display = 'none';
+            subGroupSelect.empty().trigger('change');
+        }
+    }
+</script>
+</form>
+
+<hr style="margin: 40px 0;">
+
+<!-- NO LEDGER TABLE HERE ANYMORE - REMOVED AS REQUESTED -->
+
+<hr style="margin: 40px 0;">
+
+<h2>Delete Ledger</h2>
+<form id="deleteLedgerForm">
+    <div class="form-group">
+        <label>Ledger Name (Exact Name Required)</label>
+        <input type="text" name="ledger_name" placeholder="Type full ledger name to delete" required>
+    </div>
+    <button type="button" onclick="submitDeleteLedger()">Delete Ledger</button>
+    <div id="deleteLedgerMessage"></div>
+</form>
+
+<script>
+    $(document).ready(function () {
+        $('.select2').select2({
+            placeholder: function () {
+                return $(this).data('placeholder');
+            },
+            allowClear: true
+        });
+    });
+
+    function showImportSection() {
+        document.getElementById('importSection').style.display = 'block';
+    }
+
+    function importLedgers() {
+        const fileInput = document.getElementById('excelFile');
+        const file = fileInput.files[0];
+        if (!file) return alert('Please select an Excel file.');
+
+        const msgDiv = document.getElementById('importMessage');
+        const progressContainer = document.getElementById('importProgressContainer');
+        const progressBar = document.getElementById('importProgressBar');
+
+        msgDiv.style.display = 'block';
+        msgDiv.innerText = "Reading file...";
+        msgDiv.className = "status-message info";
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        // Block UI
+        if (typeof blockUI === 'function') blockUI("Reading file...");
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+                if (jsonData.length === 0) {
+                    msgDiv.innerText = "Excel file is empty.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
+
+                msgDiv.innerText = "Uploading " + jsonData.length + " rows...";
+                progressContainer.style.display = 'block';
+
+                // Update Block UI message
+                if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
+
+                const ledgerData = jsonData.map(row => ({
+                    ledger_code: row['Ledger Code'] || row['ledger_code'],
+                    ledger_name: row['Ledger Name'] || row['ledger_name'],
+                    group_name: row['Group Name'] || row['group_name'],
+                    opening_balance: parseFloat(row['Opening Balance'] || 0),
+                    opening_balance_type: String(row['Opening Balance Type'] || row['opening_balance_type'] || 'Debit').trim()
+                }));
+
+                const payload = JSON.stringify({
+                    file_name: file.name,
+                    json_data: JSON.stringify(ledgerData)
+                });
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/queue_ledger_import', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+
+                xhr.upload.onprogress = function (e) {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        progressBar.innerText = percent + '%';
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status === 200) {
+                        try {
+                            const res = JSON.parse(xhr.responseText);
+                            msgDiv.innerText = res.message;
+                            msgDiv.className = res.success ? "status-message success" : "status-message error";
+
+                            if (res.success) {
+                                msgDiv.innerText += " Redirecting to Import Queue...";
+                                progressBar.style.width = '100%';
+                                progressBar.innerText = '100%';
+                                fileInput.value = '';
+
+                                // Keep blocked but update message, remove unload handler
+                                if (typeof blockUI === 'function') blockUI("Upload successful! Redirecting...");
+                                window.onbeforeunload = null;
+
+                                setTimeout(() => window.location.href = '/report/import-queue', 1500);
+                            } else {
+                                if (typeof unblockUI === 'function') unblockUI();
+                            }
+                        } catch (e) {
+                            msgDiv.innerText = "Error parsing response: " + e;
+                            msgDiv.className = "status-message error";
+                            if (typeof unblockUI === 'function') unblockUI();
+                        }
+                    } else {
+                        msgDiv.innerText = "Upload failed: " + xhr.statusText;
+                        msgDiv.className = "status-message error";
+                        if (typeof unblockUI === 'function') unblockUI();
+                    }
+                };
+
+                xhr.onerror = function () {
+                    msgDiv.innerText = "Network error.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                };
+
+                xhr.send(payload);
+
+            } catch (err) {
+                console.error(err);
+                msgDiv.innerText = "Error parsing Excel: " + err;
+                msgDiv.className = "status-message error";
+                if (typeof unblockUI === 'function') unblockUI();
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    function submitAddLedger() {
+        const fd = new FormData(document.getElementById('addLedgerForm'));
+        fetch('/add_ledger', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => {
+                $('#ledgerMessage').text(d.message).css('color', d.success ? '#2ecc71' : '#e74c3c');
+                if (d.success) setTimeout(() => location.reload(), 1000);
+            });
+    }
+
+    function submitDeleteLedger() {
+        const name = document.querySelector('#deleteLedgerForm input').value.trim();
+        if (!name || !confirm(`Delete ledger "${name}"?`)) return;
+        const fd = new FormData(); fd.append('ledger_name', name);
+        fetch('/delete_ledger', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => {
+                $('#deleteLedgerMessage').text(d.message).css('color', d.success ? '#2ecc71' : '#e74c3c');
+                if (d.success) setTimeout(() => location.reload(), 1000);
+            });
+    }
+</script>
+{% endblock %}

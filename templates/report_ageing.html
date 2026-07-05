@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Ageing Report{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Ageing Report</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="report_type">Report Type:</label>
+            <select id="report_type" name="report_type" class="select2 input-standard-width" data-placeholder="Select Report Type">
+                <option></option>
+                <option value="receivable">Receivables (Debtors)</option>
+                <option value="payable">Payables (Creditors)</option>
+            </select>
+        </div>
+        <div class="entry">
+            <label for="as_of_date">As Of Date:</label>
+            <input type="text" id="as_of_date" name="as_of_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="fetchReport()">Show Report</button>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+
+    <div id="reportContainer" style="margin-top: 20px;">
+        <table id="reportTable" class="table-bordered" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Party Name</th>
+                    <th style="text-align: right;">Total Balance</th>
+                    <th style="text-align: right;">Not Due</th>
+                    <th style="text-align: right;">0-30 Days</th>
+                    <th style="text-align: right;">31-60 Days</th>
+                    <th style="text-align: right;">61-90 Days</th>
+                    <th style="text-align: right;">> 90 Days</th>
+                </tr>
+            </thead>
+            <tbody id="reportBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            $('.select2').select2({
+                allowClear: true,
+                placeholder: function() {
+                    return $(this).data('placeholder');
+                }
+            });
+        });
+
+        // Set default date to today
+        document.addEventListener('DOMContentLoaded', function() {
+            const asOfDateInput = document.getElementById('as_of_date');
+            if (!asOfDateInput.value) {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                asOfDateInput.value = `${day}-${month}-${year}`;
+            }
+        });
+
+        function exportReport() {
+            const reportType = document.getElementById('report_type').value;
+            const asOfDate = document.getElementById('as_of_date').value;
+            
+            if (!reportType) {
+                alert('Please select a report type.');
+                return;
+            }
+
+            window.location.href = `/export_report/ageing?type=${reportType}&as_of_date=${asOfDate}`;
+        }
+
+        function fetchReport() {
+            const reportType = document.getElementById('report_type').value;
+            const asOfDate = document.getElementById('as_of_date').value;
+            
+            if (!reportType) {
+                alert('Please select a report type.');
+                return;
+            }
+
+            fetch(`/get_ageing_report?type=${reportType}&as_of_date=${asOfDate}`)
+                .then(response => response.json())
+                .then(response => {
+                    if (response.success) {
+                        const data = response.data;
+                        const tbody = document.getElementById('reportBody');
+                        tbody.innerHTML = '';
+                        
+                        if (data.length === 0) {
+                            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No data found</td></tr>';
+                            return;
+                        }
+
+                        data.forEach(item => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${item.ledger_name}</td>
+                                <td style="text-align: right;">${parseFloat(item.balance).toFixed(2)}</td>
+                                <td style="text-align: right;">${parseFloat(item.buckets.not_due).toFixed(2)}</td>
+                                <td style="text-align: right;">${parseFloat(item.buckets['0_30']).toFixed(2)}</td>
+                                <td style="text-align: right;">${parseFloat(item.buckets['31_60']).toFixed(2)}</td>
+                                <td style="text-align: right;">${parseFloat(item.buckets['61_90']).toFixed(2)}</td>
+                                <td style="text-align: right;">${parseFloat(item.buckets['90_plus']).toFixed(2)}</td>
+                            `;
+                            tbody.appendChild(row);
+                        });
+                    } else {
+                        alert('Error fetching report: ' + response.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred while fetching the report.');
+                });
+        }
+    </script>
+{% endblock %}

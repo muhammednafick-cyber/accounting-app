@@ -1,0 +1,3138 @@
+{% extends "base.html" %}
+
+{% block title %}
+{% if voucher_type == 'Additional Charge' %}
+Charges on Purchase Voucher
+{% else %}
+{{ voucher_type }} Voucher
+{% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<script>
+    // calculateDueDate logic removed
+
+</script>
+<style>
+    /* Layout specific overrides */
+    .form-row label {
+        display: inline-block;
+        width: 150px;
+    }
+
+    /* Enforce standard width for this form */
+    .form-row input,
+    .form-row select,
+    .form-row textarea,
+    .select2-container {
+        width: 250px !important;
+    }
+
+    /* Table specific overrides */
+    td .select2-container {
+        width: 100% !important;
+    }
+
+    /* Keep table styles */
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 10px;
+    }
+
+    th,
+    td {
+        border: 1px solid #ccc;
+        padding: 8px;
+        /* Increased padding for better look */
+        text-align: left;
+    }
+
+    th {
+        background-color: #f2f2f2;
+    }
+
+    .form-section {
+        margin-top: 20px;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        background-color: #fafafa;
+    }
+
+    .form-section h2 {
+        margin-top: 0;
+    }
+
+    .form-row {
+        margin-bottom: 15px;
+        /* Increased spacing */
+    }
+
+    .narrow-input {
+        width: 100px !important;
+    }
+
+    .mid-input {
+        width: 140px !important;
+    }
+
+    .vat-input {
+        width: 80px !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<h1>
+    {% if voucher_type == 'Additional Charge' %}
+    Charges on Purchase Voucher
+    {% else %}
+    {{ voucher_type }} Voucher
+    {% endif %}
+</h1>
+
+{# You can keep result_message for non-redirect cases if you still use it #}
+{% if result_message %}
+<p style="color: {% if 'Added' in result_message or 'Updated' in result_message %}green{% else %}red{% endif %};">
+    {{ result_message }}
+</p>
+{% endif %}
+
+{% if voucher_type in ['Receipt', 'Payment', 'Contra', 'Journal', 'Expense'] %}
+<div class="form-section" style="background-color: #e8f4fc; border-color: #b6e0fe;">
+    <h2>Edit Voucher</h2>
+    <div class="form-row">
+        <label for="edit_voucher_search">Fetch Voucher:</label>
+        <div style="display:inline-block;">
+            <input type="text" id="edit_voucher_search" placeholder="Enter Voucher No (e.g. REC-00001)"
+                style="width: 200px;">
+            <button type="button" class="btn" onclick="fetchVoucherDetails()"
+                style="background-color: #2196F3; color: white;">Fetch details</button>
+            <span id="edit_status" style="margin-left: 10px; font-weight: bold;"></span>
+        </div>
+    </div>
+    <div id="edit_controls" style="display:none; margin-top: 10px;">
+        <span class="badge" style="background-color: orange; color: black; padding: 5px;">EDIT MODE</span>
+        <button type="button" class="btn" onclick="cancelEditMode()"
+            style="background-color: #f44336; color: white; margin-left: 10px;">Cancel Edit</button>
+    </div>
+</div>
+{% endif %}
+
+<form id="voucherForm" method="post" action="{% if edit_mode %}/update_voucher{% else %}/add_voucher{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <input type="hidden" name="voucher_type" value="{{ voucher_type }}">
+
+    <div class="form-section">
+        <h2>Voucher Details</h2>
+        <div class="form-row">
+            <label for="voucher_number">Voucher Number:</label>
+            <input type="text" id="voucher_number" name="voucher_number" value="{{ edit_voucher_number or '' }}"
+                readonly>
+        </div>
+        <div class="form-row">
+            <label for="date">Date:</label>
+            <input type="text" id="date" name="date" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}"
+                value="{{ edit_date or '' }}" required>
+        </div>
+        {% if voucher_type in ['Purchase', 'Purchase Return', 'Expense'] %}
+        <div class="form-row">
+            <label for="original_invoice_ref">Original Invoice Ref:</label>
+            <input type="text" id="original_invoice_ref" name="original_invoice_ref"
+                value="{{ original_invoice_ref or '' }}">
+        </div>
+        <div class="form-row">
+            <label for="original_invoice_date">Invoice Date: <span style="color:red;">*</span></label>
+            <input type="text" id="original_invoice_date" name="original_invoice_date" placeholder="DD-MM-YYYY"
+                pattern="\d{2}-\d{2}-\d{4}" value="{{ original_invoice_date or '' }}" required>
+        </div>
+        {% endif %}
+        {% if voucher_type in ['Sales', 'Purchase', 'Expense'] %}
+
+        {% endif %}
+        {% if multiple_locations_enabled and voucher_type in ['Sales','Purchase','Sales Return','Purchase Return','Stock
+        Adjustment'] %}
+        <div class="form-row">
+            <label for="location_name">Location:</label>
+            <select id="location_name" name="location_name" class="select2" data-placeholder="Select Location">
+                <option></option>
+                {% for loc in locations %}
+                <option value="{{ loc.location_name }}" {% if selected_location_name==loc.location_name %}selected{%
+                    endif %}>{{ loc.location_name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if multiple_locations_enabled and voucher_type == 'Inventory Transfer' %}
+        <div class="form-row">
+            <label for="from_location_name">From Location:</label>
+            <select id="from_location_name" name="from_location_name" class="select2"
+                data-placeholder="Select From Location" required>
+                <option></option>
+                {% for loc in locations %}
+                <option value="{{ loc.location_name }}" {% if from_location_name==loc.location_name %}selected{% endif
+                    %}>{{ loc.location_name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label for="to_location_name">To Location:</label>
+            <select id="to_location_name" name="to_location_name" class="select2" data-placeholder="Select To Location"
+                required>
+                <option></option>
+                {% for loc in locations %}
+                <option value="{{ loc.location_name }}" {% if to_location_name==loc.location_name %}selected{% endif %}>
+                    {{ loc.location_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <div class="form-row" style="{% if not cost_center_applicable %}display:none;{% endif %}">
+            <label for="cost_center_name">Cost Center:</label>
+            <select id="cost_center_name" name="cost_center_name" class="select2" data-placeholder="None"
+                onchange="updateLineCostCenters(this.value)">
+                <option></option>
+                {% for c in cost_centers %}
+                <option value="{{ c.center_name }}" {% if cost_center_name==c.center_name %}selected{% endif %}>
+                    {{ c.center_name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-row">
+            <label for="narration">Narration:</label>
+            <textarea id="narration" name="narration" rows="2" cols="40"></textarea>
+        </div>
+    </div>
+
+    {% if voucher_type not in ['Inventory Transfer', 'Stock Adjustment', 'Additional Charge'] %}
+    <div class="form-section">
+        <h2>Ledger Entries</h2>
+        {% if voucher_type == 'Service Income Return' %}
+        <div class="form-row">
+            <label for="source_voucher_number">Source Voucher:</label>
+            <input type="text" id="source_voucher_number" placeholder="e.g., SIN-00001">
+            <button type="button" class="btn" onclick="loadReturnItems()">Load Ledgers</button>
+        </div>
+        {% endif %}
+        <table id="ledgerTable">
+            <thead>
+                <tr>
+                    <th>Ledger Name</th>
+                    {% if cost_center_applicable %}
+                    <th>Cost Center</th>
+                    {% endif %}
+                    <th>Amount</th>
+                    <th>Type</th>
+                    {% if voucher_type in ['Expense', 'Service Income', 'Service Income Return'] and company
+                    and company.vat_applicable == 1 %}
+                    <th>VAT App?</th>
+                    <th>VAT %</th>
+                    <th>VAT Amount</th>
+                    {% endif %}
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                {% for le in ledger_entries %}
+                {% set skip_vat_ledger = le.ledger_name in ['Output VAT 5%','Input VAT 5%'] %}
+                {% set le_cost_center = le.cost_center_name %}
+                {% if not skip_vat_ledger %}
+                <tr class="ledger-row">
+                    <td>
+                        <select name="ledger_name[]" class="ledger-name-select select2" data-placeholder="Select Ledger"
+                            onchange="onLedgerTypeChange(this)" required>
+                            <option></option>
+                            {% for ledger in ledgers %}
+                            {% if ledger.ledger_name not in ['Output VAT 5%','Input VAT 5%'] %}
+                            <option value="{{ ledger.ledger_name }}" {% if le.ledger_name==ledger.ledger_name
+                                %}selected{% endif %}>{{
+                                ledger.ledger_name }}
+                            </option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </td>
+                    {% if cost_center_applicable %}
+                    <td>
+                        <select name="ledger_cost_center[]" class="ledger-cost-center-select select2"
+                            data-placeholder="None">
+                            <option></option>
+                            {% for c in cost_centers %}
+                            <option value="{{ c.center_name }}" {% if le_cost_center==c.center_name %}selected{% endif
+                                %}>{{ c.center_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    {% endif %}
+                    <td>
+                        <input type="number" name="ledger_amount[]" class="ledger-amount-input" value="{{ le.amount }}"
+                            step="0.01" required>
+                    </td>
+                    <td>
+                        <select name="ledger_type[]" class="ledger-type-select" onchange="onLedgerTypeChange(this)"
+                            required>
+                            <option value="Debit" {% if le.type=='Debit' %}selected{% endif %}>Debit</option>
+                            <option value="Credit" {% if le.type=='Credit' %}selected{% endif %}>Credit</option>
+                        </select>
+                    </td>
+                    {% if voucher_type in ['Expense', 'Service Income', 'Service Income Return'] %}
+                    {% if company and company.vat_applicable == 1 %}
+                    <td class="vat-cell">
+                        <input type="checkbox" name="ledger_vat_applicable[]" class="vat-applicable-checkbox" value="1"
+                            {% if le.vat_applicable %}checked{% endif %} onchange="onVATCheckboxChange(this)">
+                    </td>
+                    <td class="vat-cell">
+                        <input type="number" name="ledger_vat_percent[]" class="vat-percent-input"
+                            value="{{ le.vat_percent|default(5) }}" step="0.01" readonly>
+                    </td>
+                    <td class="vat-cell">
+                        <input type="number" name="ledger_vat_amount[]" class="vat-amount-input"
+                            value="{{ le.vat_amount|default(0) }}" step="0.01" readonly>
+                    </td>
+                    {% else %}
+                    <input type="hidden" name="ledger_vat_applicable[]" value="0">
+                    <input type="hidden" name="ledger_vat_percent[]" value="0">
+                    <input type="hidden" name="ledger_vat_amount[]" value="0">
+                    {% endif %}
+                    {% endif %}
+                    <td>
+                        <button type="button" class="btn" onclick="removeLedgerRow(this)">Remove</button>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+
+            </tbody>
+        </table>
+        <button type="button" class="btn" onclick="addLedgerRow()">Add Ledger Entry</button>
+    </div>
+    {% endif %}
+
+    {% if voucher_type not in ['Journal', 'Contra', 'Payment', 'Receipt', 'Expense', 'Service Income', 'Service Income
+    Return', 'Additional Charge'] %}
+    <div class="form-section" id="item-section">
+        <h2>Item Entries</h2>
+        {% if voucher_type in ['Sales Return','Purchase Return'] %}
+        <div class="form-row">
+            <label for="source_voucher_number">Source Voucher:</label>
+            <input type="text" id="source_voucher_number" placeholder="e.g., SAL-00001 or PUR-00001">
+            <button type="button" class="btn" onclick="loadReturnItems()">Load Items</button>
+        </div>
+        {% endif %}
+        <table id="itemTable">
+            <thead>
+                <tr>
+                    {% if voucher_type == 'Inventory Transfer' %}
+                    <th>Item Name</th>
+                    <th>Quantity</th>
+                    <th>Action</th>
+                    {% elif voucher_type == 'Stock Adjustment' %}
+                    <th>Item Name</th>
+                    <th>Quantity</th>
+                    <th>Selected Ledger</th>
+                    {% if cost_center_applicable %}
+                    <th>Cost Center</th>
+                    {% endif %}
+                    <th>Ledger Type</th>
+                    <th>Action</th>
+                    {% else %}
+                    <th>Item Name</th>
+                    <th style="width: 100px;">Quantity</th>
+                    {% if voucher_type == 'Sales' %}
+                    <th>Available Qty</th>
+                    {% endif %}
+                    <th style="width: 140px;">Unit Price</th>
+                    <th>Amount</th>
+                    {% if voucher_type not in ['Purchase', 'Purchase Return'] %}
+                    <th>Ledger Name</th>
+                    {% endif %}
+                    {% if voucher_type == 'Purchase' %}
+                    <th style="width: 100px;">Weight (KG)</th>
+                    {% endif %}
+                    {% if cost_center_applicable %}
+                    <th>Cost Center</th>
+                    {% endif %}
+                    {% if voucher_type != 'Purchase' %}
+                    <th>Type</th>
+                    {% endif %}
+                    {% if company and company.vat_applicable == 1 %}
+                    <th style="width: 80px;">VAT %</th>
+                    <th style="width: 80px;">VAT Amount</th>
+                    <th>Sub Total</th>
+                    {% endif %}
+                    <th>Action</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+
+                {% for ie in item_entries %}
+                {% set ie_cost_center = ie.cost_center_code %}
+                {% set ie_weight = ie.weight_kg if ie.weight_kg is defined else 0 %}
+                <tr class="item-row">
+                    <td>
+                        <select name="item_name[]" class="item-name-select select2" data-placeholder="Select Item"
+                            onchange="onItemChange(this)" required>
+                            <option></option>
+                            {% for item in items %}
+                            <option value="{{ item.name }}" {% if ie.item_name==item.name %}selected{% endif %}>
+                                {{ item.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        <input type="number" name="quantity[]" class="quantity-input narrow-input"
+                            oninput="onItemInputChange(this)" value="{{ ie.quantity }}" step="0.01" required>
+                        <input type="hidden" name="ref_voucher_number[]"
+                            value="{{ ie.get('ref_voucher_number') or ie.get('_ref_voucher_number') or '' }}">
+                    </td>
+
+                    {% if voucher_type == 'Stock Adjustment' %}
+                    <td>
+                        <select name="item_ledger_name[]" class="item-ledger-select select2"
+                            data-placeholder="Select Ledger" required>
+                            <option></option>
+                            {% for ledger in ledgers %}
+                            <option value="{{ ledger.ledger_name }}" {% if ie.ledger_name==ledger.ledger_name
+                                %}selected{% endif %}>{{ ledger.ledger_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    {% if cost_center_applicable %}
+                    <td>
+                        <select name="item_cost_center[]" class="item-cost-center-select select2"
+                            data-placeholder="None">
+                            <option></option>
+                            {% for c in cost_centers %}
+                            <option value="{{ c.center_name }}" {% if ie_cost_center==c.center_name %}selected{% endif
+                                %}>{{ c.center_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    {% endif %}
+                    <td>
+                        <select name="item_type[]" class="item-type-select" required>
+                            <option value="Debit" {% if ie.type=='Debit' %}selected{% endif %}>Debit</option>
+                            <option value="Credit" {% if ie.type=='Credit' %}selected{% endif %}>Credit</option>
+                        </select>
+                    </td>
+                    {% elif voucher_type == 'Inventory Transfer' %}
+                    <input type="hidden" name="unit_price[]" value="0">
+                    <input type="hidden" name="item_amount[]" value="0">
+                    <input type="hidden" name="item_ledger_name[]" value="">
+                    <input type="hidden" name="item_type[]" value="">
+                    <input type="hidden" name="vat_percent[]" value="0">
+                    <input type="hidden" name="vat_amount[]" value="0">
+                    {% else %}
+                    {% if voucher_type == 'Sales' %}
+                    <td><span class="available-qty"></span></td>
+                    {% endif %}
+
+                    <td>
+                        <input type="number" name="unit_price[]" class="unit-price-input mid-input"
+                            oninput="onItemInputChange(this)" value="{{ ie.unit_price }}" step="0.01" required>
+                    </td>
+                    <td>
+                        <input type="number" name="item_amount[]" class="item-amount-input" value="{{ ie.amount }}"
+                            step="0.01" readonly>
+                    </td>
+                    {% if voucher_type not in ['Purchase', 'Purchase Return'] %}
+                    <td>
+                        <select name="item_ledger_name[]" class="item-ledger-select select2"
+                            data-placeholder="Select Ledger" required>
+                            <option></option>
+                            {% for ledger in ledgers %}
+                            <option value="{{ ledger.ledger_name }}" {% if ie.ledger_name==ledger.ledger_name
+                                %}selected{% endif %}>
+                                {{ ledger.ledger_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    {% else %}
+                    <input type="hidden" name="item_ledger_name[]" value="">
+                    {% endif %}
+                    {% if voucher_type == 'Purchase' %}
+                    <td>
+                        <input type="number" name="weight_kg[]" class="weight-input narrow-input"
+                            value="{{ ie_weight }}" step="0.01">
+                        <input type="hidden" name="item_type[]" value="Debit">
+                    </td>
+                    {% endif %}
+                    {% if cost_center_applicable %}
+                    <td>
+                        <select name="item_cost_center[]" class="item-cost-center-select select2"
+                            data-placeholder="None">
+                            <option></option>
+                            {% for c in cost_centers %}
+                            <option value="{{ c.center_name }}" {% if ie_cost_center==c.center_name %}selected{% endif
+                                %}>{{ c.center_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    {% endif %}
+                    {% if voucher_type != 'Purchase' %}
+                    <td>
+                        {% if voucher_type == 'Sales' %}
+                        <select name="item_type[]" class="item-type-select" required disabled>
+                            <option value="Credit" selected>Credit</option>
+                        </select>
+                        <input type="hidden" name="item_type[]" value="Credit">
+                        {% elif voucher_type == 'Sales Return' %}
+                        <select name="item_type[]" class="item-type-select" required disabled>
+                            <option value="Debit" selected>Debit</option>
+                        </select>
+                        <input type="hidden" name="item_type[]" value="Debit">
+                        {% elif voucher_type == 'Purchase Return' %}
+                        <select name="item_type[]" class="item-type-select" required disabled>
+                            <option value="Credit" selected>Credit</option>
+                        </select>
+                        <input type="hidden" name="item_type[]" value="Credit">
+                        {% else %}
+                        <select name="item_type[]" class="item-type-select" required>
+                            <option value="Debit" {% if ie.type=='Debit' %}selected{% endif %}>Debit</option>
+                            <option value="Credit" {% if ie.type=='Credit' %}selected{% endif %}>Credit</option>
+                        </select>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+
+                    {% if company and company.vat_applicable == 1 %}
+                    <td>
+                        <input type="number" name="vat_percent[]" class="vat-percent-input-item vat-input" step="0.01"
+                            min="0" max="100" oninput="onVatPercentChange(this)">
+                    </td>
+                    <td>
+                        <input type="number" name="vat_amount[]" class="vat-amount-input-item vat-input" value="0"
+                            step="0.01" readonly>
+                    </td>
+                    <td>
+                        <input type="number" name="line_subtotal[]" class="item-subtotal-input-item" value="0"
+                            step="0.01" readonly>
+                    </td>
+                    {% else %}
+                    <input type="hidden" name="vat_percent[]" class="vat-percent-input-item" value="0">
+                    <input type="hidden" name="vat_amount[]" class="vat-amount-input-item" value="0">
+                    <input type="hidden" name="line_subtotal[]" class="item-subtotal-input-item" value="0">
+                    {% endif %}
+                    {% endif %}
+
+                    <td>
+                        <button type="button" class="btn" onclick="removeItemRow(this)">Remove</button>
+                    </td>
+                </tr>
+                {% endfor %}
+
+            </tbody>
+        </table>
+        <button type="button" class="btn" onclick="addItemRow()">Add Item Entry</button>
+        {% if voucher_type not in ['Inventory Transfer','Stock Adjustment'] %}
+        <div class="form-row" style="margin-top:8px;">
+            <label>Total (incl. VAT):</label>
+            <span id="grandTotalInclVat">0.00</span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if voucher_type == 'Additional Charge' %}
+    <div class="form-section">
+        <h2>Charges on Purchase Details</h2>
+        <div class="form-row">
+            <label for="pv_search_input">Purchase Voucher Ref:</label>
+            <div style="display: inline-block;">
+                <input type="text" id="pv_search_input" placeholder="Enter Voucher No or Supplier Ref"
+                    style="width: 200px;" value="">
+                <button type="button" class="btn" onclick="searchPurchaseVoucher()"
+                    style="margin-left: 5px;">Search</button>
+            </div>
+            <input type="hidden" id="linked_voucher_number" name="linked_voucher_number" value="" required>
+        </div>
+        <div id="pv_search_results"
+            style="margin-left: 150px; margin-bottom: 15px; max-height: 200px; overflow-y: auto; display: none; border: 1px solid #ddd; padding: 5px;">
+            <!-- Results will be populated here -->
+        </div>
+        <div id="selected_pv_details"
+            style="margin-left: 150px; margin-bottom: 15px; display: none; padding: 10px; background: #f0f8ff; border: 1px solid #b0d4f1; border-radius: 4px;">
+            <!-- Selected voucher details will be shown here -->
+        </div>
+
+    </div>
+
+    <div class="form-section">
+        <h2>Charges</h2>
+        <table id="chargesTable">
+            <thead>
+                <tr>
+                    <th>Party Ledger</th>
+                    <th>Amount</th>
+                    <th>VAT Amount</th>
+                    <th>Method of Valuation</th>
+                    <th>Narration</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if additional_charges %}
+                {% for charge in additional_charges %}
+                <tr class="charge-row">
+                    <td>
+                        <select name="charge_party_ledger[]" class="select2" required style="width: 200px;">
+                            <option></option>
+                            {% for ledger in ledgers %}
+                            <option value="{{ ledger.ledger_name }}" {% if charge.party_ledger==ledger.ledger_name
+                                %}selected{% endif %}>{{
+                                ledger.ledger_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td><input type="number" name="charge_amount[]" step="0.01" value="{{ charge.amount }}" required>
+                    </td>
+                    <td><input type="number" name="charge_vat_amount[]" step="0.01" value="{{ charge.vat_amount }}">
+                    </td>
+                    <td>
+                        <select name="charge_method[]" required>
+                            <option value="Quantity" {% if charge.valuation_method=='Quantity' %}selected{% endif %}>
+                                Quantity</option>
+                            <option value="Value" {% if charge.valuation_method=='Value' %}selected{% endif %}>Value
+                            </option>
+                            <option value="Weight (KG)" {% if charge.valuation_method=='Weight (KG)' %}selected{% endif
+                                %}>Weight (KG)
+                            </option>
+                        </select>
+                    </td>
+                    <td><input type="text" name="charge_narration[]" value="{{ charge.narration }}"></td>
+                    <td><button type="button" class="btn" onclick="removeChargeRow(this)">Remove</button></td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr class="charge-row">
+                    <td>
+                        <select name="charge_party_ledger[]" class="select2" required style="width: 200px;">
+                            <option></option>
+                            {% for ledger in ledgers %}
+                            <option value="{{ ledger.ledger_name }}">{{ ledger.ledger_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td><input type="number" name="charge_amount[]" step="0.01" required></td>
+                    <td><input type="number" name="charge_vat_amount[]" step="0.01" value="0"></td>
+                    <td>
+                        <select name="charge_method[]" required>
+                            <option value="Quantity">Quantity</option>
+                            <option value="Value">Value</option>
+                            <option value="Weight (KG)">Weight (KG)</option>
+                        </select>
+                    </td>
+                    <td><input type="text" name="charge_narration[]"></td>
+                    <td><button type="button" class="btn" onclick="removeChargeRow(this)">Remove</button></td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+        <button type="button" class="btn" onclick="addChargeRow()">Add Charge</button>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 20px;">
+        <button type="submit" class="btn" style="background-color: #4CAF50; color: white;">
+            Submit Voucher
+        </button>
+        <span id="voucherMessageDynamic" class="alert"
+            style="display:inline-block; vertical-align:middle; margin-left:12px;"></span>
+        <a href="/vouchers"><button type="button" class="btn">Cancel</button></a>
+        {% if voucher_type not in ['Sales Return', 'Purchase Return'] %}
+        <button type="button" class="btn" onclick="showImportSection()"
+            style="background-color: #3498db; color: white;">Import Excel</button>
+        {% endif %}
+    </div>
+
+    {% if voucher_type not in ['Sales Return', 'Purchase Return'] %}
+    <div id="importSection" class="import-section-container" style="display:none;">
+        <h3>Import {{ voucher_type }} from Excel</h3>
+        <p style="margin-bottom:15px; color:#666;">Use the template below to prepare your data. <strong>Voucher Group
+                ID</strong> is mandatory to group rows into a single voucher.</p>
+
+        <div class="import-controls">
+            <input type="file" id="excelFile" class="import-file-input" accept=".xlsx" />
+            <button type="button" class="btn btn-secondary" onclick="downloadTemplate()">Download Template</button>
+            <button type="button" class="btn btn-primary" onclick="importExcel()">Upload & Import</button>
+        </div>
+
+        <div id="importProgressContainer" class="progress-container" style="display:none;">
+            <div id="importProgressBar" class="progress-bar" style="width: 0%;">0%</div>
+        </div>
+        <div id="importMessage" class="status-message" style="display:none;"></div>
+    </div>
+    {% endif %}
+</form>
+
+
+<script>
+    const voucherType = '{{ voucher_type }}';
+    window.__currentVoucherType = voucherType;
+    const vatApplicable = {{ 1 if company and company.vat_applicable == 1 else 0 }};
+    const costCenterApplicable = {{ 'true' if cost_center_applicable else 'false' }};
+    const costCenterMandatory = {{ 'true' if cost_center_mandatory else 'false' }};
+    const costCentersData = {{ cost_centers | tojson }};
+    const costCenterOptions = '<option></option>' + costCentersData.map(c => `<option value="${c.center_name}">${c.center_name}</option>`).join('');
+    const ledgersData = {{ ledgers | tojson }};
+    const allowedLedgersDr = {{ allowed_ledgers_dr | tojson }};
+    const allowedLedgersCr = {{ allowed_ledgers_cr | tojson }};
+    const itemsData = {{ items | tojson }};
+    const itemsDict = {{ items_dict | tojson }};
+    const vatLedgers = ['Output VAT 5%', 'Input VAT 5%'];
+    const ledgerOptionsNoVat = ledgersData.filter(l => !vatLedgers.includes(l.ledger_name)).map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+    const cashBankOptions = ledgersData.filter(l => ['G005', 'G006'].includes(l.group_code)).map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+    const allLedgerOptions = ledgersData.map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+
+    function normalizeText(s) {
+        return (s || '').toString().trim();
+    }
+
+    function safeLower(s) {
+        return normalizeText(s).toLowerCase();
+    }
+
+    function parseAmount(text) {
+        const m = (text || '').replace(/,/g, '').match(/(\d+(\.\d{1,2})?)/);
+        if (!m) return null;
+        const val = Number(m[1]);
+        return Number.isFinite(val) ? Math.round(val * 100) / 100 : null;
+    }
+
+    function parseDateFromText(text) {
+        const t = safeLower(text);
+        if (t.includes('today')) {
+            const d = new Date();
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+        }
+        const iso = (text || '').match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+        if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+        const dmy = (text || '').match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
+        if (dmy) {
+            const dd = String(dmy[1]).padStart(2, '0');
+            const mm = String(dmy[2]).padStart(2, '0');
+            let yyyy = dmy[3];
+            if (yyyy.length === 2) yyyy = `20${yyyy}`;
+            return `${yyyy}-${mm}-${dd}`;
+        }
+        return null;
+    }
+
+    function ledgerNamesList(side = null) {
+        let pool = ledgersData || [];
+        // Filter by side config if present
+        if (side === 'Debit' && allowedLedgersDr && allowedLedgersDr.length > 0) {
+            const allowed = new Set(allowedLedgersDr);
+            pool = pool.filter(l => allowed.has(l.ledger_name));
+        } else if (side === 'Credit' && allowedLedgersCr && allowedLedgersCr.length > 0) {
+            const allowed = new Set(allowedLedgersCr);
+            pool = pool.filter(l => allowed.has(l.ledger_name));
+        }
+
+        // Filter Receipt/Payment Cash/Bank constraint contextually?
+        // Chatbot logic might be generic, but if we know side, we can respect config.
+        // The hardcoded Cash/Bank logic is tricky here because "Receipt" Party is never Cash/Bank, but Account IS.
+        // We will rely on the prompts usually asking for "Party" vs "Cash/Bank".
+        // If we strictly enforce, we might break "Contra" where both are Cash/Bank.
+        // Let's rely on Config primarily.
+
+        return pool.map(l => l.ledger_name).filter(Boolean);
+    }
+
+    function findLedgerCandidates(query, limit = 6, side = null) {
+        const q = safeLower(query);
+        if (!q) return [];
+        const names = ledgerNamesList(side).filter(n => !vatLedgers.includes(n));
+        const exact = names.find(n => safeLower(n) === q);
+        if (exact) return [exact];
+        const starts = names.filter(n => safeLower(n).startsWith(q));
+        const contains = names.filter(n => safeLower(n).includes(q) && !safeLower(n).startsWith(q));
+        return [...starts, ...contains].slice(0, limit);
+    }
+
+    function bestDefaultCashLedger() {
+        const names = ledgerNamesList();
+        const exact = names.find(n => safeLower(n) === 'cash');
+        if (exact) return exact;
+        const cashLike = names.find(n => safeLower(n).includes('cash'));
+        return cashLike || null;
+    }
+
+    function bestDefaultBankLedger() {
+        const names = ledgerNamesList();
+        const bankLike = names.find(n => safeLower(n).includes('bank'));
+        return bankLike || null;
+    }
+
+    function renderQuickButtons(container, buttons) {
+        if (!container) return;
+        container.innerHTML = '';
+        (buttons || []).forEach(b => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'rv-quick-btn';
+            btn.textContent = b.label;
+            btn.dataset.action = b.action || '';
+            btn.dataset.value = b.value || '';
+            container.appendChild(btn);
+        });
+    }
+
+    function appendChatMessage(messagesEl, who, text) {
+        if (!messagesEl) return;
+        const row = document.createElement('div');
+        row.className = `rv-msg ${who}`;
+        const bubble = document.createElement('div');
+        bubble.className = 'rv-bubble';
+        bubble.textContent = text;
+        row.appendChild(bubble);
+        messagesEl.appendChild(row);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function setStatus(statusEl, text, isError = false) {
+        if (!statusEl) return;
+        statusEl.textContent = text || '';
+        statusEl.style.color = isError ? '#b00020' : '#2b6a2b';
+    }
+
+    function voucherDraftStorageKey() {
+        return `voucherDrafts:${voucherType}`;
+    }
+
+    function getDrafts() {
+        try {
+            const raw = localStorage.getItem(voucherDraftStorageKey());
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+
+    function setDrafts(drafts) {
+        localStorage.setItem(voucherDraftStorageKey(), JSON.stringify(drafts || []));
+    }
+
+    function updateDraftCount(countEl) {
+        if (!countEl) return;
+        countEl.textContent = String(getDrafts().length);
+    }
+
+    function getHeaderCostCenterName() {
+        const el = document.getElementById('cost_center_name');
+        return el ? normalizeText(el.value) : '';
+    }
+
+    function setHeaderCostCenterName(name) {
+        const el = document.getElementById('cost_center_name');
+        if (!el) return;
+        el.value = name || '';
+        $(el).trigger('change');
+        if (costCenterApplicable && name) {
+            updateLineCostCenters(name);
+            const selects = document.querySelectorAll('.ledger-cost-center-select, .item-cost-center-select');
+            selects.forEach(s => {
+                s.value = name;
+                $(s).trigger('change');
+            });
+        }
+    }
+
+    function costCenterNamesList() {
+        return (costCentersData || []).map(c => c.center_name).filter(Boolean);
+    }
+
+    function findCostCenterCandidates(query, limit = 8) {
+        const q = safeLower(query);
+        if (!q) return [];
+        const names = costCenterNamesList();
+        const exact = names.find(n => safeLower(n) === q);
+        if (exact) return [exact];
+        const starts = names.filter(n => safeLower(n).startsWith(q));
+        const contains = names.filter(n => safeLower(n).includes(q) && !safeLower(n).startsWith(q));
+        return [...starts, ...contains].slice(0, limit);
+    }
+
+    function buildDraftSummary(d) {
+        const date = d.date || '';
+        const amount = (typeof d.amount === 'number') ? Number(d.amount).toFixed(2) : '';
+        const narration = d.narration || '';
+        const entries = Array.isArray(d.ledgerEntries) ? d.ledgerEntries : [];
+        const debits = entries.filter(e => e.type === 'Debit').map(e => e.ledgerName).filter(Boolean);
+        const credits = entries.filter(e => e.type === 'Credit').map(e => e.ledgerName).filter(Boolean);
+        const cc = d.costCenterName ? `\nCost Center: ${d.costCenterName}` : '';
+        return `Type: ${d.voucherType}\nDate: ${date}\nAmount: ${amount}\nDebit: ${debits.join(', ')}\nCredit: ${credits.join(', ')}${cc}\nNarration: ${narration}`;
+    }
+
+    function clearLedgerTable() {
+        const tbody = document.querySelector('#ledgerTable tbody');
+        if (tbody) tbody.innerHTML = '';
+    }
+
+    function setLedgerRowValues(rowEl, ledgerName, amount, type, costCenterName) {
+        if (!rowEl) return;
+        const ledgerSelect = rowEl.querySelector('select[name="ledger_name[]"]');
+        const amountInput = rowEl.querySelector('input[name="ledger_amount[]"]');
+        const typeSelect = rowEl.querySelector('select[name="ledger_type[]"]');
+        const ccSelect = rowEl.querySelector('select[name="ledger_cost_center[]"]');
+        if (ledgerSelect) {
+            ledgerSelect.value = ledgerName || '';
+            $(ledgerSelect).trigger('change');
+        }
+        if (amountInput) amountInput.value = (typeof amount === 'number' ? amount.toFixed(2) : '');
+        if (typeSelect) typeSelect.value = type || 'Debit';
+        if (ccSelect) {
+            ccSelect.value = costCenterName || '';
+            $(ccSelect).trigger('change');
+        }
+    }
+
+    function fillVoucherIntoForm(draft) {
+        const dateInput = document.getElementById('date');
+        const narrationInput = document.getElementById('narration');
+        if (dateInput && draft.date) dateInput.value = draft.date;
+        if (narrationInput) narrationInput.value = draft.narration || '';
+        if (draft.costCenterName) setHeaderCostCenterName(draft.costCenterName);
+        clearLedgerTable();
+        const entries = Array.isArray(draft.ledgerEntries) ? draft.ledgerEntries : [];
+        entries.forEach(() => addLedgerRow());
+        const rows = Array.from(document.querySelectorAll('#ledgerTable tbody .ledger-row'));
+        entries.forEach((e, idx) => {
+            setLedgerRowValues(rows[idx], e.ledgerName, e.amount, e.type, draft.costCenterName || '');
+        });
+        const ledgerSection = document.querySelector('#ledgerTable');
+        if (ledgerSection) ledgerSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    async function postVoucher(draft) {
+        const params = new URLSearchParams();
+        params.append('voucher_type', draft.voucherType);
+        params.append('date', draft.date);
+        params.append('narration', draft.narration || '');
+        if (draft.costCenterName) params.append('cost_center_name', draft.costCenterName);
+
+        const entries = Array.isArray(draft.ledgerEntries) ? draft.ledgerEntries : [];
+        entries.forEach(e => {
+            params.append('ledger_name[]', e.ledgerName);
+            params.append('ledger_amount[]', String(e.amount));
+            params.append('ledger_type[]', e.type);
+            params.append('ledger_cost_center[]', draft.costCenterName || '');
+        });
+
+        if (['Expense', 'Service Income', 'Service Income Return'].includes(draft.voucherType)) {
+            entries.forEach(() => {
+                params.append('ledger_vat_applicable[]', '0');
+                params.append('ledger_vat_amount[]', '0');
+            });
+        }
+
+        const res = await fetch('/add_voucher', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: params.toString()
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            const msg = (data && data.message) ? data.message : `Failed with status ${res.status}`;
+            throw new Error(msg);
+        }
+        return data;
+    }
+
+    function tryParseOneLineVoucher(text) {
+        const t = safeLower(text);
+        const amount = parseAmount(text);
+        const date = parseDateFromText(text);
+
+        let fromParty = null;
+        let toParty = null;
+        const fromMatch = (text || '').match(/\bfrom\s+(.+?)(?=\s+(by|into|to|on|date|today|narration|note)\b|$)/i);
+        if (fromMatch) fromParty = normalizeText(fromMatch[1]);
+        const toMatch = (text || '').match(/\bto\s+(.+?)(?=\s+(by|from|into|on|date|today|narration|note)\b|$)/i);
+        if (toMatch) toParty = normalizeText(toMatch[1]);
+
+        let cashBankHint = null;
+        if (/\bcash\b/i.test(text)) cashBankHint = 'cash';
+        if (/\bbank\b/i.test(text)) cashBankHint = 'bank';
+
+        let intoLedgerHint = null;
+        const intoMatch = (text || '').match(/\binto\s+(.+?)(?=\s+(from|to|on|date|today|narration|note)\b|$)/i);
+        if (intoMatch) intoLedgerHint = normalizeText(intoMatch[1]);
+        let byLedgerHint = null;
+        const byMatch = (text || '').match(/\bby\s+(.+?)(?=\s+(from|to|into|on|date|today|narration|note)\b|$)/i);
+        if (byMatch) byLedgerHint = normalizeText(byMatch[1]);
+
+        let narration = '';
+        const narrMatch = (text || '').match(/\b(narration|note)\s*[:\-]?\s*(.+)$/i);
+        if (narrMatch) narration = normalizeText(narrMatch[2]);
+        const forMatch = !narration ? (text || '').match(/\bfor\s+(.+)$/i) : null;
+        if (forMatch) narration = normalizeText(forMatch[1]);
+
+        return { amount, date, narration, fromParty, toParty, cashBankHint, intoLedgerHint, byLedgerHint, textLower: t };
+    }
+
+    function initVoucherChatbot() {
+        const supported = new Set(['Receipt', 'Payment', 'Contra', 'Expense']);
+        if (!supported.has(voucherType)) return;
+
+        const messagesEl = document.getElementById('vaChatMessages');
+        const inputEl = document.getElementById('vaChatInput');
+        const sendBtn = document.getElementById('vaChatSendBtn');
+        const quickEl = document.getElementById('vaChatQuick');
+        const statusEl = document.getElementById('vaChatStatus');
+        const draftCountEl = document.getElementById('vaDraftCount');
+
+        const newBtn = document.getElementById('vaChatNewBtn');
+        const importBtn = document.getElementById('vaChatImportBtn');
+        const showDraftsBtn = document.getElementById('vaChatShowDraftsBtn');
+        const addAllBtn = document.getElementById('vaChatAddAllBtn');
+
+        if (!messagesEl || !inputEl || !sendBtn || !quickEl) return;
+        if (messagesEl.dataset.vaInit === '1') return;
+        messagesEl.dataset.vaInit = '1';
+
+        const chatWindowEl = document.getElementById('globalChatWindow');
+        if (chatWindowEl) chatWindowEl.classList.add('va-enabled');
+
+        if (newBtn) newBtn.textContent = `New ${voucherType}`;
+
+        const state = {
+            step: 'idle',
+            current: null,
+            expecting: null,
+        };
+
+        function resetQuick() {
+            renderQuickButtons(quickEl, []);
+        }
+
+        function ask(text, quickButtons = []) {
+            appendChatMessage(messagesEl, 'bot', text);
+            renderQuickButtons(quickEl, quickButtons);
+        }
+
+        function userSays(text) {
+            appendChatMessage(messagesEl, 'user', text);
+        }
+
+        function ensureCurrent() {
+            if (state.current) return;
+            const dateInput = document.getElementById('date');
+            const dateVal = (dateInput && dateInput.value) ? dateInput.value : parseDateFromText('today');
+            state.current = {
+                voucherType,
+                date: dateVal,
+                amount: null,
+                narration: '',
+                costCenterName: getHeaderCostCenterName(),
+                partyLedgerName: '',
+                accountLedgerName: '',
+                fromLedgerName: '',
+                toLedgerName: '',
+                expenseLedgerName: '',
+            };
+        }
+
+        function startNewVoucher() {
+            state.current = null;
+            ensureCurrent();
+            setStatus(statusEl, '');
+            resetQuick();
+            if (voucherType === 'Receipt') {
+                state.step = 'ask_party';
+                // Receipt Party is Credit
+                state.expecting = { kind: 'ledger', field: 'partyLedgerName', action: 'pick_party', side: 'Credit' };
+                ask('From which party did you receive? Type the party ledger name.');
+                return;
+            }
+            if (voucherType === 'Payment') {
+                state.step = 'ask_party';
+                // Payment Party is Debit
+                state.expecting = { kind: 'ledger', field: 'partyLedgerName', action: 'pick_party', side: 'Debit' };
+                ask('Paid to which party? Type the party ledger name.');
+                return;
+            }
+            if (voucherType === 'Contra') {
+                state.step = 'ask_amount';
+                ask('Enter the amount to transfer (example: 1500).');
+                return;
+            }
+            if (voucherType === 'Expense') {
+                state.step = 'ask_expense';
+                // Expense Ledger is Debit
+                state.expecting = { kind: 'ledger', field: 'expenseLedgerName', action: 'pick_expense', side: 'Debit' };
+                ask('Which expense ledger? Example: Fuel, Rent, Office Expenses.');
+                return;
+            }
+        }
+
+        function buildDraftFromCurrent() {
+            const c = state.current;
+            if (!c) throw new Error('No voucher in progress');
+            if (!c.date) throw new Error('Date is required');
+            if (typeof c.amount !== 'number') throw new Error('Amount is required');
+
+            const costCenterName = normalizeText(c.costCenterName || getHeaderCostCenterName());
+            if (costCenterApplicable && costCenterMandatory && !costCenterName && voucherType === 'Expense') {
+                throw new Error('Cost Center is required');
+            }
+
+            let ledgerEntries = [];
+            if (voucherType === 'Receipt') {
+                if (!c.partyLedgerName) throw new Error('Party is required');
+                if (!c.accountLedgerName) throw new Error('Cash/Bank account is required');
+                ledgerEntries = [
+                    { ledgerName: c.accountLedgerName, amount: c.amount, type: 'Debit' },
+                    { ledgerName: c.partyLedgerName, amount: c.amount, type: 'Credit' },
+                ];
+            } else if (voucherType === 'Payment') {
+                if (!c.partyLedgerName) throw new Error('Party is required');
+                if (!c.accountLedgerName) throw new Error('Cash/Bank account is required');
+                ledgerEntries = [
+                    { ledgerName: c.partyLedgerName, amount: c.amount, type: 'Debit' },
+                    { ledgerName: c.accountLedgerName, amount: c.amount, type: 'Credit' },
+                ];
+            } else if (voucherType === 'Contra') {
+                if (!c.fromLedgerName) throw new Error('From account is required');
+                if (!c.toLedgerName) throw new Error('To account is required');
+                ledgerEntries = [
+                    { ledgerName: c.toLedgerName, amount: c.amount, type: 'Debit' },
+                    { ledgerName: c.fromLedgerName, amount: c.amount, type: 'Credit' },
+                ];
+            } else if (voucherType === 'Expense') {
+                if (!c.expenseLedgerName) throw new Error('Expense ledger is required');
+                if (!c.accountLedgerName) throw new Error('Paid from account is required');
+                ledgerEntries = [
+                    { ledgerName: c.expenseLedgerName, amount: c.amount, type: 'Debit' },
+                    { ledgerName: c.accountLedgerName, amount: c.amount, type: 'Credit' },
+                ];
+            }
+
+            const narration = normalizeText(c.narration) || voucherType;
+            return {
+                voucherType,
+                date: c.date,
+                amount: c.amount,
+                narration,
+                costCenterName,
+                ledgerEntries,
+                createdAt: new Date().toISOString(),
+            };
+        }
+
+        function saveCurrentDraft() {
+            try {
+                ensureCurrent();
+                const cc = normalizeText(getHeaderCostCenterName());
+                if (cc) state.current.costCenterName = cc;
+                const draft = buildDraftFromCurrent();
+                const drafts = getDrafts();
+                drafts.push(draft);
+                setDrafts(drafts);
+                updateDraftCount(draftCountEl);
+                ask('Saved to drafts. You can add later using Add All Vouchers.');
+                state.step = 'idle';
+                state.current = null;
+                state.expecting = null;
+                resetQuick();
+            } catch (e) {
+                const msg = e && e.message ? e.message : String(e);
+                if (msg === 'Cost Center is required') {
+                    state.step = 'ask_cost_center';
+                    ask('Select Cost Center. Type name (or part) to search.', costCenterNamesList().slice(0, 6).map(v => ({ label: v, action: 'pick_cost_center', value: v })));
+                    state.expecting = { kind: 'cost_center' };
+                    return;
+                }
+                ask(msg);
+            }
+        }
+
+        function showDrafts() {
+            const drafts = getDrafts();
+            updateDraftCount(draftCountEl);
+            if (!drafts.length) {
+                ask(`No drafts yet for ${voucherType}. Press New ${voucherType} to create one.`);
+                return;
+            }
+            const lines = drafts.map((d, i) => {
+                const deb = (d.ledgerEntries || []).filter(e => e.type === 'Debit')[0]?.ledgerName || '';
+                const cre = (d.ledgerEntries || []).filter(e => e.type === 'Credit')[0]?.ledgerName || '';
+                return `${i + 1}) ${d.date} | ${Number(d.amount).toFixed(2)} | Dr ${deb} | Cr ${cre}`;
+            });
+            ask(`Draft ${voucherType} vouchers:\n${lines.join('\n')}\nType "fill 1" to load into the form, or "delete 1" to remove.`);
+        }
+
+        function deleteDraft(index1Based) {
+            const drafts = getDrafts();
+            const idx = index1Based - 1;
+            if (idx < 0 || idx >= drafts.length) {
+                ask('Draft number not found.');
+                return;
+            }
+            const removed = drafts.splice(idx, 1)[0];
+            setDrafts(drafts);
+            updateDraftCount(draftCountEl);
+            ask(`Deleted draft:\n${buildDraftSummary(removed)}`);
+        }
+
+        function fillDraft(index1Based) {
+            const drafts = getDrafts();
+            const idx = index1Based - 1;
+            if (idx < 0 || idx >= drafts.length) {
+                ask('Draft number not found.');
+                return;
+            }
+            fillVoucherIntoForm(drafts[idx]);
+            ask('Loaded draft into the form. You can review and click Save on the page.');
+        }
+
+        async function addAllDrafts() {
+            const drafts = getDrafts();
+            updateDraftCount(draftCountEl);
+            if (!drafts.length) {
+                ask('No drafts to add.');
+                return;
+            }
+            setStatus(statusEl, 'Adding drafts...', false);
+            let ok = 0;
+            const failed = [];
+            for (let i = 0; i < drafts.length; i++) {
+                const d = drafts[i];
+                try {
+                    const result = await postVoucher(d);
+                    ok += 1;
+                    ask(`Added: ${result.voucher_number}`);
+                } catch (e) {
+                    failed.push(d);
+                    ask(`Failed:\n${buildDraftSummary(d)}\n${e.message || e}`);
+                }
+            }
+            setDrafts(failed);
+            updateDraftCount(draftCountEl);
+            if (failed.length) setStatus(statusEl, `Added ${ok}. Failed ${failed.length}.`, true);
+            else setStatus(statusEl, `Added ${ok}.`, false);
+        }
+
+        function chooseLedgerFromText(userText, side = null) {
+            const candidates = findLedgerCandidates(userText, 6, side);
+            if (candidates.length === 1) return { chosen: candidates[0], candidates: [] };
+            return { chosen: null, candidates };
+        }
+
+        function setLedgerFieldFromText(field, action, promptText, text, side = null) {
+            const { chosen, candidates } = chooseLedgerFromText(text, side);
+            if (chosen) {
+                state.current[field] = chosen;
+                state.expecting = null;
+                return true;
+            }
+            const q = normalizeText(text);
+            const sugg = candidates.length ? candidates : findLedgerCandidates(q.split(' ')[0], 6, side);
+            if (sugg.length) {
+                ask(promptText, sugg.map(v => ({ label: v, action, value: v })));
+            } else {
+                ask('I could not find that ledger. Type the exact ledger name.');
+            }
+            state.expecting = { kind: 'ledger', field, action, side };
+            return false;
+        }
+
+        function setAccountFromHint(hintText) {
+            const hint = safeLower(hintText);
+            if (hint === 'cash') return bestDefaultCashLedger();
+            if (hint === 'bank') return bestDefaultBankLedger();
+            return null;
+        }
+
+        function finalizeAndOfferActions() {
+            try {
+                const cc = normalizeText(getHeaderCostCenterName());
+                if (cc) state.current.costCenterName = cc;
+                const draft = buildDraftFromCurrent();
+                ask(`Voucher ready:\n${buildDraftSummary(draft)}`, [
+                    { label: 'Save Draft', action: 'save_draft', value: '' },
+                    { label: 'Fill Form', action: 'fill_form', value: '' },
+                ]);
+                state.step = 'confirm';
+            } catch (e) {
+                ask(e.message || String(e));
+            }
+        }
+
+        function handleText(textRaw) {
+            const text = normalizeText(textRaw);
+            if (!text) return;
+            const lower = safeLower(text);
+
+            if (lower === 'new' || lower === `new ${safeLower(voucherType)}`) {
+                startNewVoucher();
+                return;
+            }
+            if (lower === 'import' || lower === 'import excel') {
+                showImportSection();
+                ask('Opened Excel import section.');
+                resetQuick();
+                return;
+            }
+            if (lower === 'drafts' || lower === 'show drafts') {
+                showDrafts();
+                resetQuick();
+                return;
+            }
+            if (lower === 'add all' || lower === 'add all vouchers') {
+                addAllDrafts();
+                resetQuick();
+                return;
+            }
+            if (lower.startsWith('delete ')) {
+                const n = parseInt(lower.replace('delete', '').trim(), 10);
+                if (Number.isFinite(n)) deleteDraft(n);
+                else ask('Use: delete 1');
+                resetQuick();
+                return;
+            }
+            if (lower.startsWith('fill ')) {
+                const n = parseInt(lower.replace('fill', '').trim(), 10);
+                if (Number.isFinite(n)) fillDraft(n);
+                else ask('Use: fill 1');
+                resetQuick();
+                return;
+            }
+
+            ensureCurrent();
+
+            if (state.step === 'idle') {
+                const parsed = tryParseOneLineVoucher(text);
+                if (parsed.amount != null) state.current.amount = parsed.amount;
+                if (parsed.date) state.current.date = parsed.date;
+                if (parsed.narration) state.current.narration = parsed.narration;
+
+                if (voucherType === 'Receipt' && parsed.fromParty && parsed.amount != null) {
+                    // Receipt Party (Credit)
+                    if (setLedgerFieldFromText('partyLedgerName', 'pick_party', 'Choose party ledger:', parsed.fromParty, 'Credit')) {
+                        const hinted = parsed.cashBankHint || parsed.intoLedgerHint || parsed.byLedgerHint || 'cash';
+                        const fromHint = setAccountFromHint(hinted) || hinted;
+                        // Receipt Account (Debit)
+                        if (setLedgerFieldFromText('accountLedgerName', 'pick_account', 'Choose cash/bank ledger:', fromHint, 'Debit')) {
+                            finalizeAndOfferActions();
+                        } else {
+                            state.step = 'ask_account';
+                        }
+                    } else {
+                        state.step = 'ask_party';
+                    }
+                    return;
+                }
+
+                if (voucherType === 'Payment' && parsed.toParty && parsed.amount != null) {
+                    // Payment Party (Debit)
+                    if (setLedgerFieldFromText('partyLedgerName', 'pick_party', 'Choose party ledger:', parsed.toParty, 'Debit')) {
+                        const hinted = parsed.cashBankHint || parsed.byLedgerHint || parsed.fromParty || 'cash';
+                        const accHint = setAccountFromHint(hinted) || hinted;
+                        // Payment Account (Credit)
+                        if (setLedgerFieldFromText('accountLedgerName', 'pick_account', 'Choose cash/bank ledger:', accHint, 'Credit')) {
+                            finalizeAndOfferActions();
+                        } else {
+                            state.step = 'ask_account';
+                        }
+                    } else {
+                        state.step = 'ask_party';
+                    }
+                    return;
+                }
+
+                if (voucherType === 'Contra' && parsed.amount != null && parsed.fromParty && parsed.toParty) {
+                    state.current.amount = parsed.amount;
+                    // Contra From (Credit)
+                    if (setLedgerFieldFromText('fromLedgerName', 'pick_from', 'Choose From account:', parsed.fromParty, 'Credit')) {
+                        // Contra To (Debit)
+                        if (setLedgerFieldFromText('toLedgerName', 'pick_to', 'Choose To account:', parsed.toParty, 'Debit')) {
+                            finalizeAndOfferActions();
+                        } else {
+                            state.step = 'ask_to';
+                        }
+                    } else {
+                        state.step = 'ask_from';
+                    }
+                    return;
+                }
+
+                if (voucherType === 'Expense' && parsed.amount != null) {
+                    state.current.amount = parsed.amount;
+                    const expenseHint = parsed.narration || '';
+                    if (expenseHint) {
+                        // Expense Ledger (Debit)
+                        const ok = setLedgerFieldFromText('expenseLedgerName', 'pick_expense', 'Choose expense ledger:', expenseHint, 'Debit');
+                        if (ok) {
+                            const accHint = setAccountFromHint(parsed.cashBankHint || parsed.byLedgerHint || 'cash') || (parsed.cashBankHint || parsed.byLedgerHint || 'cash');
+                            // Expense Account (Credit) (Paid From)
+                            if (setLedgerFieldFromText('accountLedgerName', 'pick_account', 'Choose paid-from ledger:', accHint, 'Credit')) {
+                                finalizeAndOfferActions();
+                            } else {
+                                state.step = 'ask_account';
+                            }
+                        } else {
+                            state.step = 'ask_expense';
+                        }
+                        return;
+                    }
+                }
+
+                ask(`Press New ${voucherType} to start.\nExamples:\nReceipt: received 5000 from ABC by cash today\nPayment: paid 1200 to ABC by cash today\nContra: transfer 1000 from Cash to Bank today\nExpense: expense 300 for Fuel by cash today`);
+                return;
+            }
+
+            if (state.step === 'ask_party') {
+                const prompt = voucherType === 'Receipt' ? 'Choose party ledger:' : 'Choose party ledger:';
+                // Receipt -> Party is Credit. Payment -> Party is Debit.
+                const side = voucherType === 'Receipt' ? 'Credit' : 'Debit';
+                const ok = setLedgerFieldFromText('partyLedgerName', 'pick_party', prompt, text, side);
+                if (ok) {
+                    state.step = 'ask_amount';
+                    ask('Enter amount (example: 1500).');
+                }
+                return;
+            }
+
+            if (state.step === 'ask_expense') {
+                // Expense Ledger is Debit
+                const ok = setLedgerFieldFromText('expenseLedgerName', 'pick_expense', 'Choose expense ledger:', text, 'Debit');
+                if (ok) {
+                    state.step = 'ask_amount';
+                    ask('Enter amount (example: 1500).');
+                }
+                return;
+            }
+
+            if (state.step === 'ask_amount') {
+                const amount = parseAmount(text);
+                if (amount == null) {
+                    ask('Please enter the amount (example: 1500).');
+                    return;
+                }
+                state.current.amount = amount;
+                if (voucherType === 'Contra') {
+                    state.step = 'ask_from';
+                    ask('Transfer FROM which account? (This will be Credit)', [
+                        { label: 'Cash', action: 'pick_from_hint', value: 'cash' },
+                        { label: 'Bank', action: 'pick_from_hint', value: 'bank' },
+                    ]);
+                    return;
+                }
+                state.step = 'ask_account';
+                const msg = voucherType === 'Receipt'
+                    ? 'Received into which account? (Cash/Bank)'
+                    : (voucherType === 'Payment' ? 'Paid from which account? (Cash/Bank)' : (voucherType === 'Expense' ? 'Paid from which account? (Cash/Bank)' : 'Account?'));
+
+                // Receipt Account (Debit)
+                // Payment Account (Credit) (Paid From)
+                // Expense Account (Credit) (Paid From)
+                // Contra is handled above separately
+                // Default side logic:
+                let side = 'Debit'; // Default?
+                if (voucherType === 'Receipt') side = 'Debit';
+                else if (voucherType === 'Payment') side = 'Credit';
+                else if (voucherType === 'Expense') side = 'Credit';
+
+                state.expecting = { kind: 'ledger', field: 'accountLedgerName', action: 'pick_account', side };
+
+                ask(msg, [
+                    { label: 'Cash', action: 'pick_account', value: 'cash' },
+                    { label: 'Bank', action: 'pick_account', value: 'bank' },
+                ]);
+                return;
+            }
+
+            if (state.step === 'ask_from') {
+                const hinted = setAccountFromHint(text) || text;
+                // Contra From is Credit
+                const ok = setLedgerFieldFromText('fromLedgerName', 'pick_from', 'Choose From account:', hinted, 'Credit');
+                if (ok) {
+                    state.step = 'ask_to';
+                    ask('Transfer TO which account? (This will be Debit)');
+                }
+                return;
+            }
+
+            if (state.step === 'ask_to') {
+                const hinted = setAccountFromHint(text) || text;
+                // Contra To is Debit
+                const ok = setLedgerFieldFromText('toLedgerName', 'pick_to', 'Choose To account:', hinted, 'Debit');
+                if (ok) {
+                    state.step = 'ask_narration';
+                    ask('Any narration? Type it or type "skip".');
+                }
+                return;
+            }
+
+            if (state.step === 'ask_account') {
+                const hinted = setAccountFromHint(text) || text;
+
+                // Determine side from voucherType
+                let side = 'Debit';
+                if (voucherType === 'Receipt') side = 'Debit';
+                else if (voucherType === 'Payment') side = 'Credit';
+                else if (voucherType === 'Expense') side = 'Credit';
+
+                const ok = setLedgerFieldFromText('accountLedgerName', 'pick_account', 'Choose account ledger:', hinted, side);
+                if (ok) {
+                    if (voucherType === 'Expense' && costCenterApplicable && costCenterMandatory) {
+                        const cc = normalizeText(getHeaderCostCenterName());
+                        if (!cc) {
+                            state.step = 'ask_cost_center';
+                            ask('Select Cost Center. Type name (or part) to search.', costCenterNamesList().slice(0, 6).map(v => ({ label: v, action: 'pick_cost_center', value: v })));
+                            return;
+                        }
+                        state.current.costCenterName = cc;
+                    }
+                    state.step = 'ask_narration';
+                    ask('Any narration? Type it or type "skip".');
+                }
+                return;
+            }
+
+            if (state.step === 'ask_cost_center') {
+                const candidates = findCostCenterCandidates(text, 8);
+                if (candidates.length === 1) {
+                    state.current.costCenterName = candidates[0];
+                    setHeaderCostCenterName(candidates[0]);
+                    state.step = 'ask_narration';
+                    ask('Any narration? Type it or type "skip".');
+                    resetQuick();
+                    return;
+                }
+                if (candidates.length > 1) {
+                    ask('Choose Cost Center:', candidates.map(v => ({ label: v, action: 'pick_cost_center', value: v })));
+                    return;
+                }
+                ask('Cost Center not found. Type the exact name.');
+                return;
+            }
+
+            if (state.step === 'ask_narration') {
+                if (safeLower(text) === 'skip') state.current.narration = voucherType;
+                else state.current.narration = text;
+                finalizeAndOfferActions();
+                return;
+            }
+
+            if (state.step === 'confirm') {
+                if (lower === 'save' || lower === 'save draft') {
+                    saveCurrentDraft();
+                    return;
+                }
+                if (lower === 'fill' || lower === 'fill form') {
+                    try {
+                        const draft = buildDraftFromCurrent();
+                        fillVoucherIntoForm(draft);
+                        ask('Filled the form. Click Save on the page, or type "save" to save as draft.');
+                    } catch (e) {
+                        ask(e.message || String(e));
+                    }
+                    return;
+                }
+                ask('Use Save Draft or Fill Form.');
+            }
+        }
+
+        function onQuickAction(action, value) {
+            ensureCurrent();
+            if (action === 'pick_party') {
+                state.current.partyLedgerName = value;
+                state.step = 'ask_amount';
+                state.expecting = null;
+                ask('Enter amount (example: 1500).');
+                resetQuick();
+                return;
+            }
+            if (action === 'pick_expense') {
+                state.current.expenseLedgerName = value;
+                state.step = 'ask_amount';
+                state.expecting = null;
+                ask('Enter amount (example: 1500).');
+                resetQuick();
+                return;
+            }
+            if (action === 'pick_account') {
+                const hinted = setAccountFromHint(value) || value;
+                // Determine side from voucherType
+                let side = 'Debit';
+                if (voucherType === 'Receipt') side = 'Debit';
+                else if (voucherType === 'Payment') side = 'Credit';
+                else if (voucherType === 'Expense') side = 'Credit';
+
+                const ok = setLedgerFieldFromText('accountLedgerName', 'pick_account', 'Choose account ledger:', hinted, side);
+                if (ok) {
+                    if (voucherType === 'Expense' && costCenterApplicable && costCenterMandatory) {
+                        const cc = normalizeText(getHeaderCostCenterName());
+                        if (!cc) {
+                            state.step = 'ask_cost_center';
+                            ask('Select Cost Center. Type name (or part) to search.', costCenterNamesList().slice(0, 6).map(v => ({ label: v, action: 'pick_cost_center', value: v })));
+                            resetQuick();
+                            return;
+                        }
+                        state.current.costCenterName = cc;
+                    }
+                    state.step = 'ask_narration';
+                    ask('Any narration? Type it or type "skip".');
+                }
+                resetQuick();
+                return;
+            }
+            if (action === 'pick_from_hint') {
+                const hinted = setAccountFromHint(value) || value;
+                // Contra From is Credit
+                const ok = setLedgerFieldFromText('fromLedgerName', 'pick_from', 'Choose From account:', hinted, 'Credit');
+                if (ok) {
+                    state.step = 'ask_to';
+                    ask('Transfer TO which account? (This will be Debit)');
+                }
+                resetQuick();
+                return;
+            }
+            if (action === 'pick_from') {
+                state.current.fromLedgerName = value;
+                state.step = 'ask_to';
+                state.expecting = null;
+                ask('Transfer TO which account? (This will be Debit)');
+                resetQuick();
+                return;
+            }
+            if (action === 'pick_to') {
+                state.current.toLedgerName = value;
+                state.step = 'ask_narration';
+                state.expecting = null;
+                ask('Any narration? Type it or type "skip".');
+                resetQuick();
+                return;
+            }
+            if (action === 'pick_cost_center') {
+                state.current.costCenterName = value;
+                setHeaderCostCenterName(value);
+                state.step = 'ask_narration';
+                state.expecting = null;
+                ask('Any narration? Type it or type "skip".');
+                resetQuick();
+                return;
+            }
+            if (action === 'save_draft') {
+                saveCurrentDraft();
+                return;
+            }
+            if (action === 'fill_form') {
+                try {
+                    const draft = buildDraftFromCurrent();
+                    fillVoucherIntoForm(draft);
+                    ask('Filled the form. You can review and click Save on the page.');
+                } catch (e) {
+                    ask(e.message || String(e));
+                }
+                return;
+            }
+        }
+        window.__voucherAssistantGlobal = {
+            open: () => {
+                updateDraftCount(draftCountEl);
+                if (messagesEl.dataset.vaWelcomed !== '1') {
+                    ask(`Tell me your ${voucherType} in simple words.\nType "new" to start, or use one-line examples:\nReceipt: received 5000 from ABC by cash today\nPayment: paid 1200 to ABC by cash today\nContra: transfer 1000 from Cash to Bank today\nExpense: expense 300 for Fuel by cash today`);
+                    messagesEl.dataset.vaWelcomed = '1';
+                }
+            },
+            send: (text) => {
+                const t = normalizeText(text);
+                if (!t) return;
+                userSays(t);
+                handleText(t);
+            },
+            quick: (action, value) => onQuickAction(action, value),
+            newVoucher: () => startNewVoucher(),
+            importExcel: () => { showImportSection(); ask('Opened Excel import section.'); resetQuick(); },
+            showDrafts: () => { showDrafts(); resetQuick(); },
+            addAllDrafts: () => { addAllDrafts(); resetQuick(); },
+        };
+    }
+
+    // Import functions
+    function showImportSection() {
+        const section = document.getElementById('importSection');
+        if (section) {
+            section.style.display = 'block';
+            section.scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
+    function calculateDueDate() {
+        const creditDaysInput = document.getElementById('credit_days');
+        const dateInput = document.getElementById('date');
+        const dueDateInput = document.getElementById('due_date');
+
+        if (creditDaysInput && dateInput && dueDateInput) {
+            const creditDays = parseInt(creditDaysInput.value);
+            const dateValue = dateInput.value;
+
+            if (!isNaN(creditDays) && dateValue) {
+                const date = new Date(dateValue);
+                date.setDate(date.getDate() + creditDays);
+
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+
+                dueDateInput.value = `${year}-${month}-${day}`;
+            } else {
+                dueDateInput.value = '';
+            }
+        }
+    }
+
+    // Additional Charge Functions
+    function addChargeRow() {
+        const tableBody = document.querySelector('#chargesTable tbody');
+        const row = document.createElement('tr');
+        row.className = 'charge-row';
+        row.innerHTML = `
+            <td>
+                <select name="charge_party_ledger[]" class="select2-new" required style="width: 200px;">
+                    <option></option>
+                    ${allLedgerOptions}
+                </select>
+            </td>
+            <td><input type="number" name="charge_amount[]" step="0.01" required></td>
+            <td><input type="number" name="charge_vat_amount[]" step="0.01" value="0"></td>
+            <td>
+                <select name="charge_method[]" required>
+                    <option value="Quantity">Quantity</option>
+                    <option value="Value">Value</option>
+                    <option value="Weight (KG)">Weight (KG)</option>
+                </select>
+            </td>
+            <td><input type="text" name="charge_narration[]"></td>
+            <td><button type="button" class="btn" onclick="removeChargeRow(this)">Remove</button></td>
+        `;
+        tableBody.appendChild(row);
+
+        // Initialize Select2 on the new element
+        $(row).find('.select2-new').select2({
+            placeholder: "Select Party Ledger",
+            allowClear: true,
+            width: '100%'
+        });
+    }
+
+    // Initialize Select2 for existing elements on load
+    $(document).ready(function () {
+        $('.select2').select2({
+            placeholder: "Select Option",
+            allowClear: true,
+            width: 'resolve'
+        });
+    });
+
+    function removeChargeRow(btn) {
+        const row = btn.closest('tr');
+        row.remove();
+    }
+
+    function downloadTemplate() {
+        window.location.href = '/download_voucher_template/' + encodeURIComponent(voucherType);
+    }
+
+    function importExcel() {
+        const fileInput = document.getElementById('excelFile');
+        const file = fileInput.files[0];
+        if (!file) {
+            alert('Please select an Excel file.');
+            return;
+        }
+
+        const msgDiv = document.getElementById('importMessage');
+        const progressContainer = document.getElementById('importProgressContainer');
+        const progressBar = document.getElementById('importProgressBar');
+
+        msgDiv.style.display = 'block';
+        msgDiv.innerText = "Reading file...";
+        msgDiv.className = "status-message info";
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        // Block UI
+        if (typeof blockUI === 'function') blockUI("Reading file...");
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+                if (jsonData.length === 0) {
+                    msgDiv.innerText = "Excel file is empty.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
+
+                msgDiv.innerText = "Uploading " + jsonData.length + " rows...";
+                progressContainer.style.display = 'block';
+
+                // Update Block UI message
+                if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
+
+                // Prepare data
+                const payload = JSON.stringify({
+                    file_name: file.name,
+                    voucher_type: voucherType,
+                    json_data: JSON.stringify(jsonData)
+                });
+
+                // Use XMLHttpRequest for upload progress
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/queue_import', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+
+                xhr.upload.onprogress = function (e) {
+                    if (e.lengthComputable) {
+                        const percentComplete = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percentComplete + '%';
+                        progressBar.innerText = percentComplete + '%';
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status === 200) {
+                        try {
+                            const data = JSON.parse(xhr.responseText);
+                            if (data.success) {
+                                msgDiv.innerText = data.message + " Redirecting to Import Queue...";
+                                msgDiv.className = "status-message success";
+                                progressBar.style.width = '100%';
+                                progressBar.innerText = '100%';
+
+                                // Keep blocked but update message, remove unload handler
+                                if (typeof blockUI === 'function') blockUI("Upload successful! Redirecting...");
+                                window.onbeforeunload = null;
+
+                                setTimeout(() => {
+                                    window.location.href = '/report/import-queue';
+                                }, 1500);
+                            } else {
+                                msgDiv.innerText = "Error: " + data.message;
+                                msgDiv.className = "status-message error";
+                                if (typeof unblockUI === 'function') unblockUI();
+                            }
+                        } catch (e) {
+                            msgDiv.innerText = "Error parsing response: " + e;
+                            msgDiv.className = "status-message error";
+                            if (typeof unblockUI === 'function') unblockUI();
+                        }
+                    } else {
+                        msgDiv.innerText = "Upload failed: " + xhr.statusText;
+                        msgDiv.className = "status-message error";
+                        if (typeof unblockUI === 'function') unblockUI();
+                    }
+                };
+
+                xhr.onerror = function () {
+                    msgDiv.innerText = "Network error occurred during upload.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                };
+
+                xhr.send(payload);
+
+            } catch (err) {
+                console.error('Error parsing Excel:', err);
+                msgDiv.innerText = "Error parsing Excel: " + err;
+                msgDiv.className = "status-message error";
+                if (typeof unblockUI === 'function') unblockUI();
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    function calculateDueDate() {
+        const dateInput = document.getElementById('date');
+        const creditDaysInput = document.getElementById('credit_days');
+        const dueDateInput = document.getElementById('due_date');
+
+        if (dateInput && creditDaysInput && dueDateInput) {
+            const dateVal = dateInput.value;
+            const days = parseInt(creditDaysInput.value);
+
+            if (dateVal && !isNaN(days)) {
+                const date = new Date(dateVal);
+                if (!isNaN(date.getTime())) {
+                    date.setDate(date.getDate() + days);
+
+                    const yyyy = date.getFullYear();
+                    const mm = String(date.getMonth() + 1).padStart(2, '0');
+                    const dd = String(date.getDate()).padStart(2, '0');
+
+                    dueDateInput.value = `${yyyy}-${mm}-${dd}`;
+                }
+            } else {
+                dueDateInput.value = '';
+            }
+        }
+    }
+
+    // Initialize due date on load if needed
+    document.addEventListener('DOMContentLoaded', function () {
+        const creditDaysInput = document.getElementById('credit_days');
+        if (creditDaysInput && creditDaysInput.value) {
+            calculateDueDate();
+        }
+
+        // Also attach listener to date input
+        const dateInput = document.getElementById('date');
+        if (dateInput) {
+            dateInput.addEventListener('change', calculateDueDate);
+        }
+    });
+
+    function goToEditVoucher() {
+        // Legacy/Alternative entry point - keeping for safety but our main UI uses fetchVoucherDetails
+        const input = document.getElementById('edit_voucher_number_input');
+        if (!input) return;
+        const vno = (input.value || '').trim();
+        if (!vno) {
+            alert('Please enter a voucher number');
+            return;
+        }
+        window.location.href = '/edit_voucher/' + encodeURIComponent(vno);
+    }
+
+    // --- New Edit Voucher Functions ---
+
+    function fetchVoucherDetails() {
+        const vNo = document.getElementById('edit_voucher_search').value.trim();
+        const statusEl = document.getElementById('edit_status');
+        if (!vNo) {
+            setStatus(statusEl, "Please enter voucher number", true);
+            return;
+        }
+
+        setStatus(statusEl, "Fetching...");
+
+        $.ajax({
+            url: '/api/get_voucher_details',
+            data: { voucher_number: vNo },
+            success: function (res) {
+                if (res.success) {
+                    setStatus(statusEl, "");
+                    populateVoucherForm(vNo, res.data);
+                } else {
+                    setStatus(statusEl, res.message || "Error", true);
+                }
+            },
+            error: function (err) {
+                setStatus(statusEl, err.responseJSON ? err.responseJSON.message : "Server Error", true);
+            }
+        });
+    }
+
+    function setStatus(el, msg, isError) {
+        if (!el) return;
+        el.textContent = msg;
+        el.style.color = isError ? 'red' : 'green';
+    }
+
+    function populateVoucherForm(vNo, data) {
+        // Switch to Edit Mode context
+        const form = document.getElementById('voucherForm');
+        const submitBtn = form.querySelector('button[type="submit"]');
+
+        // Check if voucher type matches current page?
+        // Normalize types for comparison
+        if (data.header.voucher_type !== voucherType) {
+            alert(`Voucher Type Mismatch! Found: ${data.header.voucher_type}. You are on: ${voucherType} page.`);
+            return;
+        }
+
+        form.action = "/update_voucher";
+        submitBtn.textContent = "Update Voucher";
+        submitBtn.style.backgroundColor = "#FF9800"; // Orange for update
+
+        document.getElementById('edit_controls').style.display = 'block';
+
+        // Create hidden input for voucher number if not exists or set value
+        let vNoInput = document.getElementById('voucher_number');
+        if (vNoInput) {
+            vNoInput.value = vNo;
+            vNoInput.removeAttribute('disabled');
+            vNoInput.readOnly = true;
+            setTimeout(() => { vNoInput.value = vNo; }, 500);
+        } else {
+            // Create hidden if missing
+            const h = document.createElement('input');
+            h.type = 'hidden';
+            h.name = 'voucher_number';
+            h.value = vNo;
+            form.appendChild(h);
+        }
+
+
+        // Header Fields
+        const dInput = document.getElementById('date');
+        if (dInput && data.header.date) {
+            // Convert YYYY-MM-DD to DD-MM-YYYY
+            const parts = data.header.date.split('-');
+            if (parts.length === 3) {
+                dInput.value = `${parts[2]}-${parts[1]}-${parts[0]}`;
+            } else {
+                dInput.value = data.header.date;
+            }
+        }
+
+        const nInput = document.getElementById('narration');
+        if (nInput) nInput.value = data.header.narration;
+
+        const ccSelect = document.getElementById('cost_center_name');
+        if (ccSelect && data.header.cost_center_name) {
+            $(ccSelect).val(data.header.cost_center_name).trigger('change');
+        }
+
+        const cdInput = document.getElementById('credit_days');
+        if (cdInput) cdInput.value = data.header.credit_days || '';
+
+        const ddInput = document.getElementById('due_date');
+        if (ddInput) ddInput.value = data.header.due_date || '';
+
+        // Original Invoice Ref
+        const oirInput = document.getElementById('original_invoice_ref');
+        if (oirInput) oirInput.value = data.header.original_invoice_ref || '';
+
+        const oidInput = document.getElementById('original_invoice_date');
+        if (oidInput) oidInput.value = data.header.original_invoice_date || '';
+
+
+        // Clear existing rows
+        $('#ledgerTable tbody').empty();
+
+        // Populate Ledger Rows
+        (data.ledger_entries || []).forEach(l => {
+            addLedgerRowWithData(l);
+        });
+
+        // Scroll to form
+        form.scrollIntoView({ behavior: "smooth" });
+    }
+
+    function cancelEditMode() {
+        location.reload();
+    }
+
+    function addLedgerRowWithData(data) {
+        const tbody = document.querySelector('#ledgerTable tbody');
+        const tr = document.createElement('tr');
+        tr.className = 'ledger-row';
+
+        // Skip VAT ledgers if auto-calculated types
+        // Expense/Service Income generate VAT (Journal never does).
+        // Payment/Receipt/Contra do NOT auto-generate VAT usually (unless custom logic).
+        // Let's use the same logic as addLedgerRow: check if vatApplicable is true for the PAGE.
+
+        // If the ledger name is a VAT ledger, AND we are on a page that calculates VAT, skip it.
+        const isVatLedger = ['Output VAT 5%', 'Input VAT 5%'].includes(data.ledger_name);
+        const autoVatPage = vatApplicable; // global
+
+        if (isVatLedger && autoVatPage) {
+            return;
+        }
+
+        // Cost Center Cell
+        let ccCell = '';
+        if (costCenterApplicable) {
+            ccCell = `<td>
+                <select name="ledger_cost_center[]" class="ledger-cost-center-select select2" data-placeholder="None">
+                    ${costCenterOptions}
+                </select>
+            </td>`;
+        }
+
+        // VAT Cells
+        let vatCells = '';
+        if (['Expense', 'Service Income', 'Service Income Return'].includes(voucherType)) {
+            if (vatApplicable) {
+                const isChecked = data.vat_applicable ? 'checked' : '';
+                const vatPct = (data.vat_percent !== undefined && data.vat_percent !== null) ? data.vat_percent : 5;
+                const vatAmt = (data.vat_amount !== undefined && data.vat_amount !== null) ? data.vat_amount : 0;
+
+                vatCells = `
+                    <td class="vat-cell">
+                        <input type="checkbox" name="ledger_vat_applicable[]" class="vat-applicable-checkbox" value="1" ${isChecked} onchange="onVATCheckboxChange(this)">
+                    </td>
+                    <td class="vat-cell">
+                        <input type="number" name="ledger_vat_percent[]" class="vat-percent-input" value="${vatPct}" step="0.01" readonly>
+                    </td>
+                    <td class="vat-cell">
+                        <input type="number" name="ledger_vat_amount[]" class="vat-amount-input" value="${vatAmt}" step="0.01" readonly>
+                    </td>
+                 `;
+            } else {
+                vatCells = `
+                    <input type="hidden" name="ledger_vat_applicable[]" value="0">
+                    <input type="hidden" name="ledger_vat_percent[]" value="0">
+                    <input type="hidden" name="ledger_vat_amount[]" value="0">
+                 `;
+            }
+        }
+
+        // Build Ledger Options using Filtered List based on type (Debit/Credit)
+        const filteredLedgers = getFilteredLedgers(data.type || 'Debit');
+        let optionsHtml = filteredLedgers.map(l => {
+            const isSelected = l.ledger_name === data.ledger_name;
+            return `<option value="${l.ledger_name}" ${isSelected ? 'selected' : ''}>${l.ledger_name}</option>`;
+        }).join('');
+
+        // Ensure the current ledger is in the options (for historical validity)
+        const currentInList = filteredLedgers.find(l => l.ledger_name === data.ledger_name);
+        if (!currentInList) {
+            // Append at the end (or specific position)
+            optionsHtml += `<option value="${data.ledger_name}" selected>${data.ledger_name}</option>`;
+        }
+
+        tr.innerHTML = `
+            <td>
+                <select name="ledger_name[]" class="ledger-name-select select2" data-placeholder="Select Ledger" onchange="onLedgerTypeChange(this)" required>
+                    <option></option>
+                    ${optionsHtml}
+                </select>
+            </td>
+            ${ccCell}
+            <td>
+                <input type="number" name="ledger_amount[]" class="ledger-amount-input" value="${data.amount}" step="0.01" oninput="onLedgerAmountChange(this)" required>
+            </td>
+            <td>
+                <select name="ledger_type[]" class="ledger-type-select" onchange="onLedgerTypeChange(this)" required>
+                    <option value="Debit" ${data.type === 'Debit' ? 'selected' : ''}>Debit</option>
+                    <option value="Credit" ${data.type === 'Credit' ? 'selected' : ''}>Credit</option>
+                </select>
+            </td>
+             ${vatCells}
+            <td>
+                <button type="button" class="btn" onclick="removeLedgerRow(this)">Remove</button>
+            </td>
+        `;
+
+        tbody.appendChild(tr);
+
+        // Initialize Select2
+        $(tr).find('.select2').select2({ width: '100%' });
+
+        // Set CC
+        if (costCenterApplicable && data.cost_center_name) {
+            const ccSel = $(tr).find('.ledger-cost-center-select');
+            ccSel.val(data.cost_center_name).trigger('change');
+        }
+
+        updateVatVisibilityForRow(tr);
+    }
+
+    // Hide item section for non-inventory vouchers including Service Income
+    document.addEventListener('DOMContentLoaded', function () {
+        // Initialize Select2
+        $('.select2').select2({
+            placeholder: function () {
+                return $(this).data('placeholder');
+            },
+            allowClear: true
+        });
+
+        // Explicitly re-initialize for existing ledger and item selects to ensure they work correctly
+        $('.ledger-name-select').select2({
+            width: '100%',
+            placeholder: 'Select Ledger',
+            allowClear: true
+        });
+
+        $('.item-name-select').select2({
+            width: '100%',
+            placeholder: 'Select Item',
+            allowClear: true
+        });
+
+        // Auto-Check URL for voucher edit param
+        const urlParams = new URLSearchParams(window.location.search);
+        const vNoParam = urlParams.get('voucher_number');
+        if (vNoParam) {
+            const input = document.getElementById('edit_voucher_search');
+            if (input) {
+                input.value = vNoParam;
+                fetchVoucherDetails();
+            }
+        }
+
+        // Set default date to today if empty
+        const dateInput = document.getElementById('date');
+        if (dateInput) {
+            if (!dateInput.value) {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                dateInput.value = `${year}-${month}-${day}`;
+            }
+            // Recalculate due date on date change
+            dateInput.addEventListener('change', calculateDueDate);
+        }
+
+        // Auto-fetch next voucher number for new vouchers
+        const voucherNumberInput = document.getElementById('voucher_number');
+        if (voucherNumberInput && !voucherNumberInput.value && voucherType !== 'Edit Voucher') {
+            fetchNextVoucherNumber();
+        }
+
+        const nonInventoryTypes = ['Journal', 'Contra', 'Payment', 'Receipt', 'Expense', 'Service Income', 'Service Income Return'];
+
+        if (nonInventoryTypes.includes(voucherType)) {
+            const itemSection = document.getElementById('item-section');
+            if (itemSection) {
+                itemSection.style.display = 'none';
+            }
+        }
+
+        const quickInput = document.getElementById('edit_voucher_number_input');
+        if (quickInput) {
+            quickInput.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    goToEditVoucher();
+                }
+            });
+        }
+
+        // Initialize VAT visibility for existing ledger rows
+        const ledgerRows = document.querySelectorAll('.ledger-row');
+        ledgerRows.forEach(row => {
+            updateVatVisibilityForRow(row);
+        });
+
+        // Initialize VAT for existing item rows
+        const itemRows = document.querySelectorAll('.item-row');
+        itemRows.forEach(row => {
+            calculateItemVAT(row);
+        });
+
+    });
+
+    function fetchNextVoucherNumber() {
+        fetch('/get_next_voucher_number?voucher_type=' + encodeURIComponent(voucherType))
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('voucher_number').value = data.voucher_number;
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error fetching voucher number: ' + error);
+            });
+    }
+
+    function getFilteredLedgers(side) {
+        // Start with all ledgers (excluding VAT)
+        let filteredLedgers = ledgersData.filter(l => !vatLedgers.includes(l.ledger_name));
+
+        // 1. Apply Hardcoded rules (Receipt/Payment Cash/Bank)
+        if (voucherType === 'Receipt' && side === 'Debit') {
+            filteredLedgers = filteredLedgers.filter(l => ['G005', 'G006'].includes(l.group_code));
+        }
+        else if (voucherType === 'Payment' && side === 'Credit') {
+            filteredLedgers = filteredLedgers.filter(l => ['G005', 'G006'].includes(l.group_code));
+        }
+
+        // 2. Apply Config rules
+        let allowedNames = null;
+        if (side === 'Debit' && Array.isArray(allowedLedgersDr) && allowedLedgersDr.length > 0) {
+            allowedNames = new Set(allowedLedgersDr);
+        } else if (side === 'Credit' && Array.isArray(allowedLedgersCr) && allowedLedgersCr.length > 0) {
+            allowedNames = new Set(allowedLedgersCr);
+        }
+
+        if (allowedNames) {
+            filteredLedgers = filteredLedgers.filter(l => allowedNames.has(l.ledger_name));
+        }
+        return filteredLedgers;
+    }
+
+    function addLedgerRow() {
+        const tbody = document.querySelector('#ledgerTable tbody');
+        const newRow = document.createElement('tr');
+        newRow.className = 'ledger-row';
+
+        // Default side for new row is Debit
+        const defaultSide = 'Debit';
+        const filteredLedgers = getFilteredLedgers(defaultSide);
+        const initialLedgerOptions = filteredLedgers.map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+
+        const headerCC = document.getElementById('cost_center_name') ? document.getElementById('cost_center_name').value : '';
+        const costCenterCell = costCenterApplicable ? `
+            <td>
+                <select name="ledger_cost_center[]" class="ledger-cost-center-select select2" data-placeholder="None">
+                    ${costCenterOptions}
+                </select>
+            </td>
+        ` : '';
+
+        let vatColumns = '';
+        if (['Expense', 'Service Income', 'Service Income Return'].includes(voucherType)) {
+            if (vatApplicable) {
+                vatColumns = `
+                    <td class="vat-cell">
+                        <input type="checkbox" name="ledger_vat_applicable[]" class="vat-applicable-checkbox" value="1" checked onchange="onVATCheckboxChange(this)">
+                    </td>
+                    <td class="vat-cell">
+                        <input type="number" name="ledger_vat_percent[]" class="vat-percent-input" value="5" step="0.01" readonly>
+                    </td>
+                    <td class="vat-cell">
+                        <input type="number" name="ledger_vat_amount[]" class="vat-amount-input" value="0" step="0.01" readonly>
+                    </td>
+                `;
+            } else {
+                vatColumns = `
+                    <input type="hidden" name="ledger_vat_applicable[]" value="0">
+                    <input type="hidden" name="ledger_vat_percent[]" value="0">
+                    <input type="hidden" name="ledger_vat_amount[]" value="0">
+                `;
+            }
+        }
+        newRow.innerHTML = `
+            <td>
+                <select name="ledger_name[]" class="ledger-name-select select2" data-placeholder="Select Ledger" onchange="onLedgerTypeChange(this)" required>
+                    <option></option>
+                    ${initialLedgerOptions}
+                </select>
+            </td>
+            ${costCenterCell}
+            <td>
+                <input type="number" name="ledger_amount[]" class="ledger-amount-input" step="0.01" oninput="onLedgerAmountChange(this)" required>
+            </td>
+            <td>
+                <select name="ledger_type[]" class="ledger-type-select" onchange="onLedgerTypeChange(this)" required>
+                    <option value="Debit" selected>Debit</option>
+                    <option value="Credit">Credit</option>
+                </select>
+            </td>
+            ${vatColumns}
+            <td>
+                <button type="button" class="btn" onclick="removeLedgerRow(this)">Remove</button>
+            </td>
+        `;
+        tbody.appendChild(newRow);
+
+        // Initialize Select2 for the new row
+        $(newRow).find('.select2').select2({
+            width: '100%',
+            placeholder: function () {
+                return $(this).data('placeholder');
+            },
+            allowClear: true
+        });
+
+        if (costCenterApplicable && headerCC) {
+            const selects = newRow.querySelectorAll('.ledger-cost-center-select');
+            selects.forEach(s => {
+                s.value = headerCC;
+                $(s).trigger('change'); // Notify Select2
+            });
+        }
+        updateVatVisibilityForRow(newRow);
+    }
+
+    function updateLineCostCenters(headerCC) {
+        if (!costCenterApplicable) return;
+
+        // Update all existing empty or all lines?
+        // Requirement: "Set header-selected cost center as default for lines".
+        // Usually this means "Override all lines" OR "Only empty lines".
+        // If user explicitly selected a different one on a line, should header change overwrite it?
+        // Standard behavior: Prompt or Overwrite.
+        // Let's Overwrite for now as it's "Defaulting" logic and user just changed header.
+        // If they want different, they change header FIRST, then lines.
+
+        const ledgerSelects = document.querySelectorAll('.ledger-cost-center-select');
+        ledgerSelects.forEach(select => {
+            select.value = headerCC;
+        });
+
+        const itemSelects = document.querySelectorAll('.item-cost-center-select');
+        itemSelects.forEach(select => {
+            select.value = headerCC;
+        });
+    }
+
+    function removeLedgerRow(btn) {
+        btn.closest('tr').remove();
+    }
+
+    function onLedgerTypeChange(element) {
+        try {
+            const row = element.closest('.ledger-row');
+            if (!row) return;
+
+            const ledgerSelect = row.querySelector('.ledger-name-select');
+            const typeSelect = row.querySelector('.ledger-type-select');
+
+            if (!ledgerSelect || !typeSelect) return;
+
+            // Logic to filter ledger options based on Type (Debit/Credit)
+            // Only run filtering if the TRIGGERING element is the TYPE select
+            // OR if we are explicitly initializing (we can detect this if needed, or just allow it)
+            // But usually we only want to re-filter when Type changes.
+            if (element.classList.contains('ledger-type-select')) {
+                const type = typeSelect.value;
+                const filteredLedgers = getFilteredLedgers(type);
+                const newOptionsHtml = '<option></option>' + filteredLedgers.map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+
+                const currentVal = $(ledgerSelect).val();
+                $(ledgerSelect).empty().append(newOptionsHtml);
+
+                // If possible, keep the current value if it is still valid
+                // But usually switching type invalidates the ledger choice.
+                // We try to set it; if it doesn't exist in new options, it becomes null/empty.
+                $(ledgerSelect).val(currentVal).trigger('change');
+            }
+
+            if (ledgerSelect && typeSelect) {
+                const ledgerName = ledgerSelect.value;
+                typeSelect.style.pointerEvents = 'auto';
+                typeSelect.style.backgroundColor = '';
+
+                // Enforce fixed types for specific ledgers
+                if (voucherType === 'Sales' && ledgerName === 'Discount Allowed') {
+                    typeSelect.value = 'Debit';
+                    typeSelect.style.pointerEvents = 'none';
+                    typeSelect.style.backgroundColor = '#eee';
+                } else if (voucherType === 'Sales Return' && ledgerName === 'Discount Allowed') {
+                    typeSelect.value = 'Credit';
+                    typeSelect.style.pointerEvents = 'none';
+                    typeSelect.style.backgroundColor = '#eee';
+                } else if (voucherType === 'Purchase' && ledgerName === 'Discount Received') {
+                    typeSelect.value = 'Credit';
+                    typeSelect.style.pointerEvents = 'none';
+                    typeSelect.style.backgroundColor = '#eee';
+                } else if (voucherType === 'Purchase Return' && ledgerName === 'Discount Allowed') {
+                    typeSelect.value = 'Debit';
+                    typeSelect.style.pointerEvents = 'none';
+                    typeSelect.style.backgroundColor = '#eee';
+                }
+            }
+
+            updateVatVisibilityForRow(row);
+            calculateLedgerVAT(row);
+        } catch (e) {
+            console.error("Error in onLedgerTypeChange:", e);
+        }
+    }
+
+
+
+    function updateVatVisibilityForRow(row) {
+        const typeSelect = row.querySelector('.ledger-type-select');
+        const vatCells = row.querySelectorAll('.vat-cell');
+
+        if (!typeSelect || vatCells.length === 0) return;
+
+        // Service Income: Show VAT for Credit ledgers
+        if (voucherType === 'Service Income') {
+            if (typeSelect.value === 'Credit') {
+                vatCells.forEach(cell => cell.style.visibility = 'visible');
+            } else {
+                vatCells.forEach(cell => cell.style.visibility = 'hidden');
+            }
+        }
+        // Service Income Return: Show VAT for Debit ledgers
+        else if (voucherType === 'Service Income Return') {
+            if (typeSelect.value === 'Debit') {
+                vatCells.forEach(cell => cell.style.visibility = 'visible');
+            } else {
+                vatCells.forEach(cell => cell.style.visibility = 'hidden');
+            }
+        }
+        // Expense: Show VAT for Debit ledgers (Journal never shows VAT)
+        else if (voucherType === 'Expense') {
+            if (typeSelect.value === 'Debit') {
+                vatCells.forEach(cell => cell.style.visibility = 'visible');
+            } else {
+                vatCells.forEach(cell => cell.style.visibility = 'hidden');
+            }
+        }
+        // Other vouchers: Hide VAT column (if they somehow have vat-cells)
+        else {
+            vatCells.forEach(cell => cell.style.visibility = 'hidden');
+        }
+    }
+
+    function onLedgerAmountChange(element) {
+        const row = element.closest('.ledger-row');
+        calculateLedgerVAT(row);
+    }
+
+    function onVATCheckboxChange(checkbox) {
+        const row = checkbox.closest('.ledger-row');
+        // If checking ON, ensure default VAT % is set if currently 0
+        if (checkbox.checked) {
+            const vatPercentInput = row.querySelector('.vat-percent-input');
+            if (vatPercentInput && (parseFloat(vatPercentInput.value) === 0 || !vatPercentInput.value)) {
+                vatPercentInput.value = 5; // Default to 5%
+            }
+        } else {
+            // If unchecking, maybe clear it? Or keep it? 
+            // Usually keeping it is fine, calculateLedgerVAT will just zero the amount.
+        }
+        calculateLedgerVAT(row);
+    }
+
+    function calculateLedgerVAT(row) {
+        const amountInput = row.querySelector('.ledger-amount-input');
+        const vatCheckbox = row.querySelector('.vat-applicable-checkbox');
+        const vatAmountInput = row.querySelector('.vat-amount-input');
+        const vatPercentInput = row.querySelector('.vat-percent-input');
+        const typeSelect = row.querySelector('.ledger-type-select');
+
+        if (!amountInput || !vatCheckbox || !vatAmountInput) return;
+
+        const amount = parseFloat(amountInput.value) || 0;
+        const vatRate = parseFloat(vatPercentInput ? vatPercentInput.value : 5) || 0;
+
+        if (vatCheckbox.checked) {
+            let vatAmount = 0;
+
+            // Service Income: VAT on credit entries (Exclusive: Amount * Rate / 100)
+            if (voucherType === 'Service Income' && typeSelect.value === 'Credit') {
+                vatAmount = (amount * vatRate / 100).toFixed(2);
+            }
+            // Service Income Return: VAT on debit entries (Exclusive: Amount * Rate / 100)
+            else if (voucherType === 'Service Income Return' && typeSelect.value === 'Debit') {
+                vatAmount = (amount * vatRate / 100).toFixed(2);
+            }
+            // Expense: VAT on debit entries (Exclusive: Amount * Rate / 100)
+            else if (voucherType === 'Expense' && typeSelect.value === 'Debit') {
+                vatAmount = (amount * vatRate / 100).toFixed(2);
+            }
+
+            vatAmountInput.value = vatAmount;
+        } else {
+            vatAmountInput.value = '0.00';
+        }
+    }
+
+    function addItemRow() {
+        const tbody = document.querySelector('#itemTable tbody');
+        const newRow = document.createElement('tr');
+        newRow.className = 'item-row';
+
+        const headerCC = document.getElementById('cost_center_name') ? document.getElementById('cost_center_name').value : '';
+        const costCenterCell = costCenterApplicable ? `
+            <td>
+                <select name="item_cost_center[]" class="item-cost-center-select select2" data-placeholder="None">
+                    ${costCenterOptions}
+                </select>
+            </td>
+        ` : '';
+
+        if (voucherType === 'Inventory Transfer') {
+            newRow.innerHTML = `
+                <td>
+                    <select name="item_name[]" class="item-name-select select2" data-placeholder="Select Item" onchange="onItemChange(this)" required>
+                        <option></option>
+                        ${itemsData.map(i => `<option value="${i.name}">${i.name}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <input type="number" name="quantity[]" class="quantity-input" step="0.01" required>
+                </td>
+                <input type="hidden" name="unit_price[]" value="0">
+                <input type="hidden" name="item_amount[]" value="0">
+                <input type="hidden" name="item_ledger_name[]" value="">
+                <input type="hidden" name="item_type[]" value="">
+                <input type="hidden" name="vat_percent[]" value="0">
+                <input type="hidden" name="vat_amount[]" value="0">
+                <td>
+                    <button type="button" class="btn" onclick="removeItemRow(this)">Remove</button>
+                </td>
+            `;
+        } else if (voucherType === 'Stock Adjustment') {
+            newRow.innerHTML = `
+                <td>
+                    <select name="item_name[]" class="item-name-select select2" data-placeholder="Select Item" onchange="onItemChange(this)" required>
+                        <option></option>
+                        ${itemsData.map(i => `<option value="${i.name}">${i.name}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <input type="number" name="quantity[]" class="quantity-input" step="0.01" required>
+                </td>
+                <input type="hidden" name="unit_price[]" value="0">
+                <input type="hidden" name="item_amount[]" value="0">
+                <td>
+                    <select name="item_ledger_name[]" class="item-ledger-select select2" data-placeholder="Select Ledger" required>
+                        <option></option>
+                        ${ledgerOptionsNoVat}
+                    </select>
+                </td>
+                ${costCenterCell}
+                <td>
+                    <select name="item_type[]" class="item-type-select" required>
+                        <option value="Debit">Debit</option>
+                        <option value="Credit">Credit</option>
+                    </select>
+                </td>
+                <td>
+                    <button type="button" class="btn" onclick="removeItemRow(this)">Remove</button>
+                </td>
+            `;
+        } else {
+            newRow.innerHTML = `
+                <td>
+                    <select name="item_name[]" class="item-name-select select2" data-placeholder="Select Item" onchange="onItemChange(this)" required>
+                        <option></option>
+                        ${itemsData.map(i => `<option value="${i.name}">${i.name}</option>`).join('')}
+                    </select>
+                </td>
+                <td>
+                    <input type="number" name="quantity[]" class="quantity-input narrow-input" step="0.01" oninput="onItemInputChange(this)" required>
+                    <input type="hidden" name="ref_voucher_number[]" value="">
+                </td>
+                ${voucherType === 'Sales' ? '<td><span class="available-qty">-</span></td>' : ''}
+                <td>
+                    <input type="number" name="unit_price[]" class="unit-price-input mid-input" step="0.01" oninput="onItemInputChange(this)" required>
+                </td>
+                <td>
+                    <input type="number" name="item_amount[]" class="item-amount-input" step="0.01" readonly>
+                </td>
+                ${(voucherType !== 'Purchase' && voucherType !== 'Purchase Return') ? `
+                <td>
+                    <select name="item_ledger_name[]" class="item-ledger-select select2" data-placeholder="Select Ledger" required>
+                        <option></option>
+                        ${ledgerOptionsNoVat}
+                    </select>
+                </td>
+                ` : `<input type="hidden" name="item_ledger_name[]" value="">`}
+                ${voucherType === 'Purchase' ? '<td><input type="number" name="weight_kg[]" class="weight-input narrow-input" step="0.01"><input type="hidden" name="item_type[]" value="Debit"></td>' : ''}
+                ${costCenterCell}
+                ${(() => {
+                    if (voucherType === 'Purchase') return '';
+                    return '<td>' + (() => {
+                        const vt = voucherType;
+                        if (vt === 'Sales') return `<select name="item_type[]" class="item-type-select" required disabled><option value="Credit" selected>Credit</option></select><input type="hidden" name="item_type[]" value="Credit">`;
+                        if (vt === 'Sales Return') return `<select name="item_type[]" class="item-type-select" required disabled><option value="Debit" selected>Debit</option></select><input type="hidden" name="item_type[]" value="Debit">`;
+                        if (vt === 'Purchase Return') return `<select name="item_type[]" class="item-type-select" required disabled><option value="Credit" selected>Credit</option></select><input type="hidden" name="item_type[]" value="Credit">`;
+                        return `<select name="item_type[]" class="item-type-select" required>
+                                    <option value="Debit">Debit</option>
+                                    <option value="Credit">Credit</option>
+                                </select>`;
+                    })() + '</td>';
+                })()}
+                ${vatApplicable ? `
+                <td>
+                    <input type="number" name="vat_percent[]" class="vat-percent-input-item vat-input" step="0.01" min="0" max="100" oninput="onVatPercentChange(this)">
+                </td>
+                <td>
+                    <input type="number" name="vat_amount[]" class="vat-amount-input-item vat-input" value="0" step="0.01" readonly>
+                </td>
+                <td>
+                    <input type="number" name="line_subtotal[]" class="item-subtotal-input-item" value="0" step="0.01" readonly>
+                </td>
+                ` : `
+                <input type="hidden" name="vat_percent[]" class="vat-percent-input-item" value="0">
+                <input type="hidden" name="vat_amount[]" class="vat-amount-input-item" value="0">
+                <input type="hidden" name="line_subtotal[]" class="item-subtotal-input-item" value="0">
+                `}
+                <td>
+                    <button type="button" class="btn" onclick="removeItemRow(this)">Remove</button>
+                </td>
+            `;
+        }
+        tbody.appendChild(newRow);
+
+        // Initialize Select2 for the new row
+        $(newRow).find('.select2').select2({
+            width: '100%',
+            placeholder: function () {
+                return $(this).data('placeholder');
+            },
+            allowClear: true
+        });
+
+        if (costCenterApplicable && headerCC) {
+            const selects = newRow.querySelectorAll('.item-cost-center-select');
+            selects.forEach(s => {
+                s.value = headerCC;
+                $(s).trigger('change'); // Notify Select2
+            });
+        }
+        updateItemsTotals();
+        if (voucherType === 'Sales') {
+            updateAvailableQtyForRow(newRow);
+        }
+    }
+
+    function removeItemRow(btn) {
+        btn.closest('tr').remove();
+        updateItemsTotals();
+    }
+
+    function updateAvailableQtyForRow(row) {
+        if (voucherType !== 'Sales') return;
+        const itemSelect = row.querySelector('.item-name-select');
+        const availSpan = row.querySelector('.available-qty');
+        const locSelect = document.getElementById('location_name');
+        const dateInput = document.getElementById('date');
+        if (!itemSelect || !availSpan) return;
+        const itemName = itemSelect.value;
+        const locationName = locSelect ? locSelect.value : '';
+        const dateVal = dateInput ? dateInput.value : '';
+        if (!itemName) { availSpan.textContent = '-'; return; }
+        fetch(`/api/item_available_qty?item_name=${encodeURIComponent(itemName)}&location_name=${encodeURIComponent(locationName)}&date=${encodeURIComponent(dateVal)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data && data.success) {
+                    availSpan.textContent = (data.qty || 0).toFixed(2);
+                }
+            })
+            .catch(() => { });
+    }
+
+    function onItemChange(selectElement) {
+        const row = selectElement.closest('.item-row');
+        const itemName = selectElement.value;
+        const unitPriceInput = row.querySelector('.unit-price-input');
+        const vatPercentInput = row.querySelector('.vat-percent-input-item');
+
+        if (itemName && itemsDict[itemName]) {
+            if (voucherType === 'Sales' || voucherType === 'Sales Return') {
+                unitPriceInput.value = itemsDict[itemName].unit_price;
+            }
+            if (vatPercentInput) {
+                if (vatApplicable) {
+                    const defaultRate = itemsDict[itemName].vat_rate || 0;
+                    const userEdited = vatPercentInput.dataset.userEditedVat === 'true';
+                    if (!userEdited) {
+                        vatPercentInput.value = defaultRate;
+                    }
+                } else {
+                    vatPercentInput.value = 0;
+                }
+            }
+        }
+
+        calculateItemAmount(row);
+        calculateItemVAT(row);
+        updateAvailableQtyForRow(row);
+    }
+
+    function onItemInputChange(input) {
+        const row = input.closest('.item-row');
+        calculateItemAmount(row);
+        calculateItemVAT(row);
+    }
+
+    function onVatPercentChange(input) {
+        const row = input.closest('.item-row');
+        let v = parseFloat(input.value);
+        if (isNaN(v)) v = 0;
+        if (v < 0) v = 0;
+        if (v > 100) v = 100;
+        input.value = v;
+        input.dataset.userEditedVat = 'true';
+        calculateItemVAT(row);
+        updateItemsTotals();
+    }
+
+    function calculateItemAmount(row) {
+        const qtyInput = row.querySelector('.quantity-input');
+        const priceInput = row.querySelector('.unit-price-input');
+        const amountInput = row.querySelector('.item-amount-input');
+
+        const qty = parseFloat(qtyInput.value) || 0;
+        const price = parseFloat(priceInput.value) || 0;
+        const amount = (qty * price).toFixed(2);
+
+        amountInput.value = amount;
+    }
+
+    function calculateItemVAT(row) {
+        const itemNameSelect = row.querySelector('.item-name-select');
+        const amountInput = row.querySelector('.item-amount-input');
+        const vatAmountInput = row.querySelector('.vat-amount-input-item');
+        const subtotalInput = row.querySelector('.item-subtotal-input-item');
+        const vatPercentInput = row.querySelector('.vat-percent-input-item');
+
+        if (!vatAmountInput) return;
+
+        const itemName = itemNameSelect.value;
+        const amount = parseFloat(amountInput.value) || 0;
+        let vatRate = parseFloat((vatPercentInput && vatPercentInput.value) || '');
+
+        if (itemName && itemsDict[itemName]) {
+            if (isNaN(vatRate) && vatApplicable) {
+                const masterRate = itemsDict[itemName].vat_rate;
+                vatRate = typeof masterRate === 'number' ? masterRate : 0;
+                if (vatPercentInput) vatPercentInput.value = vatRate;
+            } else if (!vatApplicable) {
+                vatRate = 0;
+                if (vatPercentInput) vatPercentInput.value = 0;
+            }
+            const vatAmount = (vatRate > 0 ? (amount * vatRate / 100) : 0).toFixed(2);
+            vatAmountInput.value = vatAmount;
+        } else {
+            vatAmountInput.value = '0.00';
+        }
+
+        if (subtotalInput) {
+            const vat = parseFloat(vatAmountInput.value) || 0;
+            const subtotal = (amount + vat).toFixed(2);
+            subtotalInput.value = subtotal;
+        }
+
+        updateItemsTotals();
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const ledgerRows = document.querySelectorAll('.ledger-row');
+        ledgerRows.forEach(row => {
+            updateVatVisibilityForRow(row);
+            calculateLedgerVAT(row);
+        });
+
+        const rows = document.querySelectorAll('.item-row');
+        rows.forEach(row => {
+            const sel = row.querySelector('.item-type-select');
+            if (!sel) return;
+            let fixed;
+            if (voucherType === 'Sales') fixed = 'Credit';
+            else if (voucherType === 'Sales Return') fixed = 'Debit';
+            else if (voucherType === 'Purchase') fixed = 'Debit';
+            else if (voucherType === 'Purchase Return') fixed = 'Credit';
+            if (fixed) {
+                sel.value = fixed;
+                sel.disabled = true;
+                const hidden = row.querySelector('input[type="hidden"][name="item_type[]"]');
+                if (!hidden) {
+                    const h = document.createElement('input');
+                    h.type = 'hidden';
+                    h.name = 'item_type[]';
+                    h.value = fixed;
+                    sel.parentElement.appendChild(h);
+                } else {
+                    hidden.value = fixed;
+                }
+            }
+        });
+        if (voucherType === 'Sales') {
+            const locSel = document.getElementById('location_name');
+            const dateInput = document.getElementById('date');
+            if (locSel) {
+                locSel.addEventListener('change', function () {
+                    const rows2 = document.querySelectorAll('.item-row');
+                    rows2.forEach(r => updateAvailableQtyForRow(r));
+                });
+            }
+            if (dateInput) {
+                dateInput.addEventListener('change', function () {
+                    const rowsDate = document.querySelectorAll('.item-row');
+                    rowsDate.forEach(r => updateAvailableQtyForRow(r));
+                });
+            }
+            const rowsAll = document.querySelectorAll('.item-row');
+            rowsAll.forEach(r => updateAvailableQtyForRow(r));
+        }
+        updateItemsTotals();
+    });
+
+    function searchPurchaseVoucher() {
+        const query = document.getElementById('pv_search_input').value;
+        const resultsDiv = document.getElementById('pv_search_results');
+        const detailsDiv = document.getElementById('selected_pv_details');
+        const hiddenInput = document.getElementById('linked_voucher_number');
+
+        if (!query) {
+            alert("Please enter a Voucher Number or Supplier Reference");
+            return;
+        }
+
+        fetch(`/api/search_purchase_vouchers?q=${encodeURIComponent(query)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.results.length === 0) {
+                        resultsDiv.innerHTML = '<div style="color: red;">No matching vouchers found.</div>';
+                        resultsDiv.style.display = 'block';
+                        detailsDiv.style.display = 'none';
+                        hiddenInput.value = '';
+                    } else if (data.results.length === 1) {
+                        selectPurchaseVoucher(data.results[0]);
+                        resultsDiv.style.display = 'none';
+                    } else {
+                        // Multiple results
+                        let html = '<div style="font-weight: bold; margin-bottom: 5px;">Select a Voucher:</div>';
+                        data.results.forEach(v => {
+                            html += `
+                                <div style="cursor: pointer; padding: 5px; border-bottom: 1px solid #eee;" 
+                                     onclick='selectPurchaseVoucher(${JSON.stringify(v)})'>
+                                    <strong>${v.voucher_number}</strong> - ${v.date} - ${v.party_name}<br>
+                                    Amt: ${v.amount} ${v.ref ? `(Ref: ${v.ref})` : ''}
+                                </div>
+                            `;
+                        });
+                        resultsDiv.innerHTML = html;
+                        resultsDiv.style.display = 'block';
+                        detailsDiv.style.display = 'none';
+                        hiddenInput.value = '';
+                    }
+                } else {
+                    alert("Error: " + data.message);
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert("Error searching vouchers");
+            });
+    }
+
+    function selectPurchaseVoucher(v) {
+        const hiddenInput = document.getElementById('linked_voucher_number');
+        const detailsDiv = document.getElementById('selected_pv_details');
+        const resultsDiv = document.getElementById('pv_search_results');
+
+        hiddenInput.value = v.voucher_number;
+        detailsDiv.innerHTML = `
+            <strong>Selected:</strong> ${v.voucher_number}<br>
+            Date: ${v.date}, Party: ${v.party_name}, Amount: ${v.amount}<br>
+            ${v.ref ? `Ref: ${v.ref} (${v.ref_date})` : ''}
+        `;
+        detailsDiv.style.display = 'block';
+        resultsDiv.style.display = 'none';
+    }
+
+    function loadReturnItems() {
+        const src = document.getElementById('source_voucher_number');
+        const dateInput = document.getElementById('date');
+        if (!src) return;
+        const vno = (src.value || '').trim();
+        if (!vno) { alert('Enter source voucher number'); return; }
+        const targetType = voucherType;
+        fetch(`/api/voucher_items_for_return?voucher_number=${encodeURIComponent(vno)}&target_type=${encodeURIComponent(targetType)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) { alert('Error: ' + (data.message || 'Failed')); return; }
+
+                // Handle Items Table (if exists)
+                const tbody = document.querySelector('#itemTable tbody');
+                if (tbody) {
+                    tbody.innerHTML = '';
+                    const fixedType = targetType === 'Sales Return' ? 'Debit' : 'Credit';
+                    data.items.forEach(ie => {
+                        const row = document.createElement('tr');
+                        row.className = 'item-row';
+                        const defaultRate = (itemsDict[ie.item_name] && itemsDict[ie.item_name].vat_rate) || 0;
+                        row.innerHTML = `
+                            <td>
+                                <select name="item_name[]" class="item-name-select" required>
+                                    <option value="${ie.item_name}" selected>${ie.item_name}</option>
+                                </select>
+                            </td>
+                            <td>
+                                <input type="number" name="quantity[]" class="quantity-input" value="${ie.quantity}" step="0.01" oninput="onItemInputChange(this)" required>
+                                <input type="hidden" name="ref_voucher_number[]" value="${vno}">
+                            </td>
+                            <td>
+                                <input type="number" name="unit_price[]" class="unit-price-input" value="${ie.unit_price}" step="0.01" oninput="onItemInputChange(this)" required>
+                            </td>
+                            <td>
+                                <input type="number" name="item_amount[]" class="item-amount-input" value="${ie.amount}" step="0.01" readonly>
+                            </td>
+                            ${(targetType !== 'Purchase' && targetType !== 'Purchase Return') ? `
+                            <td>
+                                <select name="item_ledger_name[]" class="item-ledger-select" required>
+                                    <option value="${ie.ledger_name}" selected>${ie.ledger_name}</option>
+                                </select>
+                            </td>
+                            ` : `<input type="hidden" name="item_ledger_name[]" value="">`}
+                            ${costCenterApplicable ? `
+                            <td>
+                                <select name="item_cost_center[]" class="item-cost-center-select select2" data-placeholder="None">
+                                    ${costCenterOptions}
+                                </select>
+                            </td>
+                            ` : ''}
+                            <td>
+                                <select name="item_type[]" class="item-type-select" required disabled>
+                                    <option value="${fixedType}" selected>${fixedType}</option>
+                                </select>
+                                <input type="hidden" name="item_type[]" value="${fixedType}">
+                            </td>
+                            ${vatApplicable ? `
+                            <td>
+                                <input type="number" name="vat_percent[]" class="vat-percent-input-item vat-input" value="${defaultRate}" step="0.01" min="0" max="100" oninput="onVatPercentChange(this)">
+                            </td>
+                            <td>
+                                <input type="number" name="vat_amount[]" class="vat-amount-input-item vat-input" value="0" step="0.01" readonly>
+                            </td>
+                            <td>
+                                <input type="number" name="line_subtotal[]" class="item-subtotal-input-item" value="${ie.amount}" step="0.01" readonly>
+                            </td>
+                            ` : `
+                            <input type="hidden" name="vat_percent[]" class="vat-percent-input-item" value="0">
+                            <input type="hidden" name="vat_amount[]" class="vat-amount-input-item" value="0">
+                            <input type="hidden" name="line_subtotal[]" class="item-subtotal-input-item" value="${ie.amount}">
+                            `}
+                            <td>
+                                <button type="button" class="btn" onclick="removeItemRow(this)">Remove</button>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                        calculateItemAmount(row);
+                        calculateItemVAT(row);
+                    });
+                }
+
+                // Handle Ledger Table
+                const ltbody = document.querySelector('#ledgerTable tbody');
+                if (ltbody && Array.isArray(data.ledgers)) {
+                    ltbody.innerHTML = '';
+                    data.ledgers.forEach(le => {
+                        if (['Output VAT 5%', 'Input VAT 5%'].includes(le.ledger_name)) return;
+                        const newRow = document.createElement('tr');
+                        newRow.className = 'ledger-row';
+
+                        const headerCC = document.getElementById('cost_center_name') ? document.getElementById('cost_center_name').value : '';
+                        const costCenterCell = costCenterApplicable ? `
+                            <td>
+                                <select name="ledger_cost_center[]" class="ledger-cost-center-select">
+                                    ${costCenterOptions}
+                                </select>
+                            </td>
+                        ` : '';
+
+                        let vatColumns = '';
+                        if (['Expense', 'Service Income', 'Service Income Return'].includes(voucherType)) {
+                            if (vatApplicable) {
+                                vatColumns = `
+                                    <td class="vat-cell">
+                                        <input type="checkbox" name="ledger_vat_applicable[]" class="vat-applicable-checkbox" value="1" checked onchange="onVATCheckboxChange(this)">
+                                    </td>
+                                    <td class="vat-cell">
+                                        <input type="number" name="ledger_vat_percent[]" class="vat-percent-input" value="5" step="0.01" readonly>
+                                    </td>
+                                    <td class="vat-cell">
+                                        <input type="number" name="ledger_vat_amount[]" class="vat-amount-input" value="0" step="0.01" readonly>
+                                    </td>
+                                `;
+                            } else {
+                                vatColumns = `
+                                    <input type="hidden" name="ledger_vat_applicable[]" value="0">
+                                    <input type="hidden" name="ledger_vat_percent[]" value="0">
+                                    <input type="hidden" name="ledger_vat_amount[]" value="0">
+                                `;
+                            }
+                        }
+
+                        newRow.innerHTML = `
+                            <td>
+                                <select name="ledger_name[]" class="ledger-name-select" onchange="onLedgerTypeChange(this)" required>
+                                    <option value="">-- Select Ledger --</option>
+                                    ${ledgerOptionsNoVat}
+                                </select>
+                            </td>
+                            ${costCenterCell}
+                            <td>
+                                <input type="number" name="ledger_amount[]" class="ledger-amount-input" value="${le.amount}" step="0.01" oninput="onLedgerAmountChange(this)" required>
+                            </td>
+                            <td>
+                                <select name="ledger_type[]" class="ledger-type-select" onchange="onLedgerTypeChange(this)" required>
+                                    <option value="Debit" ${le.type === 'Debit' ? 'selected' : ''}>Debit</option>
+                                    <option value="Credit" ${le.type === 'Credit' ? 'selected' : ''}>Credit</option>
+                                </select>
+                            </td>
+                            ${vatColumns}
+                            <td>
+                                <button type="button" class="btn" onclick="removeLedgerRow(this)">Remove</button>
+                            </td>
+                        `;
+                        ltbody.appendChild(newRow);
+
+                        // Set selected ledger name
+                        const ledgerSelect = newRow.querySelector('.ledger-name-select');
+                        if (ledgerSelect) ledgerSelect.value = le.ledger_name;
+
+                        if (costCenterApplicable && headerCC) {
+                            const selects = newRow.querySelectorAll('.ledger-cost-center-select');
+                            selects.forEach(s => s.value = headerCC);
+                        }
+                        updateVatVisibilityForRow(newRow);
+                        calculateLedgerVAT(newRow);
+                    });
+                }
+                updateItemsTotals();
+            })
+            .catch(err => alert('Error: ' + err));
+    }
+
+    function updateItemsTotals() {
+        const rows = document.querySelectorAll('.item-row');
+        let totalAmount = 0;
+        let totalVat = 0;
+        rows.forEach(row => {
+            const amt = parseFloat((row.querySelector('.item-amount-input') || {}).value) || 0;
+            const vat = parseFloat((row.querySelector('.vat-amount-input-item') || {}).value) || 0;
+            totalAmount += amt;
+            totalVat += vat;
+        });
+        const grandTotalEl = document.getElementById('grandTotalInclVat');
+        if (grandTotalEl) {
+            grandTotalEl.textContent = (totalAmount + totalVat).toFixed(2);
+        }
+    }
+</script>
+<script>
+    function reverseVoucher(voucherNumber) {
+        const date = new Date().toISOString().slice(0, 10);
+        fetch('/reverse_voucher', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ voucher_number: voucherNumber, date })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Reversal created: ' + data.voucher_number);
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + (data.message || 'Failed'));
+                }
+            })
+            .catch(err => alert('Error: ' + err));
+    }
+</script>
+
+{% endblock %}

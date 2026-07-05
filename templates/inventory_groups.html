@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Inventory Groups{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    /* Enforce full width */
+    input,
+    select,
+    .select2-container {
+        width: 100% !important;
+    }
+
+    #inventoryGroupMessage,
+    #deleteInventoryGroupMessage {
+        margin-top: 10px;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Manage Inventory Groups</h1>
+
+<h2>Add Inventory Group</h2>
+<form id="addInventoryGroupForm" method="POST" action="/add_inventory_group">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="form-group">
+        <label for="group_code">Group Code:</label>
+        <input type="text" name="group_code" id="group_code" placeholder="Group Code" required>
+    </div>
+    <div class="form-group">
+        <label for="group_name">Group Name:</label>
+        <input type="text" name="group_name" id="group_name" placeholder="Group Name" required>
+    </div>
+    <button type="submit">Add Inventory Group</button>
+    <button type="button" onclick="showImportSection()">Import</button>
+
+    <div id="importSection" class="import-section-container" style="display:none;">
+        <h3>Import Inventory Groups from Excel</h3>
+        <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Group Code, Group Name</p>
+
+        <div class="import-controls">
+            <input type="file" id="excelFile" class="import-file-input" accept=".xlsx" />
+            <button type="button" class="btn btn-secondary" onclick="downloadTemplate()">Download Template</button>
+            <button type="button" class="btn btn-primary" onclick="importExcel()">Upload & Import</button>
+        </div>
+
+        <div id="importProgressContainer" class="progress-container" style="display:none;">
+            <div id="importProgressBar" class="progress-bar" style="width: 0%;">0%</div>
+        </div>
+        <div id="importMessage" class="status-message" style="display:none;"></div>
+    </div>
+</form>
+<div id="inventoryGroupMessage"></div>
+
+<h2>Delete Inventory Group</h2>
+<form id="deleteInventoryGroupForm" method="POST" action="/delete_inventory_group">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="form-group">
+        <label for="delete_group_name">Group Name:</label>
+        <select name="group_name" id="delete_group_name" class="select2" required>
+            <option></option> <!-- Placeholder for search -->
+            {% if inventory_groups %}
+            {% for group in inventory_groups %}
+            <option value="{{ group.group_name }}">{{ group.group_name }}</option>
+            {% endfor %}
+            {% else %}
+            <option disabled selected>No inventory groups available. Add a group first.</option>
+            {% endif %}
+        </select>
+    </div>
+    <button type="submit">Delete Inventory Group</button>
+</form>
+<div id="deleteInventoryGroupMessage"></div>
+
+<h2>Existing Inventory Groups</h2>
+<table border="1">
+    <tr>
+        <th>Group Code</th>
+        <th>Group Name</th>
+    </tr>
+    {% if inventory_groups %}
+    {% for group in inventory_groups %}
+    <tr>
+        <td>{{ group.group_code }}</td>
+        <td>{{ group.group_name }}</td>
+    </tr>
+    {% endfor %}
+    {% else %}
+    <tr>
+        <td colspan="2">No inventory groups found.</td>
+    </tr>
+    {% endif %}
+</table>
+
+<script>
+    $(document).ready(function () {
+        // Apply Select2 to the dropdowns without allowClear
+        $('.select2').select2({
+            placeholder: "Select a group",
+            allowClear: false // Disable the clear (X) option
+        });
+
+        document.getElementById('addInventoryGroupForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const submitBtn = this.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.disabled = true;
+            fetch('/add_inventory_group', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => {
+                            throw new Error(`HTTP ${response.status}: ${err.message || response.statusText}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const messageDiv = document.getElementById('inventoryGroupMessage');
+                    messageDiv.textContent = data.message;
+                    messageDiv.style.color = data.success ? '#2ecc71' : '#e74c3c';
+                    if (data.success) {
+                        this.reset();
+                        setTimeout(() => location.reload(), 1000);
+                    } else {
+                        if (submitBtn) submitBtn.disabled = false;
+                    }
+                })
+                .catch(error => {
+                    const messageDiv = document.getElementById('inventoryGroupMessage');
+                    messageDiv.textContent = 'Error: ' + error.message;
+                    messageDiv.style.color = '#e74c3c';
+                    if (submitBtn) submitBtn.disabled = false;
+                });
+        });
+
+        document.getElementById('deleteInventoryGroupForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            fetch('/delete_inventory_group', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => {
+                            throw new Error(`HTTP ${response.status}: ${err.message || response.statusText}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const messageDiv = document.getElementById('deleteInventoryGroupMessage');
+                    messageDiv.textContent = data.message;
+                    messageDiv.style.color = data.success ? '#2ecc71' : '#e74c3c';
+                    if (data.success) {
+                        setTimeout(() => location.reload(), 1000);
+                    }
+                })
+                .catch(error => {
+                    const messageDiv = document.getElementById('deleteInventoryGroupMessage');
+                    messageDiv.textContent = 'Error: ' + error.message;
+                    messageDiv.style.color = '#e74c3c';
+                });
+        });
+    });
+
+    function showImportSection() {
+        document.getElementById('importSection').style.display = 'block';
+        console.log("Showed import section"); // Debug
+    }
+
+    function downloadTemplate() {
+        window.location.href = '/download_inventory_group_template';
+        console.log("Downloading inventory group template"); // Debug
+    }
+
+    function importExcel() {
+        const fileInput = document.getElementById('excelFile');
+        const file = fileInput.files[0];
+        if (!file) {
+            alert('Please select an Excel file.');
+            return;
+        }
+
+        const msgDiv = document.getElementById('importMessage');
+        const progressContainer = document.getElementById('importProgressContainer');
+        const progressBar = document.getElementById('importProgressBar');
+
+        msgDiv.style.display = 'block';
+        msgDiv.innerText = "Reading file...";
+        msgDiv.className = "status-message info";
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        // Block UI
+        if (typeof blockUI === 'function') blockUI("Reading file...");
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+                if (jsonData.length === 0) {
+                    msgDiv.innerText = "Excel file is empty.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
+
+                msgDiv.innerText = "Uploading " + jsonData.length + " rows...";
+                progressContainer.style.display = 'block';
+
+                // Update Block UI message
+                if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
+
+                const inventoryGroupData = jsonData.map(row => ({
+                    group_code: row['Group Code'],
+                    group_name: row['Group Name']
+                }));
+
+                const payload = JSON.stringify({
+                    file_name: file.name,
+                    json_data: JSON.stringify(inventoryGroupData)
+                });
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/queue_inventory_group_import', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+
+                xhr.upload.onprogress = function (e) {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        progressBar.innerText = percent + '%';
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status === 200) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            msgDiv.innerText = response.message;
+                            msgDiv.className = response.success ? "status-message success" : "status-message error";
+
+                            if (response.success) {
+                                msgDiv.innerText += " Redirecting to Import Queue...";
+                                progressBar.style.width = '100%';
+                                progressBar.innerText = '100%';
+                                fileInput.value = '';
+
+                                // Keep blocked but update message, remove unload handler
+                                if (typeof blockUI === 'function') blockUI("Upload successful! Redirecting...");
+                                window.onbeforeunload = null;
+
+                                setTimeout(() => window.location.href = '/report/import-queue', 1500);
+                            } else {
+                                if (typeof unblockUI === 'function') unblockUI();
+                            }
+                        } catch (e) {
+                            msgDiv.innerText = "Error parsing response: " + e;
+                            msgDiv.className = "status-message error";
+                            if (typeof unblockUI === 'function') unblockUI();
+                        }
+                    } else {
+                        msgDiv.innerText = "Upload failed: " + xhr.statusText;
+                        msgDiv.className = "status-message error";
+                        if (typeof unblockUI === 'function') unblockUI();
+                    }
+                };
+
+                xhr.onerror = function () {
+                    msgDiv.innerText = "Network error.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                };
+
+                xhr.send(payload);
+
+            } catch (err) {
+                console.error('Error parsing Excel:', err);
+                msgDiv.innerText = "Error parsing Excel: " + err;
+                msgDiv.className = "status-message error";
+                if (typeof unblockUI === 'function') unblockUI();
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+</script>
+{% endblock %}

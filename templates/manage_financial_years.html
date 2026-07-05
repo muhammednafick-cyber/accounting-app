@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div
+            class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+            <h1 class="h2">Manage Financial Years</h1>
+            <div class="btn-toolbar mb-2 mb-md-0">
+                <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal"
+                    data-bs-target="#createFYModal">
+                    <i class="bi bi-plus-circle"></i> Create New FY
+                </button>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Start Date</th>
+                        <th>End Date</th>
+                        <th>Status</th>
+                        <th>Locked</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fy in fys %}
+                    <tr>
+                        <td>{{ fy.fy_code }}</td>
+                        <td>{{ fy.start_date | format_date }}</td>
+                        <td>{{ fy.end_date | format_date }}</td>
+                        <td>
+                            {% if fy.is_active %}
+                            <span class="badge bg-success">Active</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if fy.is_locked %}
+                            <span class="badge bg-danger">Locked</span>
+                            {% else %}
+                            <span class="badge bg-success">Open</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if fy.is_locked %}
+                            <form action="{{ url_for('financial_year_bp.reopen_financial_year', fy_id=fy.id) }}"
+                                method="POST" style="display:inline;"
+                                onsubmit="return confirm('Are you sure you want to Re-open this FY?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <button type="submit" class="btn btn-sm btn-warning">Re-open</button>
+                            </form>
+                            {% else %}
+                            <form action="{{ url_for('financial_year_bp.lock_financial_year', fy_id=fy.id) }}"
+                                method="POST" style="display:inline;"
+                                onsubmit="return confirm('Are you sure you want to Lock this FY? No more vouchers can be created for this period.');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <button type="submit" class="btn btn-sm btn-danger">Lock</button>
+                            </form>
+                            {% endif %}
+
+                            <!-- Edit Button -->
+                            <button type="button" class="btn btn-sm btn-info" data-bs-toggle="modal"
+                                data-bs-target="#editFYModal" data-fy-id="{{ fy.id }}" data-fy-code="{{ fy.fy_code }}"
+                                data-start-date="{{ fy.start_date | format_date }}"
+                                data-end-date="{{ fy.end_date | format_date }}">
+                                Edit
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center">No Financial Years found.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Create FY Modal -->
+<div class="modal fade" id="createFYModal" tabindex="-1" aria-labelledby="createFYModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createFYModalLabel">Create New Financial Year</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="{{ url_for('financial_year_bp.create_financial_year') }}" method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="fy_code" class="form-label">FY Code (e.g., FY2023-24)</label>
+                        <input type="text" class="form-control" id="fy_code" name="fy_code" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="start_date" class="form-label">Start Date</label>
+                        <input type="text" class="form-control date-picker" id="start_date" name="start_date"
+                            placeholder="DD-MM-YYYY" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="end_date" class="form-label">End Date</label>
+                        <input type="text" class="form-control date-picker" id="end_date" name="end_date"
+                            placeholder="DD-MM-YYYY" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Create FY</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit FY Modal -->
+<div class="modal fade" id="editFYModal" tabindex="-1" aria-labelledby="editFYModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editFYModalLabel">Edit Financial Year</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="editFYForm" method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">FY Code</label>
+                        <input type="text" class="form-control" id="edit_fy_code" disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_start_date" class="form-label">Start Date</label>
+                        <input type="text" class="form-control date-picker" id="edit_start_date" name="start_date"
+                            placeholder="DD-MM-YYYY" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_end_date" class="form-label">End Date</label>
+                        <input type="text" class="form-control date-picker" id="edit_end_date" name="end_date"
+                            placeholder="DD-MM-YYYY" required>
+                    </div>
+                    <div class="alert alert-info">
+                        <small>
+                            Note: If vouchers already exist in this period, the dates may be restricted (cannot exclude
+                            existing vouchers).
+                            Start Date must be earlier than End Date.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="submit" class="btn btn-primary">Update FY</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    var editFYModal = document.getElementById('editFYModal');
+    editFYModal.addEventListener('show.bs.modal', function (event) {
+        var button = event.relatedTarget;
+        var fyId = button.getAttribute('data-fy-id');
+        var fyCode = button.getAttribute('data-fy-code');
+        var startDate = button.getAttribute('data-start-date');
+        var endDate = button.getAttribute('data-end-date');
+
+        var modal = this;
+        modal.querySelector('#edit_fy_code').value = fyCode;
+        modal.querySelector('#edit_start_date').value = startDate;
+        modal.querySelector('#edit_end_date').value = endDate;
+
+        // Dynamically set form action
+        var form = modal.querySelector('#editFYForm');
+        form.action = "/master/financial-years/" + fyId + "/update";
+    });
+</script>
+{% endblock %}

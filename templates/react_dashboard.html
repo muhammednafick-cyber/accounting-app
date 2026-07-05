@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Analysis Dashboard{% endblock %}
+
+{% block extra_head %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- React Assets will be injected here -->
+{% if vite_assets %}
+{{ vite_assets | safe }}
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div id="root">
+    <div style="display: flex; justify-content: center; align-items: center; height: 50vh;">
+        <div style="text-align: center;">
+            <i class="fas fa-spinner fa-spin fa-3x" style="color: #3b82f6;"></i>
+            <p style="margin-top: 1rem; color: #6b7280;">Loading Dashboard...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

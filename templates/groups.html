@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Groups{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 5px;
+    }
+
+    /* Enforce full width */
+    input,
+    select,
+    .select2-container {
+        width: 100% !important;
+    }
+
+    #groupMessage,
+    #deleteGroupMessage {
+        margin-top: 10px;
+        font-weight: bold;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Manage Groups</h1>
+
+<h2>Add Group</h2>
+<form id="addGroupForm" method="POST" action="/add_group">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <!-- Group Code auto-generated -->
+    <div class="form-group">
+        <label for="group_name">Group Name:</label>
+        <input type="text" name="group_name" id="group_name" placeholder="Group Name" required>
+    </div>
+    <div class="form-group">
+        <label for="nature">Nature:</label>
+        <select name="nature" id="nature" class="select2" required>
+            <option></option> <!-- Placeholder for search -->
+            <option value="Assets">Assets</option>
+            <option value="Liabilities">Liabilities</option>
+            <option value="Income">Income</option>
+            <option value="Expenses">Expenses</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label for="master_group">Master Group:</label>
+        <select name="master_group_code" id="master_group" class="select2">
+            <option value="">-- Select Master Group --</option>
+            {% for mg in master_groups %}
+            <option value="{{ mg.master_group_code }}">{{ mg.master_group_name }} ({{ mg.nature }})</option>
+            {% endfor %}
+        </select>
+    </div>
+    <button type="submit">Add Group</button>
+    <button type="button" onclick="showImportSection()">Import</button>
+
+    <div id="importSection" class="import-section-container" style="display:none;">
+        <h3>Import Groups from Excel</h3>
+        <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Group Name, Nature</p>
+
+        <div class="import-controls">
+            <input type="file" id="excelFile" class="import-file-input" accept=".xlsx" />
+            <button type="button" class="btn btn-secondary" onclick="downloadTemplate()">Download Template</button>
+            <button type="button" class="btn btn-primary" onclick="importExcel()">Upload & Import</button>
+        </div>
+
+        <div id="importProgressContainer" class="progress-container" style="display:none;">
+            <div id="importProgressBar" class="progress-bar" style="width: 0%;">0%</div>
+        </div>
+        <div id="importMessage" class="status-message" style="display:none;"></div>
+    </div>
+</form>
+<div id="groupMessage"></div>
+
+<h2>Delete Group</h2>
+<form id="deleteGroupForm" method="POST" action="/delete_group">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <div class="form-group">
+        <label for="delete_group_name">Group Name:</label>
+        <select name="group_name" id="delete_group_name" class="select2" required>
+            <option></option> <!-- Placeholder for search -->
+            {% if groups %}
+            {% for group in groups %}
+            <option value="{{ group.group_name }}">{{ group.group_name }}</option>
+            {% endfor %}
+            {% else %}
+            <option disabled selected>No groups available. Add a group first.</option>
+            {% endif %}
+        </select>
+    </div>
+    <button type="submit">Delete Group</button>
+</form>
+<div id="deleteGroupMessage"></div>
+
+<h2>Existing Groups</h2>
+<table border="1">
+    <tr>
+        <!-- <th>Group Code</th> -->
+        <th>Group Name</th>
+        <th>Master Group</th>
+        <th>Nature</th>
+    </tr>
+    {% if groups %}
+    {% for group in groups %}
+    <tr>
+        <!-- <td>{{ group.group_code }}</td> -->
+        <td>{{ group.group_name }}</td>
+        <td>{{ group.master_group_name or '-' }}</td>
+        <td>{{ group.nature }}</td>
+    </tr>
+    {% endfor %}
+    {% else %}
+    <tr>
+        <td colspan="3">No groups found.</td>
+    </tr>
+    {% endif %}
+</table>
+
+<script>
+    $(document).ready(function () {
+        // Apply Select2 to the dropdowns without allowClear
+        $('.select2').select2({
+            placeholder: "Select an option",
+            allowClear: false // Disable the clear (X) option
+        });
+
+        $('#addGroupForm').submit(function (e) {
+            e.preventDefault();
+            const btn = $(this).find('button[type="submit"]');
+            btn.prop('disabled', true).text('Submitting...');
+            $.ajax({
+                url: '/add_group',
+                type: 'POST',
+                data: $(this).serialize(),
+                success: function (response) {
+                    $('#groupMessage').text(response.message).css('color', response.success ? '#2ecc71' : '#e74c3c');
+                    if (response.success) {
+                        setTimeout(function () { location.reload(); }, 1000);
+                    }
+                    btn.prop('disabled', false).text('Add Group');
+                },
+                error: function (xhr) {
+                    $('#groupMessage').text('Error adding group: ' + xhr.responseText).css('color', '#e74c3c');
+                    btn.prop('disabled', false).text('Add Group');
+                }
+            });
+        });
+
+        $('#deleteGroupForm').submit(function (e) {
+            e.preventDefault();
+            $.ajax({
+                url: '/delete_group',
+                type: 'POST',
+                data: $(this).serialize(),
+                success: function (response) {
+                    $('#deleteGroupMessage').text(response.message).css('color', response.success ? '#2ecc71' : '#e74c3c');
+                    if (response.success) {
+                        setTimeout(function () { location.reload(); }, 1000);
+                    }
+                },
+                error: function (xhr) {
+                    $('#deleteGroupMessage').text('Error deleting group: ' + xhr.responseText).css('color', '#e74c3c');
+                }
+            });
+        });
+    });
+
+    function showImportSection() {
+        document.getElementById('importSection').style.display = 'block';
+        console.log("Showed import section"); // Debug
+    }
+
+    function downloadTemplate() {
+        window.location.href = '/download_group_template';
+        console.log("Downloading group template"); // Debug
+    }
+
+    function importExcel() {
+        const fileInput = document.getElementById('excelFile');
+        const file = fileInput.files[0];
+        if (!file) {
+            alert('Please select an Excel file.');
+            return;
+        }
+
+        const msgDiv = document.getElementById('importMessage');
+        const progressContainer = document.getElementById('importProgressContainer');
+        const progressBar = document.getElementById('importProgressBar');
+
+        msgDiv.style.display = 'block';
+        msgDiv.innerText = "Reading file...";
+        msgDiv.className = "status-message info";
+        progressContainer.style.display = 'none';
+        progressBar.style.width = '0%';
+
+        // Block UI
+        if (typeof blockUI === 'function') blockUI("Reading file...");
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+                if (jsonData.length === 0) {
+                    msgDiv.innerText = "Excel file is empty.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
+
+                msgDiv.innerText = "Uploading " + jsonData.length + " rows...";
+                progressContainer.style.display = 'block';
+
+                // Update Block UI message
+                if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
+
+                const groupData = jsonData.map(row => ({
+                    // group_code: row['Group Code'], // Removed
+                    group_name: row['Group Name'],
+                    nature: row['Nature']
+                }));
+
+                const payload = JSON.stringify({
+                    file_name: file.name,
+                    json_data: JSON.stringify(groupData)
+                });
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/queue_group_import', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+
+                xhr.upload.onprogress = function (e) {
+                    if (e.lengthComputable) {
+                        const percent = Math.round((e.loaded / e.total) * 100);
+                        progressBar.style.width = percent + '%';
+                        progressBar.innerText = percent + '%';
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status === 200) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            msgDiv.innerText = response.message;
+                            msgDiv.className = response.success ? "status-message success" : "status-message error";
+
+                            if (response.success) {
+                                msgDiv.innerText += " Redirecting to Import Queue...";
+                                progressBar.style.width = '100%';
+                                progressBar.innerText = '100%';
+                                fileInput.value = '';
+
+                                // Keep blocked but update message, remove unload handler
+                                if (typeof blockUI === 'function') blockUI("Upload successful! Redirecting...");
+                                window.onbeforeunload = null;
+
+                                setTimeout(() => window.location.href = '/report/import-queue', 1500);
+                            } else {
+                                if (typeof unblockUI === 'function') unblockUI();
+                            }
+                        } catch (e) {
+                            msgDiv.innerText = "Error parsing response: " + e;
+                            msgDiv.className = "status-message error";
+                            if (typeof unblockUI === 'function') unblockUI();
+                        }
+                    } else {
+                        msgDiv.innerText = "Upload failed: " + xhr.statusText;
+                        msgDiv.className = "status-message error";
+                        if (typeof unblockUI === 'function') unblockUI();
+                    }
+                };
+
+                xhr.onerror = function () {
+                    msgDiv.innerText = "Network error.";
+                    msgDiv.className = "status-message error";
+                    if (typeof unblockUI === 'function') unblockUI();
+                };
+
+                xhr.send(payload);
+
+            } catch (err) {
+                console.error('Error parsing Excel:', err);
+                msgDiv.innerText = "Error parsing Excel: " + err;
+                msgDiv.className = "status-message error";
+                if (typeof unblockUI === 'function') unblockUI();
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+</script>
+{% endblock %}

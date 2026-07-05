@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Fixed Asset Register</h2>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('fixed_asset_bp.run_depreciation') }}" class="btn btn-warning">Run Depreciation</a>
+            <a href="{{ url_for('fixed_asset_bp.add_asset') }}" class="btn btn-primary">Add New Asset</a>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    {% endwith %}
+
+    <div class="card">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0">
+                    <thead style="background:#2563ab; color:#fff;">
+                        <tr>
+                            <th>Asset Code</th>
+                            <th>Asset Name</th>
+                            <th>Ledger</th>
+                            <th>Purchase Date</th>
+                            <th class="text-end">Cost</th>
+                            <th>Method</th>
+                            <th>Useful Life</th>
+                            <th>Status</th>
+                            <th class="text-center">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if assets %}
+                            {% for asset in assets %}
+                            <tr>
+                                <td>{{ asset.asset_code }}</td>
+                                <td>{{ asset.asset_name }}</td>
+                                <td>{{ asset.ledger_name }}</td>
+                                <td>{{ asset.purchase_date | format_date }}</td>
+                                <td class="text-end">{{ "{:,.2f}".format(asset.purchase_cost) }}</td>
+                                <td>{{ asset.depreciation_method }}</td>
+                                <td>{{ asset.useful_life_years }} Yrs</td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if asset.status == 'Active' else 'secondary' }}">
+                                        {{ asset.status }}
+                                    </span>
+                                </td>
+                                <td class="text-center">
+                                    <a href="{{ url_for('fixed_asset_bp.edit_asset', asset_id=asset.id) }}"
+                                       class="btn btn-sm btn-outline-primary me-1" title="Edit">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                            title="Delete"
+                                            onclick="confirmDelete({{ asset.id }}, '{{ asset.asset_name | replace("'", "\\'") }}')">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="9" class="text-center text-muted py-4">No assets found.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">Delete Asset</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0">Delete <strong id="deleteAssetName"></strong>?<br>
+                <small class="text-muted">This will also remove all depreciation log entries for this asset.</small></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmDelete(assetId, assetName) {
+    document.getElementById('deleteAssetName').textContent = assetName;
+    document.getElementById('deleteForm').action = `/asset/delete/${assetId}`;
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+</script>
+{% endblock %}

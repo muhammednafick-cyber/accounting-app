@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+
+{% block title %}All Reports{% endblock %}
+
+{% block extra_head %}
+<style>
+    .reports-page { padding: 8px 0 32px; }
+    .reports-search-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 28px;
+    }
+    .reports-search-bar input {
+        width: 320px;
+        padding: 8px 14px;
+        border: 1px solid #ced4da;
+        border-radius: 6px;
+        font-size: 0.9rem;
+    }
+
+    .category-block { margin-bottom: 36px; }
+    .category-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #e0e7f0;
+    }
+    .category-icon {
+        width: 36px; height: 36px;
+        border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.1rem;
+        flex-shrink: 0;
+    }
+    .category-header h3 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #1a3c6e;
+    }
+    .category-header span {
+        font-size: 0.78rem;
+        color: #888;
+        margin-left: 4px;
+    }
+
+    .tiles-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+        gap: 14px;
+    }
+
+    .report-tile {
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border: 1px solid #e0e7f0;
+        border-radius: 10px;
+        padding: 18px 16px 14px;
+        cursor: pointer;
+        text-decoration: none;
+        color: inherit;
+        transition: box-shadow 0.15s, border-color 0.15s, transform 0.12s;
+        position: relative;
+        overflow: hidden;
+    }
+    .report-tile:hover {
+        box-shadow: 0 4px 18px rgba(37,99,171,0.13);
+        border-color: #2563ab;
+        transform: translateY(-2px);
+        text-decoration: none;
+        color: inherit;
+    }
+    .report-tile .tile-icon {
+        font-size: 1.6rem;
+        margin-bottom: 10px;
+    }
+    .report-tile .tile-name {
+        font-weight: 600;
+        font-size: 0.88rem;
+        color: #1a3c6e;
+        margin-bottom: 4px;
+        line-height: 1.3;
+    }
+    .report-tile .tile-desc {
+        font-size: 0.76rem;
+        color: #7a8a9a;
+        line-height: 1.4;
+        flex-grow: 1;
+    }
+    .report-tile .tile-arrow {
+        margin-top: 12px;
+        font-size: 0.75rem;
+        color: #2563ab;
+        font-weight: 500;
+    }
+    .report-tile .tile-accent {
+        position: absolute;
+        top: 0; left: 0;
+        width: 4px; height: 100%;
+        border-radius: 10px 0 0 10px;
+    }
+
+    /* Accent colours per category */
+    .accent-financial  { background: #2563ab; }
+    .accent-ledger     { background: #16a085; }
+    .accent-register   { background: #8e44ad; }
+    .accent-inventory  { background: #d35400; }
+    .accent-vat        { background: #c0392b; }
+    .accent-other      { background: #7f8c8d; }
+
+    /* Category icon backgrounds */
+    .bg-financial  { background: #dbeafe; color: #2563ab; }
+    .bg-ledger     { background: #d1fae5; color: #16a085; }
+    .bg-register   { background: #ede9fe; color: #8e44ad; }
+    .bg-inventory  { background: #ffedd5; color: #d35400; }
+    .bg-vat        { background: #fee2e2; color: #c0392b; }
+    .bg-other      { background: #f3f4f6; color: #7f8c8d; }
+
+    .hidden { display: none !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="reports-page">
+    <div class="d-flex align-items-center justify-content-between mb-4">
+        <h2 style="font-size:1.4rem; margin:0;">All Reports</h2>
+    </div>
+
+    <div class="reports-search-bar">
+        <i class="bi bi-search" style="color:#aaa;"></i>
+        <input type="text" id="reportSearch" placeholder="Search reports…" oninput="filterReports(this.value)">
+    </div>
+
+    <!-- ── Financial Statements ───────────────────────────────────── -->
+    <div class="category-block" data-category="Financial Statements">
+        <div class="category-header">
+            <div class="category-icon bg-financial"><i class="bi bi-bar-chart-line-fill"></i></div>
+            <div>
+                <h3>Financial Statements <span>Core accounting statements</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            <a class="report-tile" href="{{ url_for('report_bp.report_balance_sheet') }}">
+                <div class="tile-accent accent-financial"></div>
+                <div class="tile-icon">📊</div>
+                <div class="tile-name">Balance Sheet</div>
+                <div class="tile-desc">Assets, liabilities and equity at a point in time</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_profit_and_loss') }}">
+                <div class="tile-accent accent-financial"></div>
+                <div class="tile-icon">📈</div>
+                <div class="tile-name">Profit & Loss</div>
+                <div class="tile-desc">Income and expenses for a selected period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_trial_balance') }}">
+                <div class="tile-accent accent-financial"></div>
+                <div class="tile-icon">⚖️</div>
+                <div class="tile-name">Trial Balance</div>
+                <div class="tile-desc">All ledger debit and credit balances</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_cash_flow') }}">
+                <div class="tile-accent accent-financial"></div>
+                <div class="tile-icon">💸</div>
+                <div class="tile-name">Cash Flow Statement</div>
+                <div class="tile-desc">Cash inflows and outflows by activity</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+        </div>
+    </div>
+
+    <!-- ── Ledger Books ───────────────────────────────────────────── -->
+    <div class="category-block" data-category="Ledger Books">
+        <div class="category-header">
+            <div class="category-icon bg-ledger"><i class="bi bi-journal-text"></i></div>
+            <div>
+                <h3>Ledger Books <span>Account-level transaction history</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            <a class="report-tile" href="{{ url_for('report_bp.report_ledger_transactions') }}">
+                <div class="tile-accent accent-ledger"></div>
+                <div class="tile-icon">📒</div>
+                <div class="tile-name">General Ledger</div>
+                <div class="tile-desc">Full transaction history for any account</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_customer_ledger') }}">
+                <div class="tile-accent accent-ledger"></div>
+                <div class="tile-icon">🤝</div>
+                <div class="tile-name">Customer Ledger</div>
+                <div class="tile-desc">Outstanding and settled customer balances</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_supplier_ledger') }}">
+                <div class="tile-accent accent-ledger"></div>
+                <div class="tile-icon">🏭</div>
+                <div class="tile-name">Supplier Ledger</div>
+                <div class="tile-desc">Outstanding and settled supplier balances</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_bank_book') }}">
+                <div class="tile-accent accent-ledger"></div>
+                <div class="tile-icon">🏦</div>
+                <div class="tile-name">Bank Book</div>
+                <div class="tile-desc">Bank account transactions and balance</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_cash_book') }}">
+                <div class="tile-accent accent-ledger"></div>
+                <div class="tile-icon">💰</div>
+                <div class="tile-name">Cash Book</div>
+                <div class="tile-desc">Cash account transactions and balance</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_ageing') }}">
+                <div class="tile-accent accent-ledger"></div>
+                <div class="tile-icon">📅</div>
+                <div class="tile-name">Ageing Report</div>
+                <div class="tile-desc">Overdue receivables and payables by age bucket</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+        </div>
+    </div>
+
+    <!-- ── Registers ──────────────────────────────────────────────── -->
+    <div class="category-block" data-category="Registers">
+        <div class="category-header">
+            <div class="category-icon bg-register"><i class="bi bi-receipt"></i></div>
+            <div>
+                <h3>Registers <span>Voucher-type transaction logs</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            <a class="report-tile" href="{{ url_for('report_bp.report_daybook') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">📋</div>
+                <div class="tile-name">Daybook</div>
+                <div class="tile-desc">All vouchers posted on a selected date</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Payment') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">💳</div>
+                <div class="tile-name">Payment Register</div>
+                <div class="tile-desc">All payment vouchers for a period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Receipt') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">🧾</div>
+                <div class="tile-name">Receipt Register</div>
+                <div class="tile-desc">All receipt vouchers for a period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Journal') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">📝</div>
+                <div class="tile-name">Journal Register</div>
+                <div class="tile-desc">All journal entries for a period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Contra') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">🔄</div>
+                <div class="tile-name">Contra Register</div>
+                <div class="tile-desc">Inter-account transfer vouchers</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            {% if company and company.inventory_applicable == 1 %}
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Sales') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">🛒</div>
+                <div class="tile-name">Sales Register</div>
+                <div class="tile-desc">All sales invoices for a period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Purchase') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">📦</div>
+                <div class="tile-name">Purchase Register</div>
+                <div class="tile-desc">All purchase bills for a period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Sales Return') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">↩️</div>
+                <div class="tile-name">Sales Return Register</div>
+                <div class="tile-desc">All sales return credit notes</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            {% if company and company.inventory_applicable == 1 %}
+            <a class="report-tile" href="{{ url_for('report_bp.report_sales_summary') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">📊</div>
+                <div class="tile-name">Sales Summary</div>
+                <div class="tile-desc">Sales totals grouped by period or item</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_purchase_summary') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">📉</div>
+                <div class="tile-name">Purchase Summary</div>
+                <div class="tile-desc">Purchase totals grouped by period or item</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ── Inventory Reports ───────────────────────────────────────── -->
+    {% if company and company.inventory_applicable == 1 %}
+    <div class="category-block" data-category="Inventory Reports">
+        <div class="category-header">
+            <div class="category-icon bg-inventory"><i class="bi bi-box-seam"></i></div>
+            <div>
+                <h3>Inventory Reports <span>Stock and item analysis</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            <a class="report-tile" href="{{ url_for('report_bp.report_stock_summary') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">🗃️</div>
+                <div class="tile-name">Stock Summary</div>
+                <div class="tile-desc">Current stock quantity per item</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_stock_valuation') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">💎</div>
+                <div class="tile-name">Stock Valuation</div>
+                <div class="tile-desc">Stock value at weighted average cost</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_stock_movement') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">🔃</div>
+                <div class="tile-name">Stock Movement</div>
+                <div class="tile-desc">Item-wise inward and outward movements</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_closing_inventory') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">🏁</div>
+                <div class="tile-name">Closing Inventory</div>
+                <div class="tile-desc">Period-end stock quantity and value</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_slow_moving') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">🐢</div>
+                <div class="tile-name">Slow / Non-Moving</div>
+                <div class="tile-desc">Items with low or zero movement</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_negative_stock') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">⚠️</div>
+                <div class="tile-name">Negative Stock</div>
+                <div class="tile-desc">Items with stock quantity below zero</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ── VAT Reports ────────────────────────────────────────────── -->
+    <div class="category-block" data-category="VAT Reports">
+        <div class="category-header">
+            <div class="category-icon bg-vat"><i class="bi bi-percent"></i></div>
+            <div>
+                <h3>VAT Reports <span>Tax compliance and filing</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            <a class="report-tile" href="{{ url_for('report_bp.report_vat_summary') }}">
+                <div class="tile-accent accent-vat"></div>
+                <div class="tile-icon">🧮</div>
+                <div class="tile-name">VAT Summary</div>
+                <div class="tile-desc">Total output and input VAT for a period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_vat_detailed') }}">
+                <div class="tile-accent accent-vat"></div>
+                <div class="tile-icon">🔍</div>
+                <div class="tile-name">VAT Detailed</div>
+                <div class="tile-desc">Line-by-line VAT transactions</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_vat_expense') }}">
+                <div class="tile-accent accent-vat"></div>
+                <div class="tile-icon">🧾</div>
+                <div class="tile-name">Expense VAT</div>
+                <div class="tile-desc">Expense vouchers with VAT, invoice date and description</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+function filterReports(query) {
+    query = query.toLowerCase().trim();
+    document.querySelectorAll('.report-tile').forEach(tile => {
+        const text = tile.querySelector('.tile-name').textContent.toLowerCase()
+                   + tile.querySelector('.tile-desc').textContent.toLowerCase();
+        tile.classList.toggle('hidden', query && !text.includes(query));
+    });
+    // Hide empty category blocks
+    document.querySelectorAll('.category-block').forEach(block => {
+        const visible = [...block.querySelectorAll('.report-tile')].some(t => !t.classList.contains('hidden'));
+        block.classList.toggle('hidden', !visible);
+    });
+}
+</script>
+{% endblock %}

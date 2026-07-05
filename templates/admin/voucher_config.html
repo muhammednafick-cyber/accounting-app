@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}Voucher Configuration{% endblock %}
+
+{% block extra_head %}
+<style>
+    .config-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    .config-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .config-section {
+        display: flex;
+        gap: 20px;
+        margin-top: 20px;
+    }
+
+    .config-col {
+        flex: 1;
+        padding: 15px;
+        border: 1px solid #eee;
+        border-radius: 5px;
+        background: #f9f9f9;
+        /* Ensure columns are top-aligned */
+        display: flex;
+        flex-direction: column;
+    }
+
+    .config-col h4 {
+        margin-top: 0;
+        border-bottom: 2px solid #ddd;
+        padding-bottom: 10px;
+        margin-bottom: 15px;
+    }
+
+    .group-list,
+    .sub-group-list {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        background: white;
+        padding: 10px;
+        border-radius: 4px;
+        flex-grow: 1;
+        /* allow it to take available space */
+    }
+
+    .group-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        border-bottom: 1px dashed #eee;
+    }
+
+    .group-item:last-child {
+        border-bottom: none;
+    }
+
+    .select-voucher {
+        margin-bottom: 20px;
+    }
+
+    .select-voucher label {
+        font-weight: bold;
+        margin-right: 10px;
+    }
+
+    .select-voucher select {
+        padding: 8px;
+        font-size: 1em;
+        width: 300px;
+    }
+
+    .btn-save {
+        margin-top: 20px;
+        padding: 10px 20px;
+        background: #28a745;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+    }
+
+    .btn-save:hover {
+        background: #218838;
+    }
+
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(255, 255, 255, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+        font-size: 2em;
+        display: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="config-container">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1>Voucher Configuration</h1>
+        <a href="{{ url_for('auth_bp.admin') }}" class="btn-sm btn-primary"
+            style="text-decoration: none; padding: 10px 20px;">Back to Admin</a>
+    </div>
+
+    <div class="config-card">
+        <div class="select-voucher">
+            <label for="voucherType">Select Voucher Type:</label>
+            <select id="voucherType" onchange="loadConfig()">
+                <option value="">-- Select Type --</option>
+                <option value="Receipt">Receipt</option>
+                <option value="Payment">Payment</option>
+                <option value="Contra">Contra</option>
+                <option value="Journal">Journal</option>
+                <option value="Sales">Sales</option>
+                <option value="Purchase">Purchase</option>
+                <option value="Sales Return">Sales Return</option>
+                <option value="Purchase Return">Purchase Return</option>
+                <option value="Expense">Expense</option>
+                <option value="Service Income">Service Income</option>
+            </select>
+        </div>
+
+        <div id="configArea" style="display:none;">
+            <div class="config-section">
+                <!-- DEBIT SIDE -->
+                <div class="config-col">
+                    <h4>Debit Side Allowed</h4>
+                    <p class="text-muted small">Select allowed groups/sub-groups for Debit. Empty = All Allowed.</p>
+
+                    <h5>Groups</h5>
+                    <div class="group-list" id="debitGroups">
+                        {% for g in groups %}
+                        <div class="group-item">
+                            <input type="checkbox" id="dr_g_{{ g.group_code }}" value="{{ g.group_code }}" class="chk-dr-group"
+                                onchange="filterSubGroups('Debit')">
+                            <label for="dr_g_{{ g.group_code }}">{{ g.group_name }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <h5 style="margin-top:15px;">Sub Groups</h5>
+                    <div class="sub-group-list" id="debitSubGroups">
+                        {% for sg in sub_groups %}
+                        <div class="group-item" data-group-code="{{ sg.group_code }}">
+                            <input type="checkbox" id="dr_sg_{{ sg.id }}" value="{{ sg.id }}" class="chk-dr-subgroup">
+                            <label for="dr_sg_{{ sg.id }}">{{ sg.sub_group_name }} ({{ sg.group_name }})</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- CREDIT SIDE -->
+                <div class="config-col">
+                    <h4>Credit Side Allowed</h4>
+                    <p class="text-muted small">Select allowed groups/sub-groups for Credit. Empty = All Allowed.</p>
+
+                    <h5>Groups</h5>
+                    <div class="group-list" id="creditGroups">
+                        {% for g in groups %}
+                        <div class="group-item">
+                            <input type="checkbox" id="cr_g_{{ g.group_code }}" value="{{ g.group_code }}" class="chk-cr-group"
+                                onchange="filterSubGroups('Credit')">
+                            <label for="cr_g_{{ g.group_code }}">{{ g.group_name }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <h5 style="margin-top:15px;">Sub Groups</h5>
+                    <div class="sub-group-list" id="creditSubGroups">
+                        {% for sg in sub_groups %}
+                        <div class="group-item" data-group-code="{{ sg.group_code }}">
+                            <input type="checkbox" id="cr_sg_{{ sg.id }}" value="{{ sg.id }}" class="chk-cr-subgroup">
+                            <label for="cr_sg_{{ sg.id }}">{{ sg.sub_group_name }} ({{ sg.group_name }})</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <div style="text-align: right;">
+                <button class="btn-save" onclick="saveConfig()">Save Configuration</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="loading-overlay" id="loading">
+    <i class="fas fa-spinner fa-spin"></i>
+</div>
+
+<script>
+    async function loadConfig() {
+        const vType = document.getElementById('voucherType').value;
+        if (!vType) {
+            document.getElementById('configArea').style.display = 'none';
+            return;
+        }
+
+        document.getElementById('loading').style.display = 'flex';
+
+        // Reset all checkboxes
+        document.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+        try {
+            // Load Debit Config
+            let resDr = await fetch(`/api/get_voucher_config?voucher_type=${encodeURIComponent(vType)}&side=Debit`);
+            let dataDr = await resDr.json();
+
+            if (dataDr.success && dataDr.config) {
+                // Check Groups
+                (dataDr.config.allowed_groups || []).forEach(code => {
+                    let el = document.getElementById(`dr_g_${code}`);
+                    if (el) el.checked = true;
+                });
+                // Check SubGroups
+                (dataDr.config.allowed_sub_groups || []).forEach(id => {
+                    let el = document.getElementById(`dr_sg_${id}`);
+                    if (el) el.checked = true;
+                });
+            }
+
+            // Load Credit Config
+            let resCr = await fetch(`/api/get_voucher_config?voucher_type=${encodeURIComponent(vType)}&side=Credit`);
+            let dataCr = await resCr.json();
+
+            if (dataCr.success && dataCr.config) {
+                // Check Groups
+                (dataCr.config.allowed_groups || []).forEach(code => {
+                    let el = document.getElementById(`cr_g_${code}`);
+                    if (el) el.checked = true;
+                });
+                // Check SubGroups
+                (dataCr.config.allowed_sub_groups || []).forEach(id => {
+                    let el = document.getElementById(`cr_sg_${id}`);
+                    if (el) el.checked = true;
+                });
+            }
+
+            document.getElementById('configArea').style.display = 'block';
+
+            // Handle System Fixed Sides
+            handleFixedSides(vType);
+
+        } catch (e) {
+            alert("Error loading configuration: " + e);
+        } finally {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // Initial filter application
+        filterSubGroups('Debit');
+        filterSubGroups('Credit');
+    }
+
+    function handleFixedSides(vType) {
+        const drContainer = document.querySelector('#debitGroups').parentNode; // The column div
+        const crContainer = document.querySelector('#creditGroups').parentNode;
+
+        // Reset (Show all)
+        resetColumn(drContainer);
+        resetColumn(crContainer);
+
+        if (vType === 'Receipt') {
+            // Debit is Fixed to Cash/Bank
+            setFixedMessage(drContainer, "System Fixed: Cash & Bank Accounts Only");
+        } else if (vType === 'Payment') {
+            // Credit is Fixed to Cash/Bank
+            setFixedMessage(crContainer, "System Fixed: Cash & Bank Accounts Only");
+        }
+    }
+
+    function setFixedMessage(container, msg) {
+        // Hide lists
+        container.querySelector('.group-list').style.display = 'none';
+        container.querySelector('.sub-group-list').style.display = 'none';
+        container.querySelectorAll('h5').forEach(h => h.style.display = 'none'); // Hide "Groups"/"Sub Groups" headers
+
+        // Check if message already exists
+        let msgDiv = container.querySelector('.fixed-msg');
+        if (!msgDiv) {
+            msgDiv = document.createElement('div');
+            msgDiv.className = 'fixed-msg alert alert-info';
+            msgDiv.style.marginTop = '20px';
+            msgDiv.style.fontWeight = 'bold';
+            msgDiv.style.textAlign = 'center';
+            container.appendChild(msgDiv);
+        }
+        msgDiv.innerText = msg;
+        msgDiv.style.display = 'block';
+    }
+
+    function resetColumn(container) {
+        container.querySelector('.group-list').style.display = 'block';
+        container.querySelector('.sub-group-list').style.display = 'block';
+        container.querySelectorAll('h5').forEach(h => h.style.display = 'block');
+        let msgDiv = container.querySelector('.fixed-msg');
+        if (msgDiv) msgDiv.style.display = 'none';
+    }
+
+    function filterSubGroups(side) {
+        // side: 'Debit' or 'Credit'
+        // Get checked groups for this side
+        let prefix = (side === 'Debit') ? 'dr' : 'cr';
+        let checkedGroupCBs = document.querySelectorAll(`.chk-${prefix}-group:checked`);
+        let checkedGroupCodes = Array.from(checkedGroupCBs).map(cb => cb.value);
+
+        // SubGroup container
+        let sgListContainer = document.getElementById(side === 'Debit' ? 'debitSubGroups' : 'creditSubGroups');
+        // Find all sub-group items div
+        let sgItems = sgListContainer.querySelectorAll('.group-item');
+
+        // Logic:
+        // If 0 groups checked -> Show ALL sub-groups (Meaning All Allowed)
+        // If >0 groups checked -> Show only sub-groups belonging to checked groups
+
+        let showAll = (checkedGroupCodes.length === 0);
+
+        sgItems.forEach(item => {
+            let parentCode = item.dataset.groupCode;
+            if (showAll || checkedGroupCodes.includes(parentCode)) {
+                item.style.display = 'flex'; // Restore display
+            } else {
+                item.style.display = 'none';
+                // Uncheck hidden items to avoid saving invalid config
+                let cb = item.querySelector('input[type="checkbox"]');
+                if (cb) cb.checked = false;
+            }
+        });
+    }
+
+    async function saveConfig() {
+        const vType = document.getElementById('voucherType').value;
+        if (!vType) return;
+
+        document.getElementById('loading').style.display = 'flex';
+
+        try {
+            // Gather Debit Data
+            let drGroups = Array.from(document.querySelectorAll('.chk-dr-group:checked')).map(cb => cb.value);
+            let drSubGroups = Array.from(document.querySelectorAll('.chk-dr-subgroup:checked')).map(cb => parseInt(cb.value));
+
+            // Gather Credit Data
+            let crGroups = Array.from(document.querySelectorAll('.chk-cr-group:checked')).map(cb => cb.value);
+            let crSubGroups = Array.from(document.querySelectorAll('.chk-cr-subgroup:checked')).map(cb => parseInt(cb.value));
+
+            // Save Debit
+            await fetch('/api/save_voucher_config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    voucher_type: vType,
+                    side: 'Debit',
+                    allowed_groups: drGroups,
+                    allowed_sub_groups: drSubGroups
+                })
+            });
+
+            // Save Credit
+            await fetch('/api/save_voucher_config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    voucher_type: vType,
+                    side: 'Credit',
+                    allowed_groups: crGroups,
+                    allowed_sub_groups: crSubGroups
+                })
+            });
+
+            alert("Configuration saved for " + vType);
+
+        } catch (e) {
+            alert("Error saving configuration: " + e);
+        } finally {
+            document.getElementById('loading').style.display = 'none';
+        }
+    }
+</script>
+{% endblock %}

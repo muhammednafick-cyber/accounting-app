@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Voucher - Accounting App{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h3 class="mb-0">Edit Voucher</h3>
+                </div>
+                <div class="card-body">
+                    <p>Enter the voucher number to fetch details and edit.</p>
+                    <div class="mb-3">
+                        <label for="global_voucher_search" class="form-label">Voucher Number</label>
+                        <input type="text" class="form-control" id="global_voucher_search"
+                            placeholder="e.g. REC-00001, PAY-0005">
+                        <div id="search_feedback" class="form-text text-danger"></div>
+                    </div>
+                    <button type="button" class="btn btn-primary w-100" onclick="performGlobalSearch()">Search &
+                        Edit</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function performGlobalSearch() {
+        const vNo = document.getElementById('global_voucher_search').value.trim();
+        const feedback = document.getElementById('search_feedback');
+
+        if (!vNo) {
+            feedback.textContent = "Please enter a voucher number.";
+            return;
+        }
+
+        feedback.textContent = "Searching...";
+        feedback.className = "form-text text-info";
+
+        // We use the same API to check existence and get type
+        fetch(`/api/get_voucher_details?voucher_number=${encodeURIComponent(vNo)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.data) {
+                    // Redirect to the specific voucher page with ?voucher_number=XXX
+                    // We need to map DB voucher_type to URL parameter voucher_type
+                    const dbType = data.data.voucher.voucher_type;
+                    let urlType = '';
+
+                    switch (dbType) {
+                        case 'Receipt': urlType = 'receipt'; break;
+                        case 'Payment': urlType = 'payment'; break;
+                        case 'Contra': urlType = 'contra'; break;
+                        case 'Journal': urlType = 'journal'; break;
+                        case 'Expense': urlType = 'expense'; break;
+                        default:
+                            feedback.textContent = `Editing not supported for type: ${dbType}`;
+                            feedback.className = "form-text text-danger";
+                            return;
+                    }
+
+                    window.location.href = `/voucher/${urlType}?voucher_number=${encodeURIComponent(vNo)}`;
+                } else {
+                    feedback.textContent = data.message || "Voucher not found.";
+                    feedback.className = "form-text text-danger";
+                }
+            })
+            .catch(err => {
+                feedback.textContent = "Error searching voucher.";
+                feedback.className = "form-text text-danger";
+                console.error(err);
+            });
+    }
+
+    // Enter key support
+    document.getElementById('global_voucher_search').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            performGlobalSearch();
+        }
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+
+{% block title %}Reverse Voucher{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Reverse Voucher</h2>
+        <a href="{{ url_for('voucher_bp.vouchers') }}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+
+    <!-- Step 1: Search Voucher -->
+    <div class="card mb-4" id="searchSection">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Select Voucher to Reverse</h5>
+        </div>
+        <div class="card-body">
+            <div class="input-group mb-3">
+                <input type="text" id="voucherSearch" class="form-control"
+                    placeholder="Search by Voucher Number or Narration..." autocomplete="off">
+                <button class="btn btn-primary" type="button" id="searchBtn">
+                    <i class="bi bi-search"></i> Search
+                </button>
+            </div>
+            <div id="searchResults" class="list-group">
+                <!-- Results will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 2: Preview & Confirm -->
+    <div class="card d-none" id="previewSection">
+        <div class="card-header bg-warning text-dark">
+            <h5 class="mb-0">Reversal Preview</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6 border-end">
+                    <h6 class="text-muted">Original Voucher</h6>
+                    <table class="table table-sm table-borderless">
+                        <tr>
+                            <th>Number:</th>
+                            <td id="origNumber"></td>
+                        </tr>
+                        <tr>
+                            <th>Date:</th>
+                            <td id="origDate"></td>
+                        </tr>
+                        <tr>
+                            <th>Type:</th>
+                            <td id="origType"></td>
+                        </tr>
+                        <tr>
+                            <th>Amount:</th>
+                            <td id="origAmount"></td>
+                        </tr>
+                        <tr>
+                            <th>Narration:</th>
+                            <td id="origNarration"></td>
+                        </tr>
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <h6 class="text-danger">Reversal Entry (Preview)</h6>
+                    <p class="small text-muted">A new voucher will be created with swapped Debits and Credits.</p>
+
+                    <div class="form-group mb-3">
+                        <label>Reversal Date</label>
+                        <input type="date" id="reversalDate" class="form-control" value="{{ current_date }}">
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label>Narration for Reversal</label>
+                        <input type="text" id="reversalNarration" class="form-control">
+                    </div>
+
+                    <button class="btn btn-danger w-100" id="confirmReversalBtn">
+                        <i class="bi bi-arrow-counterclockwise"></i> Confirm Reversal
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const searchInput = document.getElementById('voucherSearch');
+        const searchBtn = document.getElementById('searchBtn');
+        const resultsDiv = document.getElementById('searchResults');
+        const previewSection = document.getElementById('previewSection');
+
+        let selectedVoucher = null;
+
+        // Search Logic
+        function performSearch() {
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            searchBtn.disabled = true;
+            searchBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Searching...';
+            resultsDiv.innerHTML = '';
+
+            // Dynamic URL generation using Jinja2
+            const searchUrl = "{{ url_for('voucher_bp.api_search_vouchers_for_reversal') }}?q=" + encodeURIComponent(query);
+
+            fetch(searchUrl)
+                .then(r => {
+                    if (!r.ok) throw new Error('Network response was not ok');
+                    return r.json();
+                })
+                .then(data => {
+                    searchBtn.disabled = false;
+                    searchBtn.innerHTML = '<i class="bi bi-search"></i> Search';
+
+                    if (data.success) {
+                        if (data.results.length === 0) {
+                            resultsDiv.innerHTML = '<div class="alert alert-info">No vouchers found.</div>';
+                            return;
+                        }
+
+                        data.results.forEach(v => {
+                            const item = document.createElement('a');
+                            item.className = `list-group-item list-group-item-action flex-column align-items-start ${v.is_reversed ? 'disabled bg-light' : ''}`;
+                            item.style.cursor = v.is_reversed ? 'not-allowed' : 'pointer';
+
+                            let badge = '';
+                            if (v.is_reversed) badge = '<span class="badge bg-secondary float-end">Already Reversed</span>';
+
+                            item.innerHTML = `
+                            <div class="d-flex w-100 justify-content-between">
+                                <h5 class="mb-1">${v.voucher_number} <small class="text-muted">| ${v.voucher_type}</small></h5>
+                                <small>${v.date} ${badge}</small>
+                            </div>
+                            <p class="mb-1">Amount: ${v.amount}</p>
+                            <small class="text-muted">${v.narration}</small>
+                        `;
+
+                            if (!v.is_reversed) {
+                                item.onclick = () => selectVoucher(v);
+                            }
+
+                            resultsDiv.appendChild(item);
+                        });
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(e => {
+                    console.error(e);
+                    searchBtn.disabled = false;
+                    searchBtn.innerHTML = '<i class="bi bi-search"></i> Search';
+                    alert('Search failed. See console for details.');
+                });
+        }
+
+        searchBtn.onclick = performSearch;
+        searchInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') performSearch();
+        });
+
+        function selectVoucher(v) {
+            selectedVoucher = v;
+
+            // Populate Preview
+            document.getElementById('origNumber').innerText = v.voucher_number;
+            document.getElementById('origDate').innerText = v.date;
+            document.getElementById('origType').innerText = v.voucher_type;
+            document.getElementById('origAmount').innerText = v.amount;
+            document.getElementById('origNarration').innerText = v.narration;
+
+            // Default Narration
+            document.getElementById('reversalNarration').value = `Reversal of Voucher No ${v.voucher_number}`;
+
+            // Show Section
+            previewSection.classList.remove('d-none');
+            previewSection.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Confirm Logic
+        document.getElementById('confirmReversalBtn').onclick = function () {
+            if (!selectedVoucher) return;
+
+            const date = document.getElementById('reversalDate').value;
+            const narration = document.getElementById('reversalNarration').value;
+
+            if (!date) {
+                alert("Please select a valid date.");
+                return;
+            }
+
+            if (!confirm("Are you sure you want to reverse this voucher? This action creates a permanent reversal entry.")) return;
+
+            const btn = this;
+            btn.disabled = true;
+            btn.innerText = "Processing...";
+
+            const createUrl = "{{ url_for('voucher_bp.api_create_reversal') }}";
+
+            fetch(createUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    original_voucher_number: selectedVoucher.voucher_number,
+                    reversal_date: date,
+                    narration: narration
+                })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(`Success! Reversal Voucher Created: ${data.voucher_number}`);
+                        window.location.href = "{{ url_for('voucher_bp.vouchers') }}";
+                    } else {
+                        alert('Error: ' + data.message);
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Confirm Reversal';
+                    }
+                })
+                .catch(e => {
+                    console.error(e);
+                    alert("Request failed");
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Confirm Reversal';
+                });
+        };
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 offset-md-2">
+        <div class="card">
+            <div class="card-header">
+                <h3><i class="fas fa-robot"></i> AI Configuration</h3>
+            </div>
+            <div class="card-body">
+                
+                <form action="{{ url_for('ai_settings_bp.update_ai_settings') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    
+                    <!-- Local LLM Settings -->
+                    <h5><i class="fas fa-desktop"></i> Local LLM (LM Studio)</h5>
+                    <p class="mb-1">Configure your local LLM server (e.g., LM Studio, Ollama).</p>
+                    <div class="form-group">
+                        <label for="local_llm_url">Base URL</label>
+                        <input type="text" class="form-control" id="local_llm_url" name="local_llm_url" 
+                               value="{{ local_llm_url }}" placeholder="http://localhost:1234/v1">
+                        <small class="form-text text-muted">Default for LM Studio: <code>http://localhost:1234/v1</code></small>
+                    </div>
+                    <div class="form-group">
+                        <label for="local_llm_model">Model Name</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="local_llm_model" name="local_llm_model" 
+                                   value="{{ local_llm_model }}" placeholder="Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled">
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-secondary" type="button" onclick="fetchLocalModels()">
+                                    <i class="fas fa-sync"></i> Fetch Models
+                                </button>
+                            </div>
+                        </div>
+                        <small class="form-text text-muted">Enter the exact model ID or click "Fetch Models" to load from server.</small>
+                        <div id="model_select_container" style="display: none; margin-top: 10px;">
+                            <select class="form-control" id="local_model_select" onchange="selectLocalModel(this)">
+                                <option value="">Select a model...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- General Chat Settings -->
+                    <h5><i class="fas fa-comments"></i> General Chatbot</h5>
+                    <p class="mb-1">This provider is used for general queries (e.g., "Show me top sales").</p>
+                    
+                    <div class="form-group">
+                        <label>Provider</label>
+                        <select class="form-control" name="chatbot_provider" id="chatbot_provider" onchange="toggleChatbotSettings()">
+                            <option value="openrouter" {% if chatbot_provider == 'openrouter' %}selected{% endif %}>OpenRouter (Cloud)</option>
+                            <option value="local" {% if chatbot_provider == 'local' %}selected{% endif %}>Local LLM</option>
+                        </select>
+                    </div>
+
+                    <div id="openrouter_settings" style="display: none;">
+                        <div class="form-group">
+                            <label for="openrouter_api_key">OpenRouter API Key</label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="openrouter_api_key" name="openrouter_api_key" 
+                                       value="{{ openrouter_key }}" placeholder="sk-or-v1-..." autocomplete="off">
+                                <div class="input-group-append">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="toggleVisibility('openrouter_api_key')">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <small class="form-text text-muted">Get your free API key from <a href="https://openrouter.ai/keys" target="_blank">OpenRouter</a></small>
+                        </div>
+                    </div>
+                    
+                    <hr>
+
+                    <!-- Invoice Processing Settings -->
+                    <h5><i class="fas fa-file-invoice-dollar"></i> Invoice Processing</h5>
+                    <p class="text-muted">Used for extracting data from Purchase and Expense invoices.</p>
+                    
+                    <div class="form-group">
+                        <label>Provider</label>
+                        <select class="form-control" name="invoice_provider" id="invoice_provider" onchange="toggleInvoiceSettings()">
+                            <option value="openai" {% if invoice_provider == 'openai' %}selected{% endif %}>OpenAI (Cloud)</option>
+                            <option value="local" {% if invoice_provider == 'local' %}selected{% endif %}>Local LLM</option>
+                        </select>
+                    </div>
+
+                    <div id="openai_settings" style="display: none;">
+                        <div class="form-group">
+                            <label for="openai_api_key">OpenAI API Key</label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="openai_api_key" name="openai_api_key" 
+                                       value="{{ openai_key }}" placeholder="sk-..." autocomplete="off">
+                                <div class="input-group-append">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="toggleVisibility('openai_api_key')">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <small class="form-text text-muted">A valid OpenAI API Key is required for Vision capabilities.</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="openai_model_name">Model Name</label>
+                            <input type="text" class="form-control" id="openai_model_name" name="openai_model_name" 
+                                   value="{{ openai_model }}" placeholder="gpt-5-mini">
+                            <small class="form-text text-muted">Default: <code>gpt-5-mini</code>. Can also use <code>gpt-4o</code> or <code>gpt-4o-mini</code>.</small>
+                        </div>
+                    </div>
+
+                    <div class="form-group mt-4">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Configuration</button>
+                    </div>
+                </form>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleVisibility(id) {
+    var x = document.getElementById(id);
+    if (x.type === "password") {
+        x.type = "text";
+    } else {
+        x.type = "password";
+    }
+}
+
+function toggleChatbotSettings() {
+    var provider = document.getElementById('chatbot_provider').value;
+    var settings = document.getElementById('openrouter_settings');
+    if (provider === 'openrouter') {
+        settings.style.display = 'block';
+    } else {
+        settings.style.display = 'none';
+    }
+}
+
+function toggleInvoiceSettings() {
+    var provider = document.getElementById('invoice_provider').value;
+    var settings = document.getElementById('openai_settings');
+    if (provider === 'openai') {
+        settings.style.display = 'block';
+    } else {
+        settings.style.display = 'none';
+    }
+}
+
+function fetchLocalModels() {
+    var url = document.getElementById('local_llm_url').value;
+    var csrf_token = document.querySelector('input[name="csrf_token"]').value;
+    
+    var btn = document.querySelector('button[onclick="fetchLocalModels()"]');
+    var originalText = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+    btn.disabled = true;
+
+    fetch("{{ url_for('ai_settings_bp.fetch_local_models') }}", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': csrf_token
+        },
+        body: 'local_llm_url=' + encodeURIComponent(url)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            alert('Error fetching models: ' + data.error);
+        } else {
+            var select = document.getElementById('local_model_select');
+            select.innerHTML = '<option value="">Select a model...</option>';
+            data.models.forEach(function(model) {
+                var option = document.createElement('option');
+                option.value = model;
+                option.text = model;
+                select.appendChild(option);
+            });
+            document.getElementById('model_select_container').style.display = 'block';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while fetching models.');
+    })
+    .finally(() => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    });
+}
+
+function selectLocalModel(select) {
+    if (select.value) {
+        document.getElementById('local_llm_model').value = select.value;
+    }
+}
+
+// Initial check
+document.addEventListener('DOMContentLoaded', function() {
+    toggleChatbotSettings();
+    toggleInvoiceSettings();
+});
+</script>
+{% endblock %}

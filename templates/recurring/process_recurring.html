@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Process Due Recurring Entries</h2>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="date" class="form-label">Review Due Entries Up To</label>
+                    <input type="date" class="form-control" id="date" name="date" value="{{ target_date }}" required>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">Refresh List</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Due Entries</div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Template</th>
+                            <th>Type</th>
+                            <th>Due Date</th>
+                            <th>Amount</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if due_entries %}
+                        {% for entry in due_entries %}
+                        <tr id="row-{{ entry.id }}">
+                            <td>{{ entry.template_name }}</td>
+                            <td>{{ entry.voucher_type }}</td>
+                            <td>{{ entry.next_due_date | format_date }}</td>
+                            <td>{{ entry.amount }}</td>
+                            <td>
+                                <button class="btn btn-success btn-sm" onclick="processEntry({{ entry.id }})">Process &
+                                    Post</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted">No entries due.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function processEntry(id) {
+        if (!confirm("Are you sure you want to post this voucher?")) return;
+
+        const btn = document.querySelector(`#row-${id} button`);
+        btn.disabled = true;
+        btn.innerText = "Processing...";
+
+        fetch("{{ url_for('recurring_bp.process_entries') }}", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: `template_id=${id}&posting_date={{ target_date }}`
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert("Success! Voucher " + data.voucher_number + " created.");
+                    document.getElementById(`row-${id}`).remove();
+                } else {
+                    alert("Error: " + data.message);
+                    btn.disabled = false;
+                    btn.innerText = "Process & Post";
+                }
+            })
+            .catch(err => {
+                alert("Network Error: " + err);
+                btn.disabled = false;
+                btn.innerText = "Process & Post";
+            });
+    }
+</script>
+{% endblock %}

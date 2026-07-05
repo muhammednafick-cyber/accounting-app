@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block extra_head %}
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .dashboard-card {
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        }
+        .dashboard-card h3 {
+            margin: 0 0 15px 0;
+            color: #333;
+            font-size: 1.2em;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .dashboard-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .dashboard-card .sub-value {
+            font-size: 1em;
+            color: #555;
+        }
+        /* Custom colors per card type */
+        .ledger-card .value { color: #2ecc71; } /* Green for ledger */
+        .voucher-card .value { color: #3498db; } /* Blue for vouchers */
+        .inventory-card .value { color: #e67e22; } /* Orange for inventory */
+        .alert-critical { color: #e74c3c; } /* Red for critical */
+        .alert-warning { color: #f1c40f; } /* Yellow for warning */
+    </style>
+{% endblock %}
+
+{% block content %}
+    <h1>Dashboard</h1>
+    <p>Welcome, {{ username }}!</p> <!-- Added username display -->
+    <div class="dashboard-container">
+        <!-- Ledger Summary Card -->
+        <div class="dashboard-card ledger-card">
+            <h3><i class="fas fa-wallet"></i> Ledger Summary</h3>
+            <div class="value">{{ "{:,.2f}".format(cash_balance) }}</div>
+            <div class="sub-value">Cash Balance</div>
+            <div class="value">{{ "{:,.2f}".format(bank_balance) }}</div>
+            <div class="sub-value">Bank Balance</div>
+        </div>
+
+        <!-- Voucher Summary Cards -->
+        {% if company and company.inventory_applicable == 1 %}
+        <div class="dashboard-card voucher-card" id="card-sales">
+            <h3><i class="fas fa-file-invoice"></i> Sales</h3>
+            <div class="value">{{ sales_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(sales_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        <div class="dashboard-card voucher-card" id="card-sales-return">
+            <h3><i class="fas fa-file-invoice"></i> Sales Return</h3>
+            <div class="value">{{ sales_return_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(sales_return_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        <div class="dashboard-card voucher-card" id="card-purchase">
+            <h3><i class="fas fa-file-invoice"></i> Purchase</h3>
+            <div class="value">{{ purchase_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(purchase_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        <div class="dashboard-card voucher-card" id="card-purchase-return">
+            <h3><i class="fas fa-file-invoice"></i> Purchase Return</h3>
+            <div class="value">{{ purchase_return_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(purchase_return_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        {% endif %}
+
+        <div class="dashboard-card voucher-card" id="card-receipt">
+            <h3><i class="fas fa-file-invoice"></i> Receipt</h3>
+            <div class="value">{{ receipt_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(receipt_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        <div class="dashboard-card voucher-card" id="card-payment">
+            <h3><i class="fas fa-file-invoice"></i> Payment</h3>
+            <div class="value">{{ payment_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(payment_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        <div class="dashboard-card voucher-card" id="card-contra">
+            <h3><i class="fas fa-file-invoice"></i> Contra</h3>
+            <div class="value">{{ contra_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(contra_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        <div class="dashboard-card voucher-card" id="card-journal">
+            <h3><i class="fas fa-file-invoice"></i> Journal</h3>
+            <div class="value">{{ journal_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(journal_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+        <div class="dashboard-card voucher-card" id="card-expense">
+            <h3><i class="fas fa-file-invoice"></i> Expense</h3>
+            <div class="value">{{ expense_count }}</div>
+            <div class="sub-value">Count</div>
+            <div class="value">{{ "{:,.2f}".format(expense_amount) }}</div>
+            <div class="sub-value">Amount</div>
+        </div>
+
+        <!-- Inventory Alerts Card -->
+        {% if company and company.inventory_applicable == 1 %}
+        <div class="dashboard-card inventory-card" id="card-inventory-alerts">
+            <h3><i class="fas fa-boxes"></i> Inventory Alerts</h3>
+            <div class="value alert-critical">{{ zero_stock }}</div>
+            <div class="sub-value">Items with Zero Stock</div>
+            <div class="value alert-warning">{{ stock_critical }}</div>
+            <div class="sub-value">Items with Critical Stock (≤5)</div>
+            <div class="value">{{ stock_warning }}</div>
+            <div class="sub-value">Items with Low Stock (1-10)</div>
+        </div>
+        <div class="dashboard-card inventory-card" id="card-negative-stock">
+            <h3><i class="fas fa-exclamation-triangle"></i> Negative Stock</h3>
+            <div class="value alert-critical">{{ negative_stock }}</div>
+            <div class="sub-value">Items with Negative Stock</div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Dynamic refresh every 60 seconds
+        document.addEventListener('DOMContentLoaded', function() {
+            setInterval(() => {
+                fetch('/dashboard_data')
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update Ledger Summary
+                        document.querySelector('.ledger-card .value:nth-child(2)').textContent = data.cash_balance.toLocaleString('en-US', { minimumFractionDigits: 2 });
+                        document.querySelector('.ledger-card .value:nth-child(4)').textContent = data.bank_balance.toLocaleString('en-US', { minimumFractionDigits: 2 });
+
+                        // Helper to update card if it exists
+                        const updateCard = (id, count, amount) => {
+                            const card = document.getElementById(id);
+                            if (card) {
+                                card.querySelector('.value:nth-child(2)').textContent = count;
+                                card.querySelector('.value:nth-child(4)').textContent = amount.toLocaleString('en-US', { minimumFractionDigits: 2 });
+                            }
+                        };
+
+                        // Update Voucher Summary Cards
+                        updateCard('card-sales', data.sales_count, data.sales_amount);
+                        updateCard('card-sales-return', data.sales_return_count, data.sales_return_amount);
+                        updateCard('card-purchase', data.purchase_count, data.purchase_amount);
+                        updateCard('card-purchase-return', data.purchase_return_count, data.purchase_return_amount);
+                        updateCard('card-receipt', data.receipt_count, data.receipt_amount);
+                        updateCard('card-payment', data.payment_count, data.payment_amount);
+                        updateCard('card-contra', data.contra_count, data.contra_amount);
+                        updateCard('card-journal', data.journal_count, data.journal_amount);
+                        updateCard('card-expense', data.expense_count, data.expense_amount);
+
+                        // Update Inventory Alerts
+                        const invCard = document.getElementById('card-inventory-alerts');
+                        if (invCard) {
+                            invCard.querySelector('.value:nth-child(2)').textContent = data.zero_stock;
+                            invCard.querySelector('.value:nth-child(4)').textContent = data.stock_critical;
+                            invCard.querySelector('.value:nth-child(6)').textContent = data.stock_warning;
+                        }
+                        
+                        // Update Negative Stock Card
+                        const negStockCard = document.getElementById('card-negative-stock');
+                        if (negStockCard) {
+                            negStockCard.querySelector('.value').textContent = data.negative_stock;
+                        }
+                    })
+                    .catch(error => console.error('Error refreshing dashboard:', error));
+            }, 60000); // Refresh every 60 seconds
+        });
+    </script>
+{% endblock %}

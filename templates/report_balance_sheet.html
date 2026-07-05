@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Balance Sheet{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+    .bs-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-bottom: 20px; }
+    .bs-table thead th {
+        background: #2563ab; color: #fff; padding: 8px 12px;
+        text-align: left; font-weight: 600;
+    }
+    .bs-table thead th.num { text-align: right; }
+    .bs-table tbody tr { border-bottom: 1px solid #edf0f4; }
+    .bs-table tbody tr:hover { background: #f0f5ff; }
+    .bs-table td { padding: 6px 12px; }
+    .bs-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .bs-total { font-weight: 700; text-align: right; padding: 8px 12px;
+                border-top: 2px solid #cdd8e8; background: #f3f6fb; margin-bottom: 20px; }
+    .section-title { font-size: 1rem; font-weight: 700; margin: 16px 0 8px; color: #1a3c6e; }
+    .gl-link { color: #0563c1; cursor: pointer; text-decoration: none; }
+    .gl-link:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 style="font-size:1.4rem; margin-bottom:16px;">Balance Sheet</h2>
+<div class="dashboard-section d-flex align-items-center gap-3 flex-wrap">
+    <label style="font-size:.85rem;font-weight:500;">As of Date</label>
+    <input type="text" id="as_of_date" placeholder="DD-MM-YYYY" style="width:140px;" readonly>
+    <button class="btn btn-primary" onclick="fetchBalanceSheet()">Generate</button>
+    <button id="exportButton" class="btn btn-outline-success" style="display:none;" onclick="exportBalanceSheet()">Export to Excel</button>
+</div>
+
+<div id="balanceSheetResult" style="display:none; margin-top:16px;">
+    <div class="section-title">Assets</div>
+    <table class="bs-table" id="assetsTable">
+        <thead><tr><th>Group</th><th>Ledger Name</th><th class="num">Amount</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <div class="bs-total" id="totalAssets"></div>
+
+    <div class="section-title">Liabilities</div>
+    <table class="bs-table" id="liabilitiesTable">
+        <thead><tr><th>Group</th><th>Ledger Name</th><th class="num">Amount</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <div class="bs-total" id="totalLiabilities"></div>
+</div>
+
+<script>
+flatpickr("#as_of_date", { dateFormat: "d-m-Y", allowInput: true });
+
+function toISO(ddmmyyyy) {
+    if (!ddmmyyyy) return '';
+    const p = ddmmyyyy.split('-');
+    return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : ddmmyyyy;
+}
+function fmt(v) {
+    return parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function glLink(ledger, amount, toDate) {
+    const url = `/report/ledger-transactions?ledger=${encodeURIComponent(ledger)}&to_date=${toDate}`;
+    return `<a class="gl-link" onclick="window.open('${url}','_blank')">${fmt(amount)}</a>`;
+}
+
+function fetchBalanceSheet() {
+    const asOfDate = document.getElementById('as_of_date').value;
+    const iso = toISO(asOfDate);
+    $.get('/get_balance_sheet', { as_of_date: asOfDate }, function(data) {
+        const assetsTbody = $('#assetsTable tbody').empty();
+        for (const group in data.balance_sheet.assets) {
+            data.balance_sheet.assets[group].forEach((ledger, i) => {
+                assetsTbody.append(`<tr>
+                    <td>${i === 0 ? group : ''}</td>
+                    <td>${ledger.ledger_name}</td>
+                    <td class="num">${glLink(ledger.ledger_name, ledger.amount, iso)}</td>
+                </tr>`);
+            });
+        }
+        $('#totalAssets').text(`Total Assets: ${fmt(data.total_assets)}`);
+
+        const liabTbody = $('#liabilitiesTable tbody').empty();
+        for (const group in data.balance_sheet.liabilities) {
+            data.balance_sheet.liabilities[group].forEach((ledger, i) => {
+                liabTbody.append(`<tr>
+                    <td>${i === 0 ? group : ''}</td>
+                    <td>${ledger.ledger_name}</td>
+                    <td class="num">${glLink(ledger.ledger_name, ledger.amount, iso)}</td>
+                </tr>`);
+            });
+        }
+        $('#totalLiabilities').text(`Total Liabilities: ${fmt(data.total_liabilities)}`);
+
+        $('#balanceSheetResult').show();
+        $('#exportButton').show();
+    });
+}
+
+function exportBalanceSheet() {
+    const asOfDate = document.getElementById('as_of_date').value;
+    window.location.href = `/export_report/balance_sheet?as_of_date=${asOfDate}`;
+}
+</script>
+{% endblock %}

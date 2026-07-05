@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Sales Summary{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Sales Summary</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="from_date">From Date:</label>
+            <input type="text" id="from_date" name="from_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <div class="entry">
+            <label for="to_date">To Date:</label>
+            <input type="text" id="to_date" name="to_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="fetchSummary()">Show Summary</button>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+    <table id="summaryTable">
+        <thead>
+            <tr>
+                <th>Item Name</th>
+                <th>Quantity</th>
+                <th>Amount</th>
+            </tr>
+        </thead>
+        <tbody id="summaryBody"></tbody>
+        <tfoot id="summaryFooter"></tfoot>
+    </table>
+
+    <script>
+        function fetchSummary() {
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            
+            fetch(`/get_sales_summary?from_date=${fromDate}&to_date=${toDate}`)
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.getElementById('summaryBody');
+                    const tfoot = document.getElementById('summaryFooter');
+                    tbody.innerHTML = '';
+                    
+                    let totalQty = 0;
+                    let totalAmt = 0;
+                    
+                    data.summary.forEach(item => {
+                        totalQty += parseFloat(item.quantity);
+                        totalAmt += parseFloat(item.amount);
+                        
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${item.item_name}</td>
+                            <td>${item.quantity}</td>
+                            <td>${parseFloat(item.amount).toFixed(2)}</td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                    
+                    tfoot.innerHTML = `<tr><td><strong>Total</strong></td><td><strong>${totalQty}</strong></td><td><strong>${totalAmt.toFixed(2)}</strong></td></tr>`;
+                });
+        }
+        function exportReport() {
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            window.location.href = `/export_report/sales_summary?from_date=${fromDate}&to_date=${toDate}`;
+        }
+    </script>
+{% endblock %}

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Summary{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Stock Summary (Category-wise)</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="as_of_date">As of Date:</label>
+            <input type="text" id="as_of_date" name="as_of_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="fetchReport()">Show Report</button>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+    
+    <table id="reportTable">
+        <thead>
+            <tr>
+                <th>Category (Group)</th>
+                <th>Total Quantity</th>
+                <th>Total Value</th>
+            </tr>
+        </thead>
+        <tbody id="reportBody"></tbody>
+        <tfoot id="reportFooter"></tfoot>
+    </table>
+
+    <script>
+        function fetchReport() {
+            const asOfDate = document.getElementById('as_of_date').value;
+            
+            fetch(`/get_closing_inventory?as_of_date=${asOfDate}`)
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.getElementById('reportBody');
+                    const tfoot = document.getElementById('reportFooter');
+                    tbody.innerHTML = '';
+                    
+                    // Group by category
+                    const summary = {};
+                    let totalValue = 0;
+                    
+                    data.closing_inventory.forEach(item => {
+                        if (!summary[item.group_name]) {
+                            summary[item.group_name] = { qty: 0, val: 0 };
+                        }
+                        summary[item.group_name].qty += parseFloat(item.quantity);
+                        summary[item.group_name].val += parseFloat(item.cost_amount);
+                        totalValue += parseFloat(item.cost_amount);
+                    });
+                    
+                    for (const [group, vals] of Object.entries(summary)) {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${group}</td>
+                            <td>${vals.qty.toFixed(2)}</td>
+                            <td>${vals.val.toFixed(2)}</td>
+                        `;
+                        tbody.appendChild(row);
+                    }
+                    
+                    tfoot.innerHTML = `<tr><td colspan="2"><strong>Grand Total</strong></td><td><strong>${totalValue.toFixed(2)}</strong></td></tr>`;
+                });
+        }
+        function exportReport() {
+            const asOfDate = document.getElementById('as_of_date').value;
+            window.location.href = `/export_report/stock_summary?as_of_date=${asOfDate}`;
+        }
+    </script>
+{% endblock %}

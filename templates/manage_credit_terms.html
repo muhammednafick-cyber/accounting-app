@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Credit Terms{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-6">
+        <h2>Manage Credit Terms</h2>
+        <p class="text-muted">Set default credit days for Debtors and Creditors.</p>
+    </div>
+    <div class="col-md-6 text-end">
+        <button class="btn btn-outline-secondary me-2"
+            onclick="location.href='{{ url_for('import_bp.download_credit_terms_template') }}'">
+            <i class="bi bi-download me-2"></i>Template
+        </button>
+        <button class="btn btn-outline-primary" onclick="document.getElementById('importFile').click()">
+            <i class="bi bi-file-earmark-spreadsheet me-2"></i>Import Terms
+        </button>
+        <input type="file" id="importFile" accept=".xlsx, .xls" style="display: none;" onchange="uploadImport(this)">
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header bg-light">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="searchInput" placeholder="Search Party Name..."
+                        onkeyup="filterTable()">
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="termsTable">
+                <thead class="table-light">
+                    <tr>
+                        <th>Party Name</th>
+                        <th>Group</th>
+                        <th style="width: 200px;">Credit Days</th>
+                        <th style="width: 100px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ledger in ledgers %}
+                    <tr>
+                        <td class="fw-bold">{{ ledger.ledger_name }}</td>
+                        <td><span class="badge bg-secondary">{{ ledger.group_name }}</span></td>
+                        <td>
+                            <input type="number" class="form-control credit-input" id="days_{{ ledger.ledger_code }}"
+                                value="{{ ledger.credit_days }}" min="0" data-code="{{ ledger.ledger_code }}"
+                                data-original="{{ ledger.credit_days }}">
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="updateTerm('{{ ledger.ledger_code }}')">
+                                Update
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    function filterTable() {
+        const input = document.getElementById('searchInput');
+        const filter = input.value.toLowerCase();
+        const table = document.getElementById('termsTable');
+        const tr = table.getElementsByTagName('tr');
+
+        for (let i = 1; i < tr.length; i++) {
+            const td = tr[i].getElementsByTagName('td')[0];
+            if (td) {
+                const txtValue = td.textContent || td.innerText;
+                if (txtValue.toLowerCase().indexOf(filter) > -1) {
+                    tr[i].style.display = "";
+                } else {
+                    tr[i].style.display = "none";
+                }
+            }
+        }
+    }
+
+    async function updateTerm(ledgerCode) {
+        const input = document.getElementById('days_' + ledgerCode);
+        const days = input.value;
+        const btn = event.target;
+
+        const originalText = btn.innerText;
+        btn.innerText = "Saving...";
+        btn.disabled = true;
+
+        try {
+            const response = await fetch("{{ url_for('master_bp.update_credit_terms') }}", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    ledger_code: ledgerCode,
+                    credit_days: days
+                }),
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                // Show success feedback (toast or simple alert)
+                createToast(result.message, "success");
+                input.dataset.original = days;
+            } else {
+                createToast(result.message, "error");
+                input.value = input.dataset.original; // Revert
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            createToast("An error occurred while updating.", "error");
+        } finally {
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    // Helper for toast notifications (assuming existing toast system or create simple one)
+    function createToast(message, type = "info") {
+        // Reuse existing popup system if available, else simple alert for now
+        // Assuming user has a toast system? checking base.html outline... didn't see explicit toast code.
+        // Fallback to alert for MVP, or create a simple div.
+
+        const toast = document.createElement('div');
+        toast.className = `alert alert-${type === 'success' ? 'success' : 'danger'} position-fixed top-0 end-0 m-3`;
+        toast.style.zIndex = 1050;
+        toast.innerText = message;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+
+    function uploadImport(input) {
+        if (!input.files || !input.files[0]) return;
+
+        const file = input.files[0];
+        const reader = new FileReader();
+
+        // Show overlay
+        document.getElementById('uploadOverlay').style.display = 'flex';
+
+        reader.onload = function (e) {
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+
+                // transform keys to standardized format if needed, or send as is
+                // We expect columns: "Ledger Name", "Credit Days"
+
+                fetch("{{ url_for('master_bp.import_credit_terms') }}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ data: jsonData })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('uploadOverlay').style.display = 'none';
+                        if (data.success) {
+                            alert(data.message);
+                            location.reload();
+                        } else {
+                            alert("Import failed: " + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        document.getElementById('uploadOverlay').style.display = 'none';
+                        alert("Error sending data: " + error);
+                    });
+
+            } catch (error) {
+                document.getElementById('uploadOverlay').style.display = 'none';
+                alert("Error parsing Excel: " + error);
+            }
+        };
+
+        reader.readAsArrayBuffer(file);
+        input.value = ''; // Reset input
+    }
+</script>
+{% endblock %}

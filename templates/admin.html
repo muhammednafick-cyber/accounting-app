@@ -1,0 +1,421 @@
+{% extends "base.html" %}
+
+{% block title %}User Management{% endblock %}
+
+{% block extra_head %}
+<!-- Font Awesome for icons -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+<style>
+    .admin-container {
+        padding: 20px;
+        max-width: 1400px;
+        /* Increased width */
+        margin: 0 auto;
+    }
+
+    .admin-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .admin-card h3 {
+        margin: 0 0 15px;
+        font-size: 1.5em;
+        color: #333;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 2px solid #007bff;
+        padding-bottom: 5px;
+    }
+
+    .admin-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+    }
+
+    .admin-table th,
+    .admin-table td {
+        padding: 12px;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+        vertical-align: top;
+        /* Align top for multi-line content */
+    }
+
+    .admin-table th {
+        background: #e9ecef;
+        color: #212529;
+        font-weight: 600;
+    }
+
+    /* Column Widths */
+    .admin-table th:nth-child(1),
+    .admin-table td:nth-child(1) {
+        width: 15%;
+    }
+
+    /* Username */
+    .admin-table th:nth-child(2),
+    .admin-table td:nth-child(2) {
+        width: 20%;
+    }
+
+    /* Email */
+    .admin-table th:nth-child(3),
+    .admin-table td:nth-child(3) {
+        width: 10%;
+    }
+
+    /* Role */
+    .admin-table th:nth-child(4),
+    .admin-table td:nth-child(4) {
+        width: 30%;
+    }
+
+    /* Menu Access */
+    .admin-table th:nth-child(5),
+    .admin-table td:nth-child(5) {
+        width: 25%;
+    }
+
+    /* Actions */
+
+    .admin-form {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .admin-form input[type="text"],
+    .admin-form input[type="email"],
+    .admin-form input[type="password"] {
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 1em;
+    }
+
+    .admin-form label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .admin-form input[type="submit"] {
+        padding: 10px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .admin-form input[type="submit"]:hover {
+        background: #0056b3;
+    }
+
+    .action-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .edit-form {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+    }
+
+    .edit-form input[type="email"],
+    .edit-form input[type="password"] {
+        width: 120px;
+        padding: 5px;
+        font-size: 0.9em;
+    }
+
+    .btn-sm {
+        padding: 5px 10px;
+        font-size: 0.85em;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        color: white;
+    }
+
+    .btn-primary {
+        background: #007bff;
+    }
+
+    .btn-danger {
+        background: #dc3545;
+    }
+
+    .btn-success {
+        background: #28a745;
+    }
+
+    .flash-messages {
+        margin-bottom: 20px;
+    }
+
+    .flash {
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+    }
+
+    .flash.success {
+        background: #d4edda;
+        color: #155724;
+    }
+
+    .flash.error {
+        background: #f8d7da;
+        color: #721c24;
+    }
+
+    .menu-tree {
+        max-height: 320px;
+        overflow-y: auto;
+        border: 1px solid #eee;
+        border-radius: 4px;
+        padding: 5px;
+        background: #fdfdfd;
+    }
+
+    .menu-tree .menu-node {
+        margin-bottom: 2px;
+    }
+
+    .menu-tree .menu-parent {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        font-size: 0.9em;
+    }
+
+    .menu-tree .menu-parent label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+    }
+
+    .menu-tree .tree-toggle {
+        cursor: pointer;
+        width: 14px;
+        text-align: center;
+        color: #007bff;
+        user-select: none;
+        flex-shrink: 0;
+    }
+
+    .menu-tree .tree-toggle-spacer {
+        cursor: default;
+    }
+
+    .menu-tree .menu-children {
+        margin-left: 24px;
+    }
+
+    .menu-tree .menu-children label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.85em;
+        cursor: pointer;
+        padding: 1px 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h1>User Management{% if session.get('company_name') %} <span
+                style="font-size:0.55em; color:#666; font-weight:normal;">&mdash; {{ session.get('company_name')
+                }}</span>{% endif %}</h1>
+        <a href="{{ url_for('company_bp.company_gateway') }}" class="btn-sm btn-primary"
+            style="text-decoration: none; padding: 10px 20px; font-size: 1em;">Back to Gateway</a>
+    </div>
+
+    <!-- User List Card -->
+    <div class="admin-card">
+        <h3><i class="fas fa-users"></i> Current Users</h3>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Menu Access</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user[1] }}</td>
+                    <td>{{ user[2] }}</td>
+                    <td>
+                        {% if user[3] %}
+                        <span style="color: green; font-weight: bold;">Admin</span>
+                        {% elif user[4] %}
+                        <span style="color: #b8860b; font-weight: bold;">Principal</span>
+                        {% else %}
+                        <span style="color: #666;">User</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if user[3] %}
+                        <em>Admin: full access</em>
+                        {% else %}
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                            <input type="hidden" name="action" value="set_access">
+                            <input type="hidden" name="user_id" value="{{ user[0] }}">
+                            <label style="display:block; font-weight:bold; margin-bottom:5px;">
+                                <input type="checkbox" name="is_principal" {% if user[4] %}checked{% endif %}
+                                    onchange="togglePerms(this, 'perms-{{ user[0] }}')">
+                                Principal (all menus except Admin)
+                            </label>
+                            <div id="perms-{{ user[0] }}" class="menu-tree" style="{% if user[4] %}display:none;{% endif %}">
+                                {% set uperms = user_perms.get(user[0], []) %}
+                                {% for menu in menu_tree %}
+                                <div class="menu-node">
+                                    <div class="menu-parent">
+                                        {% if menu.children %}
+                                        <span class="tree-toggle" onclick="toggleBranch(this)" title="Expand/collapse">&#9662;</span>
+                                        {% else %}
+                                        <span class="tree-toggle tree-toggle-spacer"></span>
+                                        {% endif %}
+                                        <label>
+                                            <input type="checkbox" class="parent-cb" name="perms" value="{{ menu.key }}"
+                                                {% if menu.key in uperms %}checked{% endif %}
+                                                onchange="onParentToggle(this)">
+                                            <strong>{{ menu.label }}</strong>
+                                        </label>
+                                    </div>
+                                    {% if menu.children %}
+                                    <div class="menu-children">
+                                        {% for ckey, clabel in menu.children %}
+                                        <label>
+                                            <input type="checkbox" class="child-cb" name="perms" value="{{ ckey }}"
+                                                {% if ckey in uperms or menu.key in uperms %}checked{% endif %}
+                                                onchange="onChildToggle(this)">
+                                            {{ clabel }}
+                                        </label>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <button type="submit" class="btn-sm btn-success" style="margin-top:5px;">Save Access</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="action-buttons">
+                            <form method="POST" class="edit-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <input type="hidden" name="action" value="edit">
+                                <input type="hidden" name="user_id" value="{{ user[0] }}">
+                                <input type="email" name="email" value="{{ user[2] }}" placeholder="New Email" required>
+                                <input type="password" name="new_password" placeholder="New Password">
+                                <button type="submit" class="btn-sm btn-primary">Update</button>
+                            </form>
+                            <form method="POST"
+                                onsubmit="return confirm('Are you sure you want to delete {{ user[1] }}?');"
+                                style="margin-top: 5px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="user_id" value="{{ user[0] }}">
+                                <button type="submit" class="btn-sm btn-danger" {% if user[0]==current_user.id
+                                    %}disabled{% endif %}>Delete User</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- System Settings Card -->
+    <div class="admin-card">
+        <h3><i class="fas fa-cog"></i> System Settings</h3>
+        <div>
+            <a href="{{ url_for('admin_config_bp.voucher_config_page') }}" class="btn-sm btn-primary"
+                style="text-decoration:none; display:inline-block; padding:8px 15px;">
+                <i class="fas fa-list-alt"></i> Configure Voucher Ledgers
+            </a>
+        </div>
+    </div>
+
+    <!-- Create User Card -->
+    <div class="admin-card">
+        <h3><i class="fas fa-user-plus"></i> Create New User</h3>
+        <p style="margin:0 0 10px; color:#666; font-size:0.9em;">
+            The new user will be assigned to
+            <strong>{{ session.get('company_name', 'the current company') }}</strong> automatically.
+        </p>
+        <form method="POST" class="admin-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="action" value="create">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="email" name="email" placeholder="Email" required>
+            <input type="password" name="password" placeholder="Password" required>
+            <label><input type="checkbox" name="is_principal"> Principal User (access to all menus except Admin)</label>
+            <input type="submit" value="Create User">
+        </form>
+    </div>
+</div>
+
+<script>
+function togglePerms(cb, permsDivId) {
+    var div = document.getElementById(permsDivId);
+    if (div) div.style.display = cb.checked ? 'none' : 'block';
+}
+
+function toggleBranch(arrow) {
+    var node = arrow.closest('.menu-node');
+    var children = node.querySelector('.menu-children');
+    if (!children) return;
+    var collapsed = children.style.display === 'none';
+    children.style.display = collapsed ? 'block' : 'none';
+    arrow.innerHTML = collapsed ? '&#9662;' : '&#9656;';
+}
+
+function onParentToggle(parentCb) {
+    var node = parentCb.closest('.menu-node');
+    node.querySelectorAll('.child-cb').forEach(function (cb) {
+        cb.checked = parentCb.checked;
+    });
+    parentCb.indeterminate = false;
+}
+
+function onChildToggle(childCb) {
+    syncParent(childCb.closest('.menu-node'));
+}
+
+function syncParent(node) {
+    var parentCb = node.querySelector('.parent-cb');
+    var children = Array.from(node.querySelectorAll('.child-cb'));
+    if (!parentCb || children.length === 0) return;
+    var checked = children.filter(function (cb) { return cb.checked; }).length;
+    parentCb.checked = checked === children.length;
+    parentCb.indeterminate = checked > 0 && checked < children.length;
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.menu-tree .menu-node').forEach(syncParent);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if asset else 'Add' }} Fixed Asset{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <h5 class="mb-0">{{ 'Edit Asset' if asset else 'Add New Asset' }}</h5>
+                    <a href="{{ url_for('fixed_asset_bp.assets') }}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-left me-1"></i>Back
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% with messages = get_flashed_messages(with_categories=true) %}
+                        {% for category, message in messages %}
+                        <div class="alert alert-{{ 'danger' if category == 'error' else category }}">{{ message }}</div>
+                        {% endfor %}
+                    {% endwith %}
+
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                        <div class="mb-3">
+                            <label class="form-label">Asset Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="asset_name" required
+                                   value="{{ asset.asset_name if asset else '' }}">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Asset Ledger (Fixed Assets group) <span class="text-danger">*</span></label>
+                            <select class="form-select" name="ledger_name" required>
+                                <option value="">Select Ledger…</option>
+                                {% for ledger in fa_ledgers %}
+                                <option value="{{ ledger }}" {{ 'selected' if asset and asset.ledger_name == ledger }}>
+                                    {{ ledger }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">If missing, create it in Manage Ledgers under the Fixed Assets group first.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Purchase Date <span class="text-danger">*</span></label>
+                                <input type="date" class="form-control" name="purchase_date" required
+                                       value="{{ asset.purchase_date if asset else '' }}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Purchase Cost <span class="text-danger">*</span></label>
+                                <input type="number" step="0.01" class="form-control" name="purchase_cost" required
+                                       value="{{ asset.purchase_cost if asset else '' }}">
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Salvage Value</label>
+                                <input type="number" step="0.01" class="form-control" name="salvage_value"
+                                       value="{{ asset.salvage_value if asset else 0 }}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Useful Life (Years) <span class="text-danger">*</span></label>
+                                <input type="number" step="0.1" class="form-control" name="useful_life_years" required
+                                       value="{{ asset.useful_life_years if asset else '' }}">
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Depreciation Method <span class="text-danger">*</span></label>
+                                <select class="form-select" name="depreciation_method" required onchange="toggleRate()">
+                                    <option value="SLM" {{ 'selected' if not asset or asset.depreciation_method == 'SLM' }}>Straight Line (SLM)</option>
+                                    <option value="WDV" {{ 'selected' if asset and asset.depreciation_method == 'WDV' }}>Declining Balance (WDV)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Depreciation Rate (%)</label>
+                                <input type="number" step="0.01" class="form-control" id="depreciation_rate"
+                                       name="depreciation_rate"
+                                       value="{{ asset.depreciation_rate if asset else '' }}">
+                                <div class="form-text">Optional for SLM, mandatory for WDV</div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end gap-2 mt-2">
+                            <a href="{{ url_for('fixed_asset_bp.assets') }}" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary">
+                                {{ 'Update Asset' if asset else 'Save Asset' }}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleRate() {
+    const method = document.getElementById('depreciation_method') ||
+                   document.querySelector('[name="depreciation_method"]');
+    const rateInput = document.getElementById('depreciation_rate');
+    if (method && rateInput) {
+        rateInput.required = method.value === 'WDV';
+    }
+}
+toggleRate();
+</script>
+{% endblock %}
