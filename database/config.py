@@ -17,6 +17,7 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 # Single-variable configuration (e.g. Render's DATABASE_URL). Overrides the
 # individual DB_* settings above when present.
 _database_url = os.getenv("DATABASE_URL")
+print(f"[DB CONFIG] DATABASE_URL set: {bool(_database_url)} | DB_HOST: {DB_HOST}")
 if _database_url:
     from urllib.parse import urlparse
     _parsed = urlparse(_database_url)
