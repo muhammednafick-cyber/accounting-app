@@ -41,6 +41,3 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-
-# Render build artifacts
-static/dist/
