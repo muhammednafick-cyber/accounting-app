@@ -67,14 +67,10 @@ def init_unified_db():
     """)
 
     # Create Default Admin
-    cursor.execute("SELECT count(*) FROM users WHERE username = %s", ('admin',))
-    # fetchone() returns a RealDictRow if using RealDictCursor, so keys are accessed by name?
-    # Actually count(*) might return a dict like {'count': 0}. 
-    # Let's check safely or cast to list.
-    # But wait, config.py sets cursor_factory=RealDictCursor.
-    # A query like SELECT count(*) ... returns {'count': N}.
+    cursor.execute("SELECT count(*) AS cnt FROM users WHERE username = %s", ('admin',))
     result = cursor.fetchone()
-    if result and result['count'] == 0:
+    count_val = result[0] if result else 1
+    if count_val == 0:
         default_password = "Admin@123"
         password_hash = generate_password_hash(default_password)
         cursor.execute(
