@@ -367,7 +367,10 @@ def get_voucher_register_data(voucher_type, from_date=None, to_date=None, compan
             
             party_name = "Multiple"
             relevant_ledgers = []
+            vat_amount = 0
             for ln, la, lt in ledgers:
+                 if 'VAT' in ln.upper():
+                     vat_amount += abs(la or 0)
                  if ln not in ('Sales', 'Purchase', 'Input VAT 5%', 'Output VAT 5%', 'Cost of Goods Sold', 'Inventory', 'Discount Allowed', 'Discount Received'):
                      relevant_ledgers.append(ln)
             
@@ -387,7 +390,8 @@ def get_voucher_register_data(voucher_type, from_date=None, to_date=None, compan
                 'narration': narr,
                 'party_name': party_name,
                 'items': items,
-                'voucher_type': vtype
+                'voucher_type': vtype,
+                'vat_amount': vat_amount
             })
             
         return vouchers

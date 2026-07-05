@@ -5,40 +5,58 @@ import os
 import datetime
 from database.master_db import get_system_setting
 from database.company_db import get_current_company_id
-from .chatbot_service import process_chat_query
+from .chatbot_service import (
+    process_chat_query,
+    parse_voucher_message_rule_based,
+    get_openrouter_model,
+    openrouter_request,
+)
 
 chat_bp = Blueprint('chat_bp', __name__)
 
-# REPLACE WITH YOUR ACTUAL KEY or set env var
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', 'sk-or-...') 
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-# Using OpenAI gpt-oss-120b (free)
-OPENROUTER_MODEL = "openai/gpt-oss-120b"
 
 @chat_bp.route('/api/chat_query', methods=['POST'])
 def chat_query():
     data = request.get_json()
     user_query = data.get('query', '')
-    
+    ai_enabled = bool(data.get('ai_enabled', True))
+
     if not user_query:
         return jsonify({"success": False, "message": "No query provided"}), 400
 
     company_id = get_current_company_id()
-    
-    result = process_chat_query(user_query, company_id)
-    
+
+    result = process_chat_query(user_query, company_id, ai_enabled=ai_enabled)
+
     if "error" in result:
         return jsonify({"success": False, "message": result["error"]}), 500
-        
+
     return jsonify({"success": True, "data": result})
 
 @chat_bp.route('/api/analyze_voucher_message', methods=['POST'])
 def analyze_voucher_message():
     data = request.get_json()
     user_message = data.get('message', '')
-    
+    ai_enabled = bool(data.get('ai_enabled', True))
+
     if not user_message:
         return jsonify({"success": False, "message": "No message provided"}), 400
+
+    # Fast path: rule-based parsing (no AI, no data sent out)
+    parsed = parse_voucher_message_rule_based(user_message)
+    if parsed:
+        return jsonify({"success": True, "data": parsed})
+
+    if not ai_enabled:
+        return jsonify({
+            "success": False,
+            "message": ("Could not understand the voucher (AI is disabled). Use a pattern like: "
+                        "'received 5000 from ABC by cash today', 'paid 1200 to XYZ by bank', "
+                        "'transfer 1000 from Cash to Bank', 'expense 300 for Fuel by cash' - "
+                        "or enable AI for free-form input.")
+        }), 400
 
     current_date = datetime.date.today().strftime("%d-%m-%Y")
     
@@ -77,7 +95,7 @@ def analyze_voucher_message():
     """
 
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": get_openrouter_model(),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
@@ -85,11 +103,10 @@ def analyze_voucher_message():
         "temperature": 0.1,
         "max_tokens": 500  # Limit tokens to stay within free tier
     }
-    
-    
-    # Get API key from DB, fallback to env or hardcoded placeholder
+
+    # Get API key from DB, fallback to env
     api_key = get_system_setting('openrouter_api_key') or OPENROUTER_API_KEY
-    if not api_key or api_key.startswith('sk-or-...'):
+    if not api_key:
          return jsonify({"success": False, "message": "OpenRouter API Key not configured. Please contact admin."}), 500
 
     headers = {
@@ -99,15 +116,13 @@ def analyze_voucher_message():
     }
     
     try:
-        response = requests.post(OPENROUTER_URL, json=payload, headers=headers)
-        
-        if response.status_code != 200:
-            return jsonify({"success": False, "message": f"OpenRouter Error: {response.text}"}), 500
-            
-        result = response.json()
+        result, err = openrouter_request(payload, headers)
+        if err:
+            return jsonify({"success": False, "message": err}), 500
+
         if 'choices' not in result or not result['choices']:
              return jsonify({"success": False, "message": "No response from AI provider"}), 500
-             
+
         content = result['choices'][0]['message']['content']
         
         # Clean up markdown if present
@@ -116,13 +131,24 @@ def analyze_voucher_message():
             clean_content = clean_content[7:]
         if clean_content.endswith("```"):
             clean_content = clean_content[:-3]
-        
-        voucher_data = json.loads(clean_content.strip())
-        
+
+        try:
+            voucher_data = json.loads(clean_content.strip())
+        except json.JSONDecodeError:
+            # Fallback: extract the first JSON object embedded in the text
+            import re as _re
+            match = _re.search(r'\{.*\}', clean_content, _re.DOTALL)
+            if not match:
+                raise
+            voucher_data = json.loads(match.group(0))
+
         return jsonify({"success": True, "data": voucher_data})
 
     except json.JSONDecodeError:
-        return jsonify({"success": False, "message": "Failed to parse AI response", "raw_response": content}), 500
+        return jsonify({"success": False, "message": ("The AI response could not be understood. Try rephrasing, "
+                        "or use a one-line pattern like 'received 5000 from ABC by cash today'. "
+                        "If this keeps happening, select a different model in AI Settings."),
+                        "raw_response": content}), 500
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 

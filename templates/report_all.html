@@ -295,6 +295,13 @@
                 <div class="tile-desc">All sales return credit notes</div>
                 <div class="tile-arrow">Open →</div>
             </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Purchase Return') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">↪️</div>
+                <div class="tile-name">Purchase Return Register</div>
+                <div class="tile-desc">All purchase return debit notes</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
             {% if company and company.inventory_applicable == 1 %}
             <a class="report-tile" href="{{ url_for('report_bp.report_sales_summary') }}">
                 <div class="tile-accent accent-register"></div>
@@ -312,6 +319,13 @@
             </a>
             {% endif %}
             {% endif %}
+            <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Expense') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">💸</div>
+                <div class="tile-name">Expense Register</div>
+                <div class="tile-desc">All expense vouchers for a period</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
         </div>
     </div>
 

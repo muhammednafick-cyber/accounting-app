@@ -157,7 +157,11 @@
                                     Register</a></li>
                             <li><a href="{{ url_for('report_bp.report_register', voucher_type='Sales Return') }}">Sales
                                     Return Register</a></li>
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Purchase Return') }}">Purchase
+                                    Return Register</a></li>
                             {% endif %}
+                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Expense') }}">Expense
+                                    Register</a></li>
                             <li><a href="{{ url_for('report_bp.report_register', voucher_type='Contra') }}">Contra
                                     Register</a></li>
                             <li><a href="{{ url_for('report_bp.report_register', voucher_type='Payment') }}">Payment
@@ -334,6 +338,11 @@
                         <option value="purchase">Purchase</option>
                         <option value="service_income">Service Income</option>
                     </select>
+                    <label class="global-chat-ai-toggle" title="When OFF, only ERP functions and database queries are used - no data is sent to OpenRouter."
+                           style="display:flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;font-size:0.85em;user-select:none;">
+                        <input type="checkbox" id="vaChatAiToggle" style="cursor:pointer;">
+                        <span>Enable AI</span>
+                    </label>
                 </div>
                 <button id="globalChatClose" type="button" class="global-chat-close" aria-label="Close assistant"
                     onclick="if(window.closeGlobalChat) window.closeGlobalChat(); else { document.getElementById('globalChatOverlay').hidden = true; document.getElementById('globalChatOverlay').setAttribute('hidden', ''); document.getElementById('globalChatOverlay').style.removeProperty('display'); }">

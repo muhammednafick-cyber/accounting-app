@@ -10,17 +10,12 @@ from database.item_mapping_db import get_item_mapping
 from datetime import datetime
 
 def get_openai_client():
-    invoice_provider = get_ai_setting('invoice_provider', 'openai')
-    
-    if invoice_provider == 'local':
-        local_url = get_ai_setting('local_llm_url', 'http://localhost:1234/v1')
-        # Ensure base_url ends with /v1 if using OpenAI client compatibility usually
-        return OpenAI(base_url=local_url, api_key="lm-studio")
-    else:
-        api_key = get_ai_setting('openai_api_key')
-        if not api_key:
-            raise Exception("OpenAI API Key not configured in AI Settings.")
-        return OpenAI(api_key=api_key)
+    """OpenRouter is the single AI provider; the OpenAI SDK is used in compatibility mode."""
+    from database.master_db import get_system_setting
+    api_key = get_system_setting('openrouter_api_key') or os.environ.get('OPENROUTER_API_KEY')
+    if not api_key:
+        raise Exception("OpenRouter API Key not configured in AI Settings.")
+    return OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
 
 def convert_pdf_to_images(pdf_bytes):
     """
@@ -49,12 +44,9 @@ def extract_invoice_data_vision(file_bytes, filename, invoice_type="Purchase"):
     Uses OpenAI Vision to extract structured data from invoice.
     """
     client = get_openai_client()
-    
-    invoice_provider = get_ai_setting('invoice_provider', 'openai')
-    if invoice_provider == 'local':
-        model = get_ai_setting('local_llm_model', 'Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled')
-    else:
-        model = get_ai_setting('openai_model_name', 'gpt-5-mini')
+
+    # Use the default OpenRouter model selected in AI Settings
+    model = get_ai_setting('openrouter_model', 'openai/gpt-oss-120b')
     
     is_pdf = filename.lower().endswith('.pdf')
     

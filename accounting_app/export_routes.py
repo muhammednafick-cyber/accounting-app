@@ -124,17 +124,14 @@ def export_ledger_transactions():
 @export_bp.route("/export_report/trial_balance")
 @login_required
 def export_trial_balance():
+    as_of_date = parse_date(request.args.get("as_of_date"))
     try:
-        trial_balance = get_trial_balance_data()
+        trial_balance, total_debit, total_credit = get_trial_balance_data(as_of_date)
         data = []
-        for group in trial_balance:
-            data.append([group["group_name"], "", ""])
-            for ledger in group["ledgers"]:
-                data.append(["", ledger["ledger_name"], round(ledger["debit"], 2), round(ledger["credit"], 2)])
-            data.append(["Total " + group["group_name"], "", round(group["total_debit"], 2), round(group["total_credit"], 2)])
-            data.append([])
+        for row in trial_balance:
+            data.append([row["group_name"], row["ledger_name"], round(row["debit"], 2), round(row["credit"], 2)])
+        data.append(["", "Total", round(total_debit, 2), round(total_credit, 2)])
         df = pd.DataFrame(data, columns=["Group", "Ledger Name", "Debit", "Credit"])
-        df = df.dropna(how="all")
         output = io.BytesIO()
         df.to_excel(output, index=False)
         output.seek(0)
@@ -232,15 +229,19 @@ def export_profit_and_loss():
         profit_and_loss, total_income, total_expenses, net_profit = get_profit_and_loss_data(from_date, to_date)
         data = []
         data.append(["Income", "", ""])
-        for ledger in profit_and_loss["income"]:
-            data.append(["", ledger["ledger_name"], ledger["amount"]])
-        data.append(["Total Income", "", total_income])
-        data.append([])
+        for group_name, ledgers in profit_and_loss["income"].items():
+            data.append([group_name, "", ""])
+            for ledger in ledgers:
+                data.append(["", ledger["ledger_name"], ledger["amount"]])
+        data.append(["Total Income", "", round(total_income, 2)])
+        data.append(["", "", ""])
         data.append(["Expenses", "", ""])
-        for ledger in profit_and_loss["expenses"]:
-            data.append(["", ledger["ledger_name"], ledger["amount"]])
-        data.append(["Total Expenses", "", total_expenses])
-        data.append(["Net Profit/Loss", "", net_profit])
+        for group_name, ledgers in profit_and_loss["expenses"].items():
+            data.append([group_name, "", ""])
+            for ledger in ledgers:
+                data.append(["", ledger["ledger_name"], ledger["amount"]])
+        data.append(["Total Expenses", "", round(total_expenses, 2)])
+        data.append(["Net Profit/Loss", "", round(net_profit, 2)])
 
         df = pd.DataFrame(data, columns=["Category", "Ledger Name", "Amount"])
         output = io.BytesIO()

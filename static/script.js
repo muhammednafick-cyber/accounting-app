@@ -1518,6 +1518,21 @@ document.addEventListener('DOMContentLoaded', function () {
         hideLedgerPicker();
     }
 
+    function isAiEnabled() {
+        const toggle = document.getElementById('vaChatAiToggle');
+        if (toggle) return toggle.checked;
+        return localStorage.getItem('vaChatAiEnabled') === '1';
+    }
+
+    function initAiToggle() {
+        const toggle = document.getElementById('vaChatAiToggle');
+        if (!toggle) return;
+        toggle.checked = localStorage.getItem('vaChatAiEnabled') === '1';
+        toggle.addEventListener('change', function () {
+            localStorage.setItem('vaChatAiEnabled', toggle.checked ? '1' : '0');
+        });
+    }
+
     async function analyzeMessageWithAI(text) {
         console.log('analyzeMessageWithAI called with:', text);
         setStatus('Thinking...', false);
@@ -1525,7 +1540,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const res = await fetch('/api/analyze_voucher_message', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text })
+                body: JSON.stringify({ message: text, ai_enabled: isAiEnabled() })
             });
             console.log('API response status:', res.status);
             const data = await res.json();
@@ -1577,20 +1592,34 @@ document.addEventListener('DOMContentLoaded', function () {
         return p;
     }
 
+    // When the bot asks for a report period, remember the original request so the
+    // user's next message (e.g. "this month") completes it.
+    let chatPendingDateQuery = null;
+
     async function handleGeneralChatQuery(query) {
         if (!query) return;
+
+        // If the bot just asked for a period, combine the answer with the original request
+        if (chatPendingDateQuery) {
+            query = chatPendingDateQuery + ' ' + query;
+            chatPendingDateQuery = null;
+        }
+
         setStatus('Thinking...', false);
         try {
             const res = await fetch('/api/chat_query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: query })
+                body: JSON.stringify({ query: query, ai_enabled: isAiEnabled() })
             });
             const data = await res.json();
             setStatus('', false);
-            
+
             if (data.success && data.data) {
                 globalChatAppendMessage('bot', data.data.response);
+                if (data.data.data && data.data.data.need_date) {
+                    chatPendingDateQuery = data.data.data.pending_query || null;
+                }
             } else {
                 globalChatAppendMessage('bot', `Error: ${data.message || 'Unknown error'}`);
             }
@@ -1879,6 +1908,8 @@ document.addEventListener('DOMContentLoaded', function () {
     console.log('Chatbot: Initializing event listeners...');
 
     try {
+        initAiToggle();
+
         if (chatFab) {
             chatFab.addEventListener('click', openGlobalChat);
             console.log('Chatbot: chatFab listener attached');

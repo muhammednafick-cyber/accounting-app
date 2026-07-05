@@ -32,11 +32,63 @@ from database.inventory_db import get_items
 from database.company_db import get_current_company_id
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "openai/gpt-oss-120b" # Using free model as per existing code
+OPENROUTER_MODEL = "openai/gpt-oss-120b" # Fallback default model
 
 def get_openrouter_api_key():
     api_key = get_system_setting('openrouter_api_key')
     return api_key or os.environ.get('OPENROUTER_API_KEY')
+
+def get_openrouter_model():
+    """The default model selected in AI Settings (per company)."""
+    return get_ai_setting('openrouter_model', OPENROUTER_MODEL) or OPENROUTER_MODEL
+
+def openrouter_request(payload, headers, max_retries=1):
+    """
+    POST to OpenRouter with automatic retry on 429 (rate limit).
+    Returns (response_json, error_message). Exactly one is None.
+    """
+    import time
+    attempt = 0
+    while True:
+        response = requests.post(OPENROUTER_URL, json=payload, headers=headers, timeout=90)
+
+        # OpenRouter can return 200 with an embedded error object (upstream provider errors)
+        body = None
+        try:
+            body = response.json()
+        except ValueError:
+            pass
+
+        err = None
+        if response.status_code != 200:
+            err = body.get('error') if isinstance(body, dict) else None
+        elif isinstance(body, dict) and 'error' in body and 'choices' not in body:
+            err = body['error']
+
+        if err is None:
+            if not isinstance(body, dict) or 'choices' not in body:
+                return None, f"Unexpected response from OpenRouter: {response.text[:300]}"
+            return body, None
+
+        code = err.get('code') if isinstance(err, dict) else None
+        message = err.get('message', str(err)) if isinstance(err, dict) else str(err)
+
+        # Rate limited: retry once after the suggested delay
+        if code == 429 or response.status_code == 429:
+            retry_after = 5
+            if isinstance(err, dict):
+                retry_after = min(int(err.get('metadata', {}).get('retry_after_seconds', 5) or 5), 30)
+            if attempt < max_retries:
+                attempt += 1
+                print(f"OpenRouter rate limited, retrying in {retry_after}s (attempt {attempt})")
+                time.sleep(retry_after)
+                continue
+            model = payload.get('model', 'the selected model')
+            return None, (f"'{model}' is temporarily rate-limited (busy). "
+                          "Please try again in a moment, or select a different model in AI Settings "
+                          "(free models are often busy - paid or less popular models are more reliable).")
+
+        return None, f"AI Provider Error: {message}"
 
 def parse_date_range(range_str):
     today = datetime.date.today()
@@ -166,38 +218,350 @@ def parse_date_range(range_str):
 
     return None, None
 
-def process_chat_query(user_query, company_id):
-    chatbot_provider = get_ai_setting('chatbot_provider', 'openrouter')
-    
-    api_url = ""
-    api_key = ""
-    model_name = ""
-    headers = {}
-    
-    if chatbot_provider == 'local':
-        api_url = get_ai_setting('local_llm_url', 'http://localhost:1234/v1')
-        if api_url.endswith('/'):
-            api_url = api_url + "chat/completions"
-        else:
-            api_url = api_url + "/chat/completions"
-            
-        model_name = get_ai_setting('local_llm_model', 'Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled')
-        api_key = "lm-studio" # Dummy key for local
-        headers = {
-            "Content-Type": "application/json"
+
+# ============================================================
+# Rule-based (no-AI) query parser
+# Maps common ERP questions straight to intents so the chatbot
+# can answer from the database without calling OpenRouter.
+# ============================================================
+
+_DATE_PHRASES = [
+    ("this month", "this_month"), ("last month", "last_month"),
+    ("this week", "this_week"), ("last week", "last_week"),
+    ("this year", "this_year"), ("today", "today"), ("yesterday", "yesterday"),
+]
+
+_MONTH_NAMES = r'(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)'
+
+def _extract_date_range(text):
+    """Find a date phrase in the text. Returns (date_range_str_or_None, text_without_it)."""
+    lower = text.lower()
+
+    # Explicit range "dd-mm-yyyy to dd-mm-yyyy"
+    m = re.search(r'(\d{1,2}[-./]\d{1,2}[-./]\d{4}|\d{4}[-./]\d{1,2}[-./]\d{1,2})\s+to\s+(\d{1,2}[-./]\d{1,2}[-./]\d{4}|\d{4}[-./]\d{1,2}[-./]\d{1,2})', lower)
+    if m:
+        return f"{m.group(1)} to {m.group(2)}", (text[:m.start()] + text[m.end():]).strip()
+
+    # "all time" - explicit request for no date filter
+    for phrase in ("all time", "alltime", "full history", "since inception"):
+        idx = lower.find(phrase)
+        if idx != -1:
+            return "all_time", (text[:idx] + text[idx + len(phrase):]).strip()
+
+    for phrase, token in _DATE_PHRASES:
+        idx = lower.find(phrase)
+        if idx != -1:
+            return token, (text[:idx] + text[idx + len(phrase):]).strip()
+
+    # "Month YYYY" e.g. "august 2025"
+    m = re.search(rf'\b({_MONTH_NAMES})\s+(\d{{4}})\b', lower)
+    if m:
+        return f"{m.group(1)} {m.group(2)}", (text[:m.start()] + text[m.end():]).strip()
+
+    # Standalone month name
+    m = re.search(rf'\b(in|for|of)\s+({_MONTH_NAMES})\b', lower)
+    if m:
+        return m.group(2), (text[:m.start()] + text[m.end():]).strip()
+
+    # Single date
+    m = re.search(r'\b(\d{1,2}[-./]\d{1,2}[-./]\d{4})\b', lower)
+    if m:
+        return m.group(1), (text[:m.start()] + text[m.end():]).strip()
+
+    # Standalone year "in 2025"
+    m = re.search(r'\b(?:in|for|during)\s+(\d{4})\b', lower)
+    if m:
+        return m.group(1), (text[:m.start()] + text[m.end():]).strip()
+
+    # Bare year at the end, e.g. "sales 2024"
+    m = re.search(r'\b(19\d{2}|20\d{2})\s*$', lower)
+    if m:
+        return m.group(1), (text[:m.start()] + text[m.end():]).strip()
+
+    return None, text
+
+def rule_based_parse(user_query):
+    """
+    Try to map the query to an intent using keywords only (no AI).
+    Returns a parsed dict compatible with execute_intent, or None.
+    """
+    if not user_query:
+        return None
+
+    text = user_query.strip()
+    date_range, remainder = _extract_date_range(text)
+    q = remainder.lower().strip(' ?.!')
+    # Remove dangling connector words left behind after the date was extracted
+    # e.g. "Sales on 31-12-2023" -> "sales on" -> "sales"
+    q = re.sub(r'\s+(on|for|in|of|at|during|as\s+of|as\s+at)$', '', q).strip()
+    q = re.sub(r'^(on|for|in|during)\s+', '', q).strip()
+    # Normalize compact spellings of report names
+    q = (q.replace('balancesheet', 'balance sheet')
+          .replace('trialbalance', 'trial balance')
+          .replace('profitandloss', 'profit and loss')
+          .replace('profit & loss', 'profit and loss'))
+    params = {"date_range": date_range, "entity_name": None, "item_name": None,
+              "expense_type": None, "report_type": None, "limit": None}
+
+    def result(intent, **extra):
+        params.update(extra)
+        return {"intent": intent, "parameters": params,
+                "explanation": f"Matched '{intent}' directly from ERP functions (no AI)."}
+
+    # --- Greetings / help ---
+    if re.match(r'^(hi+|hii+|hello+|hey+|hai|salam|salaam|good\s*(morning|afternoon|evening|day)|greetings)\b[\s!.]*$', q):
+        return result("greeting")
+    if q in ('help', 'what can you do', 'what can you do for me', 'commands', 'menu', 'options', '?'):
+        return result("greeting")
+    if re.match(r'^(thanks|thank you|thankyou|ok|okay|great|nice|good|super)\b[\s!.]*$', q):
+        return result("thanks")
+
+    # --- Voucher lookup by number, e.g. "show voucher SAL-00001" / "SAL-00001" ---
+    m = re.search(r'\b([A-Za-z]{2,6}-\d{3,})\b', text)
+    if m and ('voucher' in q or 'invoice' in q or q.replace(' ', '') == m.group(1).lower()):
+        return result("get_voucher_details", voucher_number=m.group(1).upper())
+
+    # --- Voucher list, e.g. "sales vouchers this month", "show purchase vouchers" ---
+    m = re.search(r'\b(sales return|purchase return|sales|purchase|payment|receipt|journal|contra|expense)\s+(vouchers|voucher list|invoices|register)\b', q)
+    if m:
+        vtype_map = {'sales': 'Sales', 'purchase': 'Purchase', 'sales return': 'Sales Return',
+                     'purchase return': 'Purchase Return', 'payment': 'Payment', 'receipt': 'Receipt',
+                     'journal': 'Journal', 'contra': 'Contra', 'expense': 'Expense'}
+        if 'export' in q or 'download' in q or 'excel' in q:
+            return result("export_report", report_type=vtype_map[m.group(1)])
+        return result("list_vouchers", voucher_type=vtype_map[m.group(1)])
+
+    # --- Exports ---
+    if 'export' in q or 'download' in q:
+        if 'trial balance' in q: return result("export_report", report_type="Trial Balance")
+        if 'balance sheet' in q: return result("export_report", report_type="Balance Sheet")
+        if 'profit' in q or 'p&l' in q or 'pnl' in q: return result("export_report", report_type="P&L")
+        if 'purchase' in q: return result("export_report", report_type="Purchase")
+        if 'sales' in q: return result("export_report", report_type="Sales")
+
+    # --- Financial statements ---
+    if 'trial balance' in q: return result("get_trial_balance")
+    if 'balance sheet' in q: return result("get_balance_sheet")
+    if 'profit and loss' in q or 'profit & loss' in q or 'p&l' in q or 'pnl' in q or 'income statement' in q:
+        return result("get_profit_and_loss")
+    if 'net profit' in q or q == 'profit': return result("get_net_profit")
+
+    # --- Balances ---
+    if 'cash balance' in q or 'cash in hand' in q: return result("get_cash_balance")
+    if 'bank balance' in q: return result("get_bank_balance")
+    m = re.match(r'^(?:what is |show |get )?(?:the )?balance (?:of|for) (.+)$', q)
+    if m: return result("get_ledger_balance", entity_name=m.group(1).strip())
+    m = re.match(r'^(.+?)\s+balance$', q)
+    if m and m.group(1).strip() not in ('cash', 'bank', 'trial'):
+        return result("get_ledger_balance", entity_name=m.group(1).strip())
+
+    # --- Statements / ledgers ---
+    m = re.match(r'^(?:show |get )?(?:customer |supplier )?(?:statement|ledger)(?: of| for)? (.+)$', q)
+    if m: return result("get_customer_statement", entity_name=m.group(1).strip())
+
+    # --- Totals ---
+    if 'total sales' in q or 'sales total' in q or q == 'sales':
+        return result("get_total_sales")
+    if 'total purchase' in q or 'purchase total' in q or q == 'purchase' or q == 'purchases':
+        return result("get_total_purchase")
+
+    # --- Receivables / payables ---
+    if 'receivable' in q or ('outstanding' in q and 'customer' in q):
+        return result("get_pending_invoices")
+    if 'payable' in q or ('outstanding' in q and 'supplier' in q):
+        return {"intent": "get_pending_invoices", "parameters": params,
+                "explanation": "supplier payables (no AI)"}
+    if ('pending' in q or 'overdue' in q) and 'invoice' in q:
+        expl = "supplier invoices (no AI)" if 'supplier' in q else "customer invoices (no AI)"
+        return {"intent": "get_pending_invoices", "parameters": params, "explanation": expl}
+
+    # --- Top customers / suppliers ---
+    m = re.search(r'top\s*(\d+)?\s*customers', q)
+    if m: return result("get_top_customers", limit=int(m.group(1)) if m.group(1) else 5)
+    m = re.search(r'top\s*(\d+)?\s*suppliers', q)
+    if m: return result("get_top_suppliers", limit=int(m.group(1)) if m.group(1) else 5)
+
+    # --- Stock / inventory ---
+    m = re.match(r'^(?:show |what is |current )?stock (?:of|for) (.+)$', q)
+    if m: return result("get_stock_status", item_name=m.group(1).strip())
+    if 'closing stock' in q or 'stock value' in q or 'inventory valuation' in q or 'inventory value' in q:
+        return result("get_closing_stock_value")
+    if 'slow moving' in q: return result("get_slow_moving")
+    if 'negative stock' in q or 'low stock' in q: return result("get_low_stock")
+    if 'no sales' in q and 'item' in q: return result("get_no_sales_items")
+
+    # --- Comparison ---
+    if 'compare' in q and 'sales' in q: return result("compare_monthly_sales")
+
+    return None
+
+
+# ============================================================
+# Rule-based (no-AI) voucher message parser
+# Handles one-line voucher entry like:
+#   "received 5000 from ABC by cash today"
+#   "paid 1200 to XYZ by bank yesterday"
+#   "transfer 1000 from Cash to Bank"
+#   "expense 300 for Fuel by cash"
+# Returns the same JSON shape as the AI extraction, or None.
+# ============================================================
+
+def _voucher_date_from_text(text):
+    """Extract a date from the message; defaults to today. Returns (DD-MM-YYYY, cleaned_text)."""
+    today = datetime.date.today()
+    lower = text.lower()
+
+    m = re.search(r'\b(\d{1,2}[-./]\d{1,2}[-./]\d{4})\b', lower)
+    if m:
+        for fmt in ("%d-%m-%Y", "%d.%m.%Y", "%d/%m/%Y"):
+            try:
+                d = datetime.datetime.strptime(m.group(1).replace('.', '-').replace('/', '-'), "%d-%m-%Y").date()
+                return d.strftime("%d-%m-%Y"), (text[:m.start()] + text[m.end():]).strip()
+            except ValueError:
+                continue
+    if 'yesterday' in lower:
+        d = today - datetime.timedelta(days=1)
+        idx = lower.find('yesterday')
+        return d.strftime("%d-%m-%Y"), (text[:idx] + text[idx + 9:]).strip()
+    if 'today' in lower:
+        idx = lower.find('today')
+        return today.strftime("%d-%m-%Y"), (text[:idx] + text[idx + 5:]).strip()
+    return today.strftime("%d-%m-%Y"), text
+
+def _cash_or_bank(text):
+    """Extract 'by cash'/'by bank'/'in cash' hint. Returns (ledger_hint_or_None, cleaned_text)."""
+    m = re.search(r'\b(?:by|in|via|through)\s+(cash|bank)\b', text, re.IGNORECASE)
+    if m:
+        hint = 'Cash' if m.group(1).lower() == 'cash' else 'Bank Account'
+        return hint, (text[:m.start()] + text[m.end():]).strip()
+    return None, text
+
+def _parse_amount(s):
+    try:
+        return float(s.replace(',', ''))
+    except (ValueError, AttributeError):
+        return None
+
+def parse_voucher_message_rule_based(message):
+    if not message:
+        return None
+    text = message.strip()
+    date_str, text = _voucher_date_from_text(text)
+    cash_bank, text = _cash_or_bank(text)
+    q = text.strip(' .!')
+
+    # Receipt: "received 5000 from ABC"
+    m = re.match(r'^(?:received|receipt(?:\s+of)?|got)\s+([\d.,]+)\s+from\s+(.+)$', q, re.IGNORECASE)
+    if m:
+        amount = _parse_amount(m.group(1))
+        party = m.group(2).strip()
+        if amount and party:
+            return {
+                "voucher_type": "Receipt", "date": date_str, "amount": amount,
+                "narration": f"Received from {party}",
+                "ledger_entries": [
+                    {"ledger": cash_bank or "Cash", "type": "Debit"},
+                    {"ledger": party, "type": "Credit"},
+                ],
+            }
+
+    # Payment: "paid 1200 to ABC"
+    m = re.match(r'^(?:paid|payment(?:\s+of)?|pay)\s+([\d.,]+)\s+to\s+(.+)$', q, re.IGNORECASE)
+    if m:
+        amount = _parse_amount(m.group(1))
+        party = m.group(2).strip()
+        if amount and party:
+            return {
+                "voucher_type": "Payment", "date": date_str, "amount": amount,
+                "narration": f"Paid to {party}",
+                "ledger_entries": [
+                    {"ledger": party, "type": "Debit"},
+                    {"ledger": cash_bank or "Cash", "type": "Credit"},
+                ],
+            }
+
+    # Contra: "transfer 1000 from Cash to Bank"
+    m = re.match(r'^(?:transfer(?:red)?|contra)\s+([\d.,]+)\s+from\s+(.+?)\s+to\s+(.+)$', q, re.IGNORECASE)
+    if m:
+        amount = _parse_amount(m.group(1))
+        src, dst = m.group(2).strip(), m.group(3).strip()
+        if amount and src and dst:
+            return {
+                "voucher_type": "Contra", "date": date_str, "amount": amount,
+                "narration": f"Transfer from {src} to {dst}",
+                "ledger_entries": [
+                    {"ledger": dst, "type": "Debit"},
+                    {"ledger": src, "type": "Credit"},
+                ],
+            }
+
+    # Expense: "expense 300 for Fuel"
+    m = re.match(r'^(?:expense(?:\s+of)?|spent)\s+([\d.,]+)\s+(?:for|on)\s+(.+)$', q, re.IGNORECASE)
+    if m:
+        amount = _parse_amount(m.group(1))
+        expense = m.group(2).strip()
+        if amount and expense:
+            return {
+                "voucher_type": "Expense", "date": date_str, "amount": amount,
+                "narration": expense,
+                "ledger_entries": [
+                    {"ledger": expense, "type": "Debit"},
+                    {"ledger": cash_bank or "Cash", "type": "Credit"},
+                ],
+            }
+
+    return None
+
+
+CAPABILITIES_TEXT = (
+    "&bull; <b>Balances:</b> 'cash balance', 'bank balance', 'balance of ABC Trading'<br>"
+    "&bull; <b>Totals:</b> 'total sales this month', 'total purchase last month', 'net profit this year'<br>"
+    "&bull; <b>Reports:</b> 'trial balance', 'balance sheet', 'profit and loss'<br>"
+    "&bull; <b>Statements:</b> 'statement of ABC Trading', 'ledger of Fuel'<br>"
+    "&bull; <b>Vouchers:</b> 'show voucher SAL-00001', 'sales vouchers this month'<br>"
+    "&bull; <b>Stock:</b> 'stock of ItemName', 'closing stock value', 'slow moving items', 'negative stock'<br>"
+    "&bull; <b>Analysis:</b> 'top 5 customers', 'top suppliers', 'pending invoices', 'compare monthly sales'<br>"
+    "&bull; <b>Exports:</b> 'export sales register', 'download trial balance'"
+)
+
+GREETING_TEXT = (
+    "Hello! &#128075; I'm your ERP assistant. Here's what I can do for you:<br>" + CAPABILITIES_TEXT +
+    "<br>Just type your question - for example, 'total sales this month'."
+)
+
+NO_AI_HELP_TEXT = (
+    "I couldn't match that to an ERP function. With AI disabled I can directly handle things like:<br>"
+    + CAPABILITIES_TEXT +
+    "<br>Enable AI for free-form questions."
+)
+
+def process_chat_query(user_query, company_id, ai_enabled=True):
+    # 1. Always try the fast rule-based ERP parser first - no AI, no data leaves the app.
+    parsed = rule_based_parse(user_query)
+    if parsed:
+        parsed['raw_query'] = user_query
+        return execute_intent(parsed, company_id)
+
+    # 2. If AI is disabled, stop here - never send data to OpenRouter.
+    if not ai_enabled:
+        return {
+            "intent": "help",
+            "response": NO_AI_HELP_TEXT,
+            "data": None,
+            "explanation": "AI disabled - rule-based parser could not match the query."
         }
-    else:
-        # OpenRouter
-        api_key = get_openrouter_api_key()
-        if not api_key:
-            return {"error": "OpenRouter API Key not configured."}
-        api_url = OPENROUTER_URL
-        model_name = OPENROUTER_MODEL
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:5000",
-        }
+
+    # 3. AI path (OpenRouter only)
+    api_key = get_openrouter_api_key()
+    if not api_key:
+        return {"error": "OpenRouter API Key not configured."}
+    api_url = OPENROUTER_URL
+    model_name = get_openrouter_model()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:5000",
+    }
 
     current_date = datetime.date.today().strftime("%Y-%m-%d")
     
@@ -256,20 +620,14 @@ def process_chat_query(user_query, company_id):
             {"role": "user", "content": user_query}
         ],
         "temperature": 0.1,
+        "response_format": {"type": "json_object"},
     }
 
-    # Only add response_format if NOT using Local LLM (or if Local LLM supports it, but Qwen usually prefers standard prompting)
-    # Most local models in LM Studio don't support 'response_format': {'type': 'json_object'} strictly like OpenAI
-    # So we omit it for 'local' provider to be safe, relying on the system prompt instruction.
-    if chatbot_provider != 'local':
-        payload["response_format"] = {"type": "json_object"}
-
     try:
-        response = requests.post(api_url, json=payload, headers=headers)
-        if response.status_code != 200:
-            return {"error": f"AI Provider Error: {response.text}"}
-            
-        result = response.json()
+        result, err = openrouter_request(payload, headers)
+        if err:
+            return {"error": err}
+
         content = result['choices'][0]['message']['content']
         print(f"AI Response: {content}") # Log raw response
         
@@ -288,10 +646,11 @@ def process_chat_query(user_query, company_id):
                 return {"error": "Failed to parse AI response (no JSON found)"}
             
         print(f"Parsed AI Response: {parsed}")
+        parsed['raw_query'] = user_query
         return execute_intent(parsed, company_id)
         
     except requests.exceptions.ConnectionError:
-        return {"error": f"Connection Error: Could not connect to Local LLM at {api_url}. Please ensure LM Studio is running and the server is started."}
+        return {"error": "Connection Error: Could not reach OpenRouter. Please check your internet connection."}
     except Exception as e:
         print(f"Processing Error: {str(e)}")
         return {"error": str(e)}
@@ -335,7 +694,13 @@ def execute_intent(parsed_data, company_id):
     data = None
 
     try:
-        if intent == "get_cash_balance":
+        if intent == "greeting":
+            result_text = GREETING_TEXT
+
+        elif intent == "thanks":
+            result_text = "You're welcome! &#128522; Ask me anything else about your accounts, vouchers, stock or reports."
+
+        elif intent == "get_cash_balance":
             # Cash is usually Group G005
             ledgers = get_ledgers(group_code='G005', company_id=company_id)
             total_cash = sum(l['closing_balance'] for l in ledgers)
@@ -601,46 +966,72 @@ def execute_intent(parsed_data, company_id):
         elif intent == "export_report":
             report_type = params.get("report_type")
             if not report_type:
-                # Try to infer from text if not extracted
-                if "purchase" in explanation.lower():
-                    report_type = "Purchase"
-                elif "sales" in explanation.lower():
-                    report_type = "Sales"
-                elif "balance sheet" in explanation.lower():
+                # Try to infer from the user's own words first, then the AI explanation.
+                # Statement reports are checked before registers to avoid false matches.
+                hint = (parsed_data.get("raw_query", "") + " " + explanation).lower().replace('balancesheet', 'balance sheet').replace('trialbalance', 'trial balance')
+                if "balance sheet" in hint:
                     report_type = "Balance Sheet"
-                elif "profit" in explanation.lower() or "p&l" in explanation.lower():
+                elif "trial balance" in hint:
+                    report_type = "Trial Balance"
+                elif "profit" in hint or "p&l" in hint or "pnl" in hint:
                     report_type = "P&L"
-            
+                elif "purchase" in hint:
+                    report_type = "Purchase"
+                elif "sales" in hint:
+                    report_type = "Sales"
+
+            # Ask for a period when no date was given (user can answer
+            # e.g. "this month", "August 2025", "01-01-2025 to 30-06-2025" or "all time")
+            if report_type and not date_range:
+                if report_type in ("Trial Balance", "Balance Sheet"):
+                    ask = f"As of which date should I prepare the {report_type}? (e.g., '31-12-2025', 'today', or 'all time' for the latest)"
+                else:
+                    ask = (f"For which period do you want the {report_type} report? "
+                           "(e.g., 'this month', 'last month', 'August 2025', '01-01-2025 to 30-06-2025', or 'all time')")
+                return {
+                    "intent": "ask_date",
+                    "response": ask,
+                    "data": {"need_date": True, "pending_query": parsed_data.get("raw_query", "")},
+                    "explanation": "Waiting for the user to provide a report period."
+                }
+
+            register_types = ["Sales", "Purchase", "Sales Return", "Purchase Return",
+                              "Payment", "Receipt", "Journal", "Contra", "Expense"]
+
             download_url = ""
             file_label = "Report"
-            
-            if report_type in ["Purchase", "Sales"]:
+
+            if report_type in register_types:
                 # Map to Voucher Register export
                 download_url = f"/export_report/voucher_register?voucher_type={report_type}"
                 if start_str: download_url += f"&from_date={start_str}"
                 if end_str: download_url += f"&to_date={end_str}"
                 file_label = f"{report_type} Register"
-                
+
             elif report_type == "Trial Balance":
                 download_url = "/export_report/trial_balance"
+                if end_str: download_url += f"?as_of_date={end_str}"
                 file_label = "Trial Balance"
-                
+
             elif report_type == "Balance Sheet":
                 download_url = "/export_report/balance_sheet"
-                if end_str: download_url += f"&as_of_date={end_str}"
+                if end_str: download_url += f"?as_of_date={end_str}"
                 file_label = "Balance Sheet"
-                
+
             elif report_type == "P&L":
                 download_url = "/export_report/profit_and_loss"
-                if start_str: download_url += f"&from_date={start_str}"
-                if end_str: download_url += f"&to_date={end_str}"
+                date_params = []
+                if start_str: date_params.append(f"from_date={start_str}")
+                if end_str: date_params.append(f"to_date={end_str}")
+                if date_params: download_url += "?" + "&".join(date_params)
                 file_label = "Profit & Loss"
-            
+
             if download_url:
-                result_text = f"I've generated the {file_label} for you. <br><a href='{download_url}' target='_blank' class='btn btn-sm btn-primary'>Download Excel</a>"
+                period_desc = " (all time)" if date_range == "all_time" or not date_range else f" for {date_range.replace('_', ' ')}"
+                result_text = f"I've generated the {file_label}{period_desc}. <br><a href='{download_url}' target='_blank' class='btn btn-sm btn-primary'>Download Excel</a>"
             else:
                 result_text = "I'm not sure which report you want to export. Please specify (e.g., 'Export Purchase Report')."
-            
+
             data = {"download_url": download_url}
 
         elif intent in ["get_outstanding_customer", "get_customer_statement"]:
@@ -898,6 +1289,70 @@ def execute_intent(parsed_data, company_id):
                  "prev_month": {"month": prev_month_str, "sales": prev_sales},
                  "difference": diff
              }
+
+        elif intent == "get_voucher_details":
+            voucher_number = params.get("voucher_number")
+            if not voucher_number:
+                result_text = "Please specify a voucher number (e.g., SAL-00001)."
+            else:
+                conn = get_connection()
+                cursor = conn.cursor()
+                try:
+                    cursor.execute("""
+                        SELECT voucher_number, date, voucher_type, amount, narration
+                        FROM vouchers WHERE company_id = %s AND UPPER(voucher_number) = %s
+                    """, (company_id, voucher_number.upper()))
+                    v = cursor.fetchone()
+                    if not v:
+                        result_text = f"Voucher '{voucher_number}' not found."
+                    else:
+                        cursor.execute("""
+                            SELECT ledger_name, amount, type FROM ledger_entries
+                            WHERE company_id = %s AND UPPER(voucher_number) = %s
+                        """, (company_id, voucher_number.upper()))
+                        entries = cursor.fetchall()
+                        cursor.execute("""
+                            SELECT item_name, quantity, unit_price, amount FROM item_entries
+                            WHERE company_id = %s AND UPPER(voucher_number) = %s
+                        """, (company_id, voucher_number.upper()))
+                        items = cursor.fetchall()
+
+                        lines = [f"<b>{v[0]}</b> | {v[2]} | Date: {v[1]} | Amount: {v[3]:.2f}"]
+                        if v[4]:
+                            lines.append(f"Narration: {v[4]}")
+                        if entries:
+                            lines.append("<b>Ledger Entries:</b>")
+                            for e in entries:
+                                lines.append(f"&bull; {e[0]}: {e[1]:.2f} {e[2]}")
+                        if items:
+                            lines.append("<b>Items:</b>")
+                            for i in items:
+                                lines.append(f"&bull; {i[0]}: Qty {i[1]} x {i[2]:.2f} = {i[3]:.2f}")
+                        result_text = "<br>".join(lines)
+                        data = {
+                            "voucher": {"number": v[0], "date": v[1], "type": v[2], "amount": v[3], "narration": v[4]},
+                            "ledger_entries": [{"ledger": e[0], "amount": e[1], "type": e[2]} for e in entries],
+                            "items": [{"name": i[0], "qty": i[1], "rate": i[2], "amount": i[3]} for i in items],
+                        }
+                finally:
+                    cursor.close()
+                    conn.close()
+
+        elif intent == "list_vouchers":
+            vtype = params.get("voucher_type") or "All"
+            vouchers = get_voucher_register_data(vtype, start_str, end_str, company_id=company_id)
+            period = date_range.replace('_', ' ') if date_range else "all time"
+            if not vouchers:
+                result_text = f"No {vtype} vouchers found for {period}."
+            else:
+                total = sum((v['amount'] or 0) for v in vouchers)
+                lines = [f"<b>{len(vouchers)} {vtype} voucher(s)</b> for {period}. Total: {total:.2f}"]
+                for v in vouchers[:10]:
+                    lines.append(f"&bull; {v['voucher_number']} | {v['date']} | {v['party_name']} | {(v['amount'] or 0):.2f}")
+                if len(vouchers) > 10:
+                    lines.append(f"...and {len(vouchers) - 10} more. Use the register report for the full list.")
+                result_text = "<br>".join(lines)
+                data = {"count": len(vouchers), "total": total}
 
         else:
              print(f"Unhandled Intent: {intent}")

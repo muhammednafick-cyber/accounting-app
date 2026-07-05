@@ -556,8 +556,11 @@ def export_report(report_type):
             vouchers = get_voucher_register_data(voucher_type, from_date, to_date)
             formatted_data = []
             
-            if voucher_type in ['Sales', 'Purchase']:
-                # Itemwise breakdown for Sales and Purchase
+            # Registers that show a VAT Amount column
+            vat_register_types = ['Sales', 'Sales Return', 'Purchase', 'Purchase Return', 'Expense']
+
+            if voucher_type in ['Sales', 'Purchase', 'Sales Return', 'Purchase Return']:
+                # Itemwise breakdown
                 for v in vouchers:
                     if not v.get('items'):
                         formatted_data.append({
@@ -568,11 +571,13 @@ def export_report(report_type):
                             "Item": "",
                             "Qty": "",
                             "Unit rate": "",
-                            "Amount": v['amount'], # Voucher total if no items
+                            # Voucher total excluding VAT
+                            "Amount": (v['amount'] or 0) - v.get('vat_amount', 0),
+                            "VAT Amount": v.get('vat_amount', 0),
                             "Narration": v['narration']
                         })
                     else:
-                        for item in v['items']:
+                        for idx, item in enumerate(v['items']):
                             formatted_data.append({
                                 "Date": format_date(v['date']),
                                 "Voucher Type": v['voucher_type'],
@@ -582,12 +587,14 @@ def export_report(report_type):
                                 "Qty": item['qty'],
                                 "Unit rate": item['rate'],
                                 "Amount": item['amount'],
+                                # VAT is voucher-level; show on first item row only to avoid double counting
+                                "VAT Amount": v.get('vat_amount', 0) if idx == 0 else "",
                                 "Narration": v['narration']
                             })
             else:
                 for v in vouchers:
                     items_str = ", ".join([f"{i['name']} ({i['qty']})" for i in v.get('items', [])])
-                    formatted_data.append({
+                    row = {
                         "Date": format_date(v['date']),
                         "Voucher Type": v['voucher_type'],
                         "Voucher Number": v['voucher_number'],
@@ -595,7 +602,12 @@ def export_report(report_type):
                         "Amount": v['amount'],
                         "Narration": v['narration'],
                         "Items": items_str
-                    })
+                    }
+                    if voucher_type in vat_register_types:
+                        # Amount excluding VAT, with VAT shown separately
+                        row["Amount"] = (v['amount'] or 0) - v.get('vat_amount', 0)
+                        row["VAT Amount"] = v.get('vat_amount', 0)
+                    formatted_data.append(row)
             return create_excel_response(pd.DataFrame(formatted_data), f"{voucher_type}_Register_{from_date}_{to_date}")
 
         elif report_type == "daybook":
