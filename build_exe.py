@@ -55,7 +55,6 @@ try:
         '--hidden-import=pandas',
         '--hidden-import=openpyxl',
         '--hidden-import=xlsxwriter',
-        '--hidden-import=sqlite3',
         '--hidden-import=engineio.async_drivers.threading',
         
         # Explicitly point to paths if needed (usually not for simple app structure)

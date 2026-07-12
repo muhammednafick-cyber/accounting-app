@@ -17,11 +17,28 @@ def validate_import_data(import_type, data, company_id=None):
                     return False, msg
 
         elif import_type == "Ledger":
+            from datetime import datetime
+            from accounting_app.models import parse_date
             for entry in data:
                 if not all(key in entry for key in ["ledger_code", "ledger_name", "group_name", "opening_balance", "opening_balance_type"]) \
                    or not isinstance(entry["opening_balance"], (int, float)) \
                    or entry["opening_balance_type"] not in ["Debit", "Credit"]:
                     msg = f"Invalid ledger entry: {entry}"
+                    print(msg)
+                    return False, msg
+
+                # Opening Balance Date is mandatory
+                ob_date = str(entry.get("opening_balance_date", "") or "").strip()
+                if not ob_date:
+                    msg = f"Opening Balance Date is required for ledger '{entry.get('ledger_name')}'. Please use the updated template."
+                    print(msg)
+                    return False, msg
+                normalized = parse_date(ob_date)
+                try:
+                    datetime.strptime(str(normalized), "%Y-%m-%d")
+                    entry["opening_balance_date"] = normalized
+                except (ValueError, TypeError):
+                    msg = f"Invalid Opening Balance Date '{ob_date}' for ledger '{entry.get('ledger_name')}'. Expected DD-MM-YYYY or YYYY-MM-DD."
                     print(msg)
                     return False, msg
 
@@ -225,9 +242,10 @@ def validate_single_voucher(import_type, data, company_id=None):
 
     for entry in data["ledger_entries"]:
         if not all(key in entry for key in ["ledger_name", "amount", "ledger_type"]) \
+            or not str(entry["ledger_name"] or "").strip() \
             or not isinstance(entry["amount"], (int, float)) \
             or entry["ledger_type"] not in ["Debit", "Credit"]:
-            msg = f"Invalid ledger entry: {entry}"
+            msg = f"Invalid ledger entry (Ledger Name, Amount and Debit/Credit Type are required): {entry}"
             print(msg)
             return False, msg
 
@@ -248,6 +266,7 @@ def validate_single_voucher(import_type, data, company_id=None):
     if "item_entries" in data:
         for entry in data.get("item_entries", []):
             if not all(key in entry for key in ["item_name", "quantity", "unit_price", "item_amount", "item_ledger_name", "item_type"]) \
+                or not str(entry["item_name"] or "").strip() \
                 or not isinstance(entry["quantity"], (int, float)) \
                 or not isinstance(entry["unit_price"], (int, float)) \
                 or not isinstance(entry["item_amount"], (int, float)) \

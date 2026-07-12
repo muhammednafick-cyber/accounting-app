@@ -1,6 +1,5 @@
 import os
 import sys
-import sqlite3
 from datetime import datetime, timedelta
 from flask import Flask, session, request, redirect, url_for
 from flask_login import LoginManager, current_user, logout_user
@@ -49,12 +48,7 @@ def create_app():
     # Set session lifetime to 10 minutes (though we check manually too)
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)
     
-    # Database path - Unified DB
-    # The DB_PATH is set in database.config, but we set it here for Flask config as well
-    from database.config import DB_PATH
-    app.config["DB_PATH"] = DB_PATH
     app.config["BASE_PATH"] = resource_path
-    print(f"DB_PATH resolved to: {DB_PATH}")
     
     # Login manager
     login_manager.init_app(app)
@@ -186,8 +180,8 @@ def create_app():
     @app.context_processor
     def inject_company_settings():
         """Inject company settings into all templates"""
-        # Skip for static files or if no DB selected yet
-        if request.endpoint == 'static' or not app.config.get('DB_PATH'):
+        # Skip for static files
+        if request.endpoint == 'static':
             return dict(company=None)
             
         try:
@@ -195,6 +189,40 @@ def create_app():
             return dict(company=company)
         except Exception:
             return dict(company=None)
+
+    @app.context_processor
+    def inject_active_location():
+        """Location switcher context: active location + selectable locations.
+
+        Only populated when Location-wise Accounting (multiple locations) is
+        enabled in Company Settings; otherwise the switcher stays hidden.
+        """
+        from flask import session
+        empty = dict(active_location=None, switcher_locations=[])
+        if request.endpoint == 'static' or not session.get('company_id'):
+            return empty
+        try:
+            company = get_company_settings()
+            if not (company and company.get('multiple_locations_applicable')):
+                return empty
+            from database import get_locations, get_default_location, get_user_locations
+            locations = get_locations()
+            # Non-admin users may be restricted to specific locations
+            try:
+                if current_user.is_authenticated and not current_user.is_admin:
+                    allowed = get_user_locations(current_user.id)
+                    if allowed:
+                        locations = [l for l in locations if l['location_name'] in allowed]
+            except Exception:
+                pass
+            names = [l['location_name'] for l in locations]
+            active = session.get('active_location')
+            if active not in names:
+                default = get_default_location()
+                active = default['location_name'] if default and default['location_name'] in names else (names[0] if names else None)
+            return dict(active_location=active, switcher_locations=locations)
+        except Exception:
+            return empty
 
     # Register blueprints
     from .company_routes import company_bp
@@ -256,23 +284,12 @@ def get_db_connection():
     return get_connection()
 
 def ensure_db_exists(app: Flask):
-    """Ensure database exists and has default admin user"""
-    db_path = app.config["DB_PATH"]
-    
-    # Initialize Master DB (Global Users) - Handled by initialize_db now
-    # from database import init_master_db
-    # init_master_db()
-    
+    """Ensure database schema is up-to-date and has default admin user"""
     # Always run initialize_db to ensure schema is up-to-date (CREATE TABLE IF NOT EXISTS)
     with app.app_context():
-        import database.config as db_config
-        db_config.DB_PATH = db_path
         initialize_db()
         from database.vouchers_db import ensure_item_entries_cogs_populated
         ensure_item_entries_cogs_populated()
-    
-    if not os.path.exists(db_path):
-        print(f"Creating new database at: {db_path}")
     
     # Check for default admin user
     # With the new centralized user system (master.db), we don't need per-company users.
@@ -288,8 +305,9 @@ def load_user(user_id):
     try:
         user = get_user_by_id(user_id)
         if user:
-            # user is tuple: (id, username, email, password_hash, is_admin, is_principal)
+            # user is tuple: (id, username, email, password_hash, is_admin, is_principal, hide_dashboard)
             is_principal = user[5] if len(user) > 5 else 0
+            hide_dashboard = user[6] if len(user) > 6 else 0
             permissions = set()
             if not user[4] and not is_principal:
                 try:
@@ -297,7 +315,7 @@ def load_user(user_id):
                     permissions = get_user_permissions(user[0])
                 except Exception as pe:
                     print(f"Could not load permissions for user {user_id}: {pe}")
-            return User(user[0], user[1], user[2], user[3], user[4], is_principal, permissions)
+            return User(user[0], user[1], user[2], user[3], user[4], is_principal, permissions, hide_dashboard)
         print(f"No user found for ID: {user_id}")
         return None
     except Exception as e:

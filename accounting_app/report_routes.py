@@ -1,6 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, send_file
 from flask_login import login_required, current_user
-import sqlite3
 from datetime import datetime
 import pandas as pd
 import io
@@ -36,6 +35,38 @@ from .models import format_date, parse_date
 from . import get_db_connection
 
 report_bp = Blueprint("report_bp", __name__)
+
+
+def _report_location():
+    """Location filter for reports: ?location=<name>, empty or 'All' = all locations.
+    Restricted (non-admin) users are clamped to their allowed locations — for
+    them, 'All' means their first allowed location."""
+    loc = (request.args.get("location") or "").strip()
+    if not loc or loc.lower() in ("all", "all locations"):
+        loc = None
+    try:
+        if current_user.is_authenticated and not current_user.is_admin:
+            from database import get_user_locations
+            allowed = get_user_locations(current_user.id)
+            if allowed:
+                if loc not in allowed:
+                    return allowed[0]
+    except Exception:
+        pass
+    return loc
+
+
+def _report_locations_ctx():
+    """Locations for the report-filter dropdown (empty list when the company
+    doesn't use multiple locations)."""
+    try:
+        from database import get_locations, get_company_settings
+        company = get_company_settings()
+        if company and company.get('multiple_locations_applicable'):
+            return get_locations()
+    except Exception:
+        pass
+    return []
 
 
 @report_bp.route("/report")
@@ -121,6 +152,26 @@ def report_register(voucher_type):
 def report_daybook():
     return render_template("report_daybook.html", username=current_user.username)
 
+@report_bp.route("/report/gl-dump")
+@login_required
+def report_gl_dump():
+    return render_template("report_gl_dump.html", username=current_user.username)
+
+@report_bp.route("/api/gl_dump")
+@login_required
+def api_gl_dump():
+    from database.reports_db import get_gl_dump_data
+    from_date = parse_date(request.args.get("from_date"))
+    to_date = parse_date(request.args.get("to_date"))
+    try:
+        entries = get_gl_dump_data(from_date, to_date)
+        for e in entries:
+            e["date"] = format_date(e["date"])
+        return jsonify({"success": True, "entries": entries})
+    except Exception as e:
+        print(f"Error in api_gl_dump: {str(e)}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
 @report_bp.route("/report/sales-summary")
 @login_required
 def report_sales_summary():
@@ -164,6 +215,12 @@ def report_vat_summary():
 @login_required
 def report_vat_detailed():
     return render_template("report_vat_detailed.html", username=current_user.username)
+
+
+@report_bp.route("/report/vat_service_income")
+@login_required
+def report_vat_service_income():
+    return render_template("report_vat_service_income.html", username=current_user.username)
 
 
 @report_bp.route("/report/vat_expense")
@@ -228,7 +285,7 @@ def get_transactions():
     to_date = parse_date(request.args.get("to_date"))
     try:
         transactions, closing_balance = get_ledger_transactions(
-            ledger_name, from_date, to_date
+            ledger_name, from_date, to_date, location_name=_report_location()
         )
         return jsonify({
             "transactions": [
@@ -257,7 +314,7 @@ def get_cash_flow():
     try:
         data = get_cash_flow_data(from_date, to_date)
         return jsonify({"cash_flow": data})
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_cash_flow: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -268,7 +325,7 @@ def get_register_data_api():
     from_date = parse_date(request.args.get("from_date"))
     to_date = parse_date(request.args.get("to_date"))
     
-    vouchers = get_voucher_register_data(voucher_type, from_date, to_date)
+    vouchers = get_voucher_register_data(voucher_type, from_date, to_date, location_name=_report_location())
     formatted_vouchers = []
     for v in vouchers:
         v['date'] = format_date(v['date'])
@@ -284,7 +341,7 @@ def get_sales_summary():
     try:
         data = get_sales_summary_data(from_date, to_date)
         return jsonify({"summary": data})
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_sales_summary: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -297,7 +354,7 @@ def get_purchase_summary():
     try:
         data = get_purchase_summary_data(from_date, to_date)
         return jsonify({"summary": data})
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_purchase_summary: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -310,7 +367,7 @@ def get_vat_summary():
         data = get_vat_summary_data(from_date, to_date)
         # Frontend expects { summary: { ... } }
         return jsonify({"summary": data})
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_vat_summary: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -325,7 +382,7 @@ def get_slow_moving():
             if item.get('last_sale_date') and item['last_sale_date'] != 'Never':
                 item['last_sale_date'] = format_date(item['last_sale_date'])
         return jsonify({"items": data})
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_slow_moving: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -344,11 +401,62 @@ def get_ageing_report():
     # G007 = Debtors (Receivable), G008 = Creditors (Payable)
     group_code = 'G007' if report_type == 'receivable' else 'G008'
     
+    age_by = request.args.get("age_by", "due_date")
     try:
-        data = get_ageing_report_data(group_code, as_of_date)
+        data = get_ageing_report_data(group_code, as_of_date, age_by=age_by)
         return jsonify({"success": True, "data": data})
     except Exception as e:
         print(f"Error in get_ageing_report: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@report_bp.route("/report/party-matching")
+@login_required
+def report_party_matching():
+    from database import get_ledgers
+    debtors = get_ledgers(group_code='G007')
+    creditors = get_ledgers(group_code='G008')
+    return render_template(
+        "report_party_matching.html",
+        debtors=debtors,
+        creditors=creditors,
+        username=current_user.username,
+    )
+
+
+@report_bp.route("/get_party_matching")
+@login_required
+def get_party_matching():
+    ledger_name = request.args.get("ledger_name")
+    from_date = parse_date(request.args.get("from_date"))
+    to_date = parse_date(request.args.get("to_date"))
+    try:
+        from database.reports_db import get_party_matching_data
+        data = get_party_matching_data(ledger_name, from_date, to_date)
+        for row in data:
+            row['date'] = format_date(row['date']) if row.get('date') else ''
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        print(f"Error in get_party_matching: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@report_bp.route("/report/inventory-ageing")
+@login_required
+def report_inventory_ageing():
+    return render_template("report_inventory_ageing.html", username=current_user.username)
+
+
+@report_bp.route("/get_inventory_ageing")
+@login_required
+def get_inventory_ageing():
+    as_of_date = parse_date(request.args.get("as_of_date"))
+    try:
+        from database.reports_db import get_inventory_ageing_data
+        data = get_inventory_ageing_data(as_of_date, location_name=_report_location())
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        print(f"Error in get_inventory_ageing: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
 
@@ -358,7 +466,7 @@ def get_trial_balance():
     as_of_date = parse_date(request.args.get("as_of_date"))
     try:
         trial_balance, total_debit, total_credit = get_trial_balance_data(
-            as_of_date
+            as_of_date, location_name=_report_location()
         )
         print(
             f"Trial balance as of {as_of_date}: "
@@ -371,7 +479,7 @@ def get_trial_balance():
                 "total_credit": total_credit,
             }
         )
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_trial_balance: {str(e)}")
         return (
             jsonify({"success": False, "message": str(e)}),
@@ -394,7 +502,7 @@ def get_stock_movement():
             formatted_movement.append(fm)
         print(f"Stock movement for {item_name}: {len(stock_movement)} entries")
         return jsonify({"stock_movement": formatted_movement})
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_stock_movement: {str(e)}")
         return (
             jsonify({"success": False, "message": str(e)}),
@@ -408,7 +516,7 @@ def get_balance_sheet():
     as_of_date = parse_date(request.args.get("as_of_date"))
     try:
         balance_sheet, total_assets, total_liabilities = (
-            get_balance_sheet_data(as_of_date)
+            get_balance_sheet_data(as_of_date, location_name=_report_location())
         )
         print(
             f"Balance sheet as of {as_of_date}: "
@@ -422,7 +530,7 @@ def get_balance_sheet():
                 "total_liabilities": total_liabilities,
             }
         )
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_balance_sheet: {str(e)}")
         return (
             jsonify({"success": False, "message": str(e)}),
@@ -441,7 +549,7 @@ def get_profit_and_loss():
             total_income,
             total_expenses,
             net_profit,
-        ) = get_profit_and_loss_data(from_date, to_date)
+        ) = get_profit_and_loss_data(from_date, to_date, location_name=_report_location())
         print(
             f"Profit and loss from {from_date} to {to_date}: "
             f"net_profit={net_profit}"
@@ -454,7 +562,7 @@ def get_profit_and_loss():
                 "net_profit": net_profit,
             }
         )
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_profit_and_loss: {str(e)}")
         return (
             jsonify({"success": False, "message": str(e)}),
@@ -481,7 +589,7 @@ def get_closing_inventory():
                 "total_cost_amount": total_cost_amount,
             }
         )
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_closing_inventory: {str(e)}")
         return (
             jsonify({"success": False, "message": str(e)}),
@@ -529,7 +637,7 @@ def export_report(report_type):
     try:
         if report_type == "ledger_transactions":
             ledger_name = request.args.get("ledger_name")
-            transactions, closing_balance = get_ledger_transactions(ledger_name, from_date, to_date)
+            transactions, closing_balance = get_ledger_transactions(ledger_name, from_date, to_date, location_name=_report_location())
             formatted_data = [
                 {
                     "Voucher Number": t[0],
@@ -553,7 +661,7 @@ def export_report(report_type):
 
         elif report_type == "register":
             voucher_type = request.args.get("voucher_type", "All")
-            vouchers = get_voucher_register_data(voucher_type, from_date, to_date)
+            vouchers = get_voucher_register_data(voucher_type, from_date, to_date, location_name=_report_location())
             formatted_data = []
             
             # Registers that show a VAT Amount column
@@ -627,6 +735,26 @@ def export_report(report_type):
                     "Items": items_str
                 })
             return create_excel_response(pd.DataFrame(formatted_data), f"Daybook_{from_date}")
+
+        elif report_type == "gl_dump":
+            from database.reports_db import get_gl_dump_data
+            entries = get_gl_dump_data(from_date, to_date)
+            formatted_data = [
+                {
+                    "Date": format_date(e["date"]),
+                    "Voucher Number": e["voucher_number"],
+                    "Voucher Type": e["voucher_type"],
+                    "Ledger": e["ledger_name"],
+                    "Debit": e["debit"],
+                    "Credit": e["credit"],
+                    "Cost Center": e["cost_center"],
+                    "Narration": e["narration"],
+                    "Posted On (Date & Time)": e.get("posted_at", ""),
+                    "Posted By": e.get("posted_by", ""),
+                }
+                for e in entries
+            ]
+            return create_excel_response(pd.DataFrame(formatted_data), f"GL_Dump_{from_date}_{to_date}")
 
         elif report_type == "stock_movement":
             item_name = request.args.get("item_name")
@@ -799,6 +927,33 @@ def export_report(report_type):
 
             return create_excel_response(pd.DataFrame(rows), f"VAT_Expense_{from_date}_{to_date}")
 
+        elif report_type == "vat_service_income":
+            data = get_vat_detailed_report_data(from_date, to_date)
+
+            rows = []
+            total_vat = 0.0
+            for row in data['output_rows']:
+                if row.get('voucher_type') not in ('Service Income', 'Service Income Return'):
+                    continue
+                rows.append({
+                    "Date": format_date(row['date']),
+                    "Voucher No": row['voucher_number'],
+                    "Type": row['voucher_type'],
+                    "Party": row['party_name'],
+                    "Description": row.get('narration') or "",
+                    "Taxable": round(row['taxable'], 2),
+                    "VAT": round(row['vat'], 2),
+                    "Total": round(row['total'], 2)
+                })
+                total_vat += row['vat']
+            rows.append({
+                "Date": "", "Voucher No": "", "Type": "",
+                "Party": "", "Description": "Total Service Income VAT (net of returns)",
+                "Taxable": "", "VAT": round(total_vat, 2), "Total": ""
+            })
+
+            return create_excel_response(pd.DataFrame(rows), f"VAT_Service_Income_{from_date}_{to_date}")
+
         elif report_type == "slow_moving":
             days = request.args.get("days", 90)
             data = get_slow_moving_items(days)
@@ -826,19 +981,18 @@ def export_report(report_type):
             report_sub_type = request.args.get("type", "receivable")
             # G007 = Debtors (Receivable), G008 = Creditors (Payable)
             group_code = 'G007' if report_sub_type == 'receivable' else 'G008'
-            data = get_ageing_report_data(group_code, as_of_date)
-            
+            from database.reports_db import AGEING_BUCKET_KEYS, AGEING_BUCKET_LABELS
+            data = get_ageing_report_data(group_code, as_of_date, age_by=request.args.get("age_by", "due_date"))
+
             formatted_data = []
             for item in data:
-                formatted_data.append({
+                row = {
                     "Party Name": item['ledger_name'],
                     "Balance": item['balance'],
-                    "Not Due": item['buckets']['not_due'],
-                    "0-30 Days": item['buckets']['0_30'],
-                    "31-60 Days": item['buckets']['31_60'],
-                    "61-90 Days": item['buckets']['61_90'],
-                    "> 90 Days": item['buckets']['90_plus']
-                })
+                }
+                for k in AGEING_BUCKET_KEYS:
+                    row[AGEING_BUCKET_LABELS[k]] = item['buckets'].get(k, 0.0)
+                formatted_data.append(row)
             return create_excel_response(pd.DataFrame(formatted_data), f"Ageing_Report_{report_sub_type}_{as_of_date}")
 
         elif report_type == "cash_flow":

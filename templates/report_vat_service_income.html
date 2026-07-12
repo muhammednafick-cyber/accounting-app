@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Service Income VAT Report{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Service Income VAT Report</h1>
+    <p style="color:#666;">Output VAT on Service Income vouchers and their returns (returns shown as negative).</p>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="from_date">From Date:</label>
+            <input type="text" id="from_date" name="from_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <div class="entry">
+            <label for="to_date">To Date:</label>
+            <input type="text" id="to_date" name="to_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
+    </form>
+
+    <script>
+        $(document).ready(function() {
+            const today = new Date();
+            const firstDayDate = new Date(today.getFullYear(), today.getMonth(), 1);
+            const lastDayDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+            const formatDate = (d) => {
+                const day = String(d.getDate()).padStart(2, '0');
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                return `${day}-${month}-${d.getFullYear()}`;
+            };
+            document.getElementById('from_date').value = formatDate(firstDayDate);
+            document.getElementById('to_date').value = formatDate(lastDayDate);
+        });
+
+        function exportReport() {
+            const fromDate = document.getElementById('from_date').value;
+            const toDate = document.getElementById('to_date').value;
+            window.location.href = `/export_report/vat_service_income?from_date=${fromDate}&to_date=${toDate}`;
+        }
+    </script>
+{% endblock %}

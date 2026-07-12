@@ -79,6 +79,16 @@
     <label>To Date</label>
     <input type="text" id="to_date" placeholder="DD-MM-YYYY" style="width:130px;" readonly>
 
+    {% if switcher_locations %}
+    <label>Location</label>
+    <select id="report_location" style="min-width:150px;">
+        <option value="">All Locations</option>
+        {% for loc in switcher_locations %}
+        <option value="{{ loc.location_name }}">{{ loc.location_name }}</option>
+        {% endfor %}
+    </select>
+    {% endif %}
+
     <button class="btn btn-primary" onclick="fetchTransactions()">Show</button>
     <button class="btn btn-outline-success" onclick="exportReport()">Export to Excel</button>
 </div>
@@ -170,6 +180,8 @@ function fetchTransactions() {
     let url = `/get_transactions?ledger_name=${encodeURIComponent(ledger)}`;
     if (fromDate) url += `&from_date=${fromDate}`;
     if (toDate)   url += `&to_date=${toDate}`;
+    const locEl = document.getElementById('report_location');
+    if (locEl && locEl.value) url += `&location=${encodeURIComponent(locEl.value)}`;
 
     fetch(url)
         .then(r => r.json())
@@ -190,9 +202,12 @@ function fetchTransactions() {
             for (const t of data.transactions) {
                 totalDebit  += parseFloat(t.debit)  || 0;
                 totalCredit += parseFloat(t.credit) || 0;
+                const vnoCell = t.voucher_number
+                    ? `<a href="/print/jv?voucher_number=${encodeURIComponent(t.voucher_number)}" target="_blank" title="Open journal entry">${t.voucher_number}</a>`
+                    : '';
                 html += `<tr>
                     <td>${t.date || ''}</td>
-                    <td>${t.voucher_number || ''}</td>
+                    <td>${vnoCell}</td>
                     <td>${t.voucher_type || ''}</td>
                     <td>${t.narration || ''}</td>
                     <td class="num">${fmt(t.debit)}</td>
@@ -217,7 +232,9 @@ function exportReport() {
     if (!ledger) { alert('Please select a ledger.'); return; }
     const from = toISO(document.getElementById('from_date').value);
     const to   = toISO(document.getElementById('to_date').value);
-    window.location.href = `/export_report/ledger_transactions?ledger_name=${encodeURIComponent(ledger)}&from_date=${from}&to_date=${to}`;
+    const locEl2 = document.getElementById('report_location');
+    const locParam = (locEl2 && locEl2.value) ? `&location=${encodeURIComponent(locEl2.value)}` : '';
+    window.location.href = `/export_report/ledger_transactions?ledger_name=${encodeURIComponent(ledger)}&from_date=${from}&to_date=${to}${locParam}`;
 }
 </script>
 {% endblock %}

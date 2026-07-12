@@ -117,14 +117,23 @@
             <option value="Credit">Credit</option>
         </select>
     </div>
-    <button type="button" onclick="submitAddLedger()">Add Ledger</button>
+    <div class="form-group">
+        <label>Opening Balance Date <span style="color:#e74c3c;">*</span></label>
+        <input type="date" name="opening_balance_date" required>
+    </div>
+    <div class="form-group">
+        <label>Opening Balance Location</label>
+        <input type="text" value="{{ opening_location }}" readonly title="Opening balance is saved against the active location. Use the Location Switcher in the main menu to change it." style="background:#f2f2f2; cursor:not-allowed;">
+    </div>
+    <button type="button" id="addLedgerBtn" onclick="submitAddLedger()">Add Ledger</button>
+    <button type="button" id="cancelLedgerEditBtn" style="display:none; background:#7f8c8d;" onclick="cancelLedgerEdit()">Cancel Edit</button>
     <button type="button" class="btn" onclick="showImportSection()">Import Excel</button>
     <div id="ledgerMessage"></div>
 
     <div id="importSection" class="import-section-container" style="display:none;">
         <h3>Import Ledgers from Excel</h3>
         <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Ledger Code, Ledger Name, Group
-            Name, Opening Balance, Opening Balance Type</p>
+            Name, Opening Balance, Opening Balance Type, Opening Balance Date</p>
         <p style="margin-bottom:15px; color:#666;"><strong>Optional columns:</strong> Sub Group Name</p>
 
         <div class="import-controls">
@@ -176,7 +185,41 @@
 
 <hr style="margin: 40px 0;">
 
-<!-- NO LEDGER TABLE HERE ANYMORE - REMOVED AS REQUESTED -->
+<h2>Existing Ledgers</h2>
+<input type="text" id="ledgerSearch" placeholder="Search by code or name..." style="width:320px; margin-bottom:10px;" oninput="filterLedgers()">
+<div style="max-height:420px; overflow:auto;">
+    <table id="ledgersTable" border="1" cellspacing="0" cellpadding="4" style="width:100%; border-collapse:collapse;">
+        <thead>
+            <tr>
+                <th>Code</th>
+                <th>Ledger Name</th>
+                <th>Group</th>
+                <th>Sub Group</th>
+                <th style="text-align:right;">Closing Balance</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for l in ledgers %}
+            <tr data-search="{{ (l.ledger_code ~ ' ' ~ l.ledger_name) | lower }}" {% if not l.is_active %}style="opacity:.55;"{% endif %}>
+                <td>{{ l.ledger_code }}</td>
+                <td>{{ l.ledger_name }}</td>
+                <td>{{ l.group_name }}</td>
+                <td>{{ l.sub_group_name or '' }}</td>
+                <td style="text-align:right;">{{ '%.2f' % (l.closing_balance or 0) }}</td>
+                <td>{% if l.is_active %}<span style="color:green;">Active</span>{% else %}<span style="color:#c0392b;">Blocked</span>{% endif %}</td>
+                <td>
+                    <button type="button" style="padding:2px 10px;"
+                        onclick="editLedger('{{ l.ledger_code|e }}', '{{ l.ledger_name|e }}', '{{ l.group_name|e }}')">Edit</button>
+                    <button type="button" style="padding:2px 10px; background:{% if l.is_active %}#c0392b{% else %}#27ae60{% endif %}; color:#fff;"
+                        onclick="toggleLedgerActive('{{ l.ledger_code|e }}', {{ 0 if l.is_active else 1 }})">{% if l.is_active %}Block{% else %}Unblock{% endif %}</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 
 <hr style="margin: 40px 0;">
 
@@ -243,12 +286,23 @@
                 // Update Block UI message
                 if (typeof blockUI === 'function') blockUI("Uploading " + jsonData.length + " rows...");
 
+                // Excel stores dates as serial numbers; convert to YYYY-MM-DD
+                function excelDateToISO(val) {
+                    if (val === undefined || val === null || val === '') return '';
+                    if (typeof val === 'number') {
+                        const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+                        return d.toISOString().slice(0, 10);
+                    }
+                    return String(val).trim();
+                }
+
                 const ledgerData = jsonData.map(row => ({
                     ledger_code: row['Ledger Code'] || row['ledger_code'],
                     ledger_name: row['Ledger Name'] || row['ledger_name'],
                     group_name: row['Group Name'] || row['group_name'],
                     opening_balance: parseFloat(row['Opening Balance'] || 0),
-                    opening_balance_type: String(row['Opening Balance Type'] || row['opening_balance_type'] || 'Debit').trim()
+                    opening_balance_type: String(row['Opening Balance Type'] || row['opening_balance_type'] || 'Debit').trim(),
+                    opening_balance_date: excelDateToISO(row['Opening Balance Date'] || row['opening_balance_date'])
                 }));
 
                 const payload = JSON.stringify({
@@ -319,13 +373,68 @@
         reader.readAsArrayBuffer(file);
     }
 
+    let editingLedger = false;
+
     function submitAddLedger() {
         const fd = new FormData(document.getElementById('addLedgerForm'));
-        fetch('/add_ledger', { method: 'POST', body: fd })
+        const url = editingLedger ? '/update_ledger' : '/add_ledger';
+        fetch(url, { method: 'POST', body: fd })
             .then(r => r.json())
             .then(d => {
                 $('#ledgerMessage').text(d.message).css('color', d.success ? '#2ecc71' : '#e74c3c');
                 if (d.success) setTimeout(() => location.reload(), 1000);
+            });
+    }
+
+    function editLedger(code, name, groupName) {
+        editingLedger = true;
+        const formEl = document.getElementById('addLedgerForm');
+        formEl.querySelector('input[name="ledger_code"]').value = code;
+        formEl.querySelector('input[name="ledger_code"]').readOnly = true;
+        formEl.querySelector('input[name="ledger_name"]').value = name;
+        $('#group_name_select').val(groupName).trigger('change');
+        // Opening balance fields don't apply when editing the master
+        ['opening_balance', 'opening_balance_type', 'opening_balance_date'].forEach(n => {
+            const el = formEl.querySelector(`[name="${n}"]`);
+            if (el) el.closest('.form-group').style.display = 'none';
+        });
+        document.getElementById('addLedgerBtn').textContent = 'Update Ledger';
+        document.getElementById('cancelLedgerEditBtn').style.display = '';
+        formEl.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelLedgerEdit() {
+        editingLedger = false;
+        const formEl = document.getElementById('addLedgerForm');
+        formEl.reset();
+        formEl.querySelector('input[name="ledger_code"]').readOnly = false;
+        $('#group_name_select').val('').trigger('change');
+        ['opening_balance', 'opening_balance_type', 'opening_balance_date'].forEach(n => {
+            const el = formEl.querySelector(`[name="${n}"]`);
+            if (el) el.closest('.form-group').style.display = '';
+        });
+        document.getElementById('addLedgerBtn').textContent = 'Add Ledger';
+        document.getElementById('cancelLedgerEditBtn').style.display = 'none';
+    }
+
+    function filterLedgers() {
+        const q = document.getElementById('ledgerSearch').value.toLowerCase();
+        document.querySelectorAll('#ledgersTable tbody tr').forEach(tr => {
+            tr.style.display = (tr.dataset.search || '').includes(q) ? '' : 'none';
+        });
+    }
+
+    function toggleLedgerActive(code, newState) {
+        const action = newState ? 'unblock' : 'block';
+        if (!confirm(`Are you sure you want to ${action} ledger ${code}?`)) return;
+        const fd = new FormData();
+        fd.append('ledger_code', code);
+        fd.append('is_active', newState);
+        fetch('/toggle_ledger_active', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => {
+                alert(d.success ? d.message : 'Error: ' + d.message);
+                if (d.success) location.reload();
             });
     }
 

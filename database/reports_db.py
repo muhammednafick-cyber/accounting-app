@@ -21,7 +21,39 @@ def is_latest_date(cursor, as_of_date, company_id):
     cursor.execute("SELECT 1 FROM vouchers WHERE company_id = %s AND date > %s LIMIT 1", (company_id, as_of_date_str))
     return cursor.fetchone() is None
 
-def get_trial_balance_data(as_of_date=None, company_id=None):
+def _get_location_ledger_balances(cursor, company_id, location_name, as_of_date=None):
+    """Signed ledger balances for one location: per-location opening balances
+    plus movements of vouchers tagged with that location."""
+    balances = {}
+    cursor.execute("""
+        SELECT ledger_code, opening_balance, opening_balance_type
+        FROM ledger_opening_balances
+        WHERE company_id = %s AND location_name = %s
+    """, (company_id, location_name))
+    opening_by_code = {r[0]: (float(r[1] or 0) if (r[2] or 'Debit') == 'Debit' else -float(r[1] or 0)) for r in cursor.fetchall()}
+
+    cursor.execute("SELECT ledger_code, ledger_name FROM ledgers WHERE company_id = %s", (company_id,))
+    for code, name in cursor.fetchall():
+        if code in opening_by_code:
+            balances[name] = opening_by_code[code]
+
+    q = """
+        SELECT le.ledger_name, SUM(CASE WHEN le.type='Debit' THEN le.amount ELSE -le.amount END)
+        FROM ledger_entries le
+        JOIN vouchers v ON le.voucher_number = v.voucher_number AND le.company_id = v.company_id
+        WHERE v.company_id = %s AND COALESCE(v.location_name, 'Main Location') = %s
+    """
+    params = [company_id, location_name]
+    if as_of_date:
+        q += " AND v.date <= %s"
+        params.append(as_of_date)
+    q += " GROUP BY le.ledger_name"
+    cursor.execute(q, params)
+    for name, net in cursor.fetchall():
+        balances[name] = balances.get(name, 0.0) + float(net or 0)
+    return balances
+
+def get_trial_balance_data(as_of_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
@@ -32,6 +64,34 @@ def get_trial_balance_data(as_of_date=None, company_id=None):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        if location_name:
+            # Location-wise: per-location openings + movements at that location.
+            cursor.execute("""
+                SELECT l.ledger_name, g.group_name
+                FROM ledgers l
+                JOIN groups g ON l.group_code = g.group_code AND l.company_id = g.company_id
+                WHERE l.company_id = %s
+            """, (company_id,))
+            group_by_ledger = {r[0]: r[1] for r in cursor.fetchall()}
+            balances = _get_location_ledger_balances(cursor, company_id, location_name, as_of_date_str)
+            trial_balance = []
+            total_debit = 0.0
+            total_credit = 0.0
+            for ledger_name, bal in sorted(balances.items()):
+                if abs(bal) <= 0.001:
+                    continue
+                dr = bal if bal > 0 else 0.0
+                cr = -bal if bal < 0 else 0.0
+                trial_balance.append({
+                    'ledger_name': ledger_name,
+                    'group_name': group_by_ledger.get(ledger_name, ''),
+                    'debit': round(dr, 2),
+                    'credit': round(cr, 2),
+                })
+                total_debit += dr
+                total_credit += cr
+            return trial_balance, round(total_debit, 2), round(total_credit, 2)
+
         # Optimization: If querying for the latest date, use stored closing balances
         if is_latest_date(cursor, as_of_date_str, company_id):
             print(f"get_trial_balance_data({as_of_date_str}): Using optimized stored balances.")
@@ -115,7 +175,7 @@ def get_trial_balance_data(as_of_date=None, company_id=None):
     finally:
         conn.close()
 
-def get_ledger_transactions(ledger_name, from_date=None, to_date=None, company_id=None):
+def get_ledger_transactions(ledger_name, from_date=None, to_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
@@ -125,7 +185,15 @@ def get_ledger_transactions(ledger_name, from_date=None, to_date=None, company_i
     cursor = conn.cursor()
     try:
         # 1. Get Opening Balance (before from_date)
-        cursor.execute("SELECT opening_balance, opening_balance_type FROM ledgers WHERE company_id = %s AND ledger_name = %s", (company_id, ledger_name))
+        if location_name:
+            cursor.execute("""
+                SELECT lob.opening_balance, lob.opening_balance_type
+                FROM ledger_opening_balances lob
+                JOIN ledgers l ON l.company_id = lob.company_id AND l.ledger_code = lob.ledger_code
+                WHERE lob.company_id = %s AND l.ledger_name = %s AND lob.location_name = %s
+            """, (company_id, ledger_name, location_name))
+        else:
+            cursor.execute("SELECT opening_balance, opening_balance_type FROM ledgers WHERE company_id = %s AND ledger_name = %s", (company_id, ledger_name))
         row = cursor.fetchone()
         if not row:
             # Ledger might not exist or no opening balance set
@@ -134,19 +202,21 @@ def get_ledger_transactions(ledger_name, from_date=None, to_date=None, company_i
         else:
             op_bal = row[0] or 0.0
             op_type = row[1] or 'Debit'
-        
+
         running_balance = op_bal if op_type == 'Debit' else -op_bal
-        
+
+        loc_filter = " AND COALESCE(v.location_name, 'Main Location') = %s" if location_name else ""
+
         if from_date:
-            cursor.execute("""
+            cursor.execute(f"""
                     SELECT SUM(CASE WHEN le.type='Debit' THEN le.amount ELSE -le.amount END)
                     FROM ledger_entries le
                     JOIN vouchers v ON le.voucher_number = v.voucher_number AND le.company_id = v.company_id
-                WHERE v.company_id = %s AND le.ledger_name = %s AND v.date < %s
-            """, (company_id, ledger_name, from_date))
+                WHERE v.company_id = %s AND le.ledger_name = %s AND v.date < %s{loc_filter}
+            """, [company_id, ledger_name, from_date] + ([location_name] if location_name else []))
             pre_period_movement = cursor.fetchone()[0] or 0.0
             running_balance += pre_period_movement
-            
+
         # 2. Get Transactions in Period
         query = """
             SELECT v.date, v.voucher_number, v.voucher_type, v.narration, le.amount, le.type
@@ -155,7 +225,10 @@ def get_ledger_transactions(ledger_name, from_date=None, to_date=None, company_i
             WHERE v.company_id = %s AND le.ledger_name = %s
         """
         params = [company_id, ledger_name]
-        
+        if location_name:
+            query += " AND COALESCE(v.location_name, 'Main Location') = %s"
+            params.append(location_name)
+
         if from_date:
             query += " AND v.date >= %s"
             params.append(from_date)
@@ -288,7 +361,7 @@ def get_negative_stock_items(company_id=None):
     finally:
         conn.close()
 
-def get_voucher_register_data(voucher_type, from_date=None, to_date=None, company_id=None):
+def get_voucher_register_data(voucher_type, from_date=None, to_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
@@ -300,11 +373,15 @@ def get_voucher_register_data(voucher_type, from_date=None, to_date=None, compan
         # 1. Fetch Vouchers
         params = [company_id]
         base_where = "WHERE v.company_id = %s"
-        
+
         if voucher_type and voucher_type != 'All':
             base_where += " AND v.voucher_type = %s"
             params.append(voucher_type)
-            
+
+        if location_name:
+            base_where += " AND COALESCE(v.location_name, 'Main Location') = %s"
+            params.append(location_name)
+
         if from_date:
             base_where += " AND v.date >= %s"
             params.append(from_date)
@@ -568,7 +645,36 @@ def get_slow_moving_items(days_threshold=90, company_id=None):
         conn.close()
 
 
-def get_ageing_report_data(group_code, as_of_date=None, company_id=None):
+# Ageing buckets: quarterly for the first year, then yearly
+AGEING_BUCKET_KEYS = ['not_due', '0_90', '91_180', '181_270', '271_365', '1_2y', '2_3y', '3y_plus']
+AGEING_BUCKET_LABELS = {
+    'not_due': 'Not Due', '0_90': '0-3 Months', '91_180': '3-6 Months',
+    '181_270': '6-9 Months', '271_365': '9-12 Months',
+    '1_2y': '1-2 Years', '2_3y': '2-3 Years', '3y_plus': 'Over 3 Years',
+}
+
+def _ageing_bucket(days):
+    if days < 0:
+        return 'not_due'
+    if days <= 90:
+        return '0_90'
+    if days <= 180:
+        return '91_180'
+    if days <= 270:
+        return '181_270'
+    if days <= 365:
+        return '271_365'
+    if days <= 730:
+        return '1_2y'
+    if days <= 1095:
+        return '2_3y'
+    return '3y_plus'
+
+def get_ageing_report_data(group_code, as_of_date=None, company_id=None, age_by='due_date'):
+    """Ageing per party ledger. age_by='due_date' ages from the voucher's due
+    date (falling back to voucher date + the ledger's credit days);
+    age_by='voucher_date' ages from the transaction date. Opening balances age
+    from the Opening Balance Date."""
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
@@ -579,14 +685,14 @@ def get_ageing_report_data(group_code, as_of_date=None, company_id=None):
     try:
         if not as_of_date:
             as_of_date = datetime.today().strftime('%Y-%m-%d')
-            
+
         # 1. Get Ledgers in Group
-        cursor.execute("SELECT ledger_name, closing_balance FROM ledgers WHERE company_id = %s AND group_code = %s", (company_id, group_code))
+        cursor.execute("SELECT ledger_name, closing_balance, opening_balance_date, COALESCE(credit_days, 0) FROM ledgers WHERE company_id = %s AND group_code = %s", (company_id, group_code))
         ledgers = cursor.fetchall()
-        
+
         report_data = []
-        
-        for ledger_name, current_bal in ledgers:
+
+        for ledger_name, current_bal, opening_balance_date, credit_days in ledgers:
             # Calculate Balance as of as_of_date
             # Bal = Current - Future Movements
             cursor.execute("""
@@ -618,52 +724,59 @@ def get_ageing_report_data(group_code, as_of_date=None, company_id=None):
             entries = cursor.fetchall()
             
             outstanding_amount = abs(balance)
-            breakdown = {
-                'not_due': 0.0,
-                '0_30': 0.0,
-                '31_60': 0.0,
-                '61_90': 0.0,
-                '90_plus': 0.0,
-                'total': outstanding_amount
-            }
-            
+            breakdown = {k: 0.0 for k in AGEING_BUCKET_KEYS}
+            breakdown['total'] = outstanding_amount
+
             try:
                 as_of_date_obj = datetime.strptime(as_of_date, '%Y-%m-%d')
             except ValueError:
                 as_of_date_obj = datetime.today()
-            
+
             for dt, due_dt, amt, vn in entries:
                 if outstanding_amount <= 0.001:
                     break
-                    
+
                 alloc_amount = min(outstanding_amount, amt)
                 outstanding_amount -= alloc_amount
-                
-                # Calculate Age
-                ref_date_str = due_dt if due_dt else dt
+
+                # Reference date for ageing
                 try:
-                    ref_date = datetime.strptime(ref_date_str, '%Y-%m-%d')
+                    v_date = datetime.strptime(dt, '%Y-%m-%d')
                 except (ValueError, TypeError):
-                    try:
-                        ref_date = datetime.strptime(dt, '%Y-%m-%d')
-                    except:
-                        ref_date = as_of_date_obj
-                    
-                days = (as_of_date_obj - ref_date).days
-                
-                if days < 0:
-                    breakdown['not_due'] += alloc_amount
-                elif days <= 30:
-                    breakdown['0_30'] += alloc_amount
-                elif days <= 60:
-                    breakdown['31_60'] += alloc_amount
-                elif days <= 90:
-                    breakdown['61_90'] += alloc_amount
+                    v_date = as_of_date_obj
+
+                if age_by == 'voucher_date':
+                    ref_date = v_date
                 else:
-                    breakdown['90_plus'] += alloc_amount
-            
+                    # Due date: stored one, else voucher date + credit terms
+                    ref_date = None
+                    if due_dt:
+                        try:
+                            ref_date = datetime.strptime(due_dt, '%Y-%m-%d')
+                        except (ValueError, TypeError):
+                            ref_date = None
+                    if ref_date is None:
+                        ref_date = v_date + timedelta(days=int(credit_days or 0))
+
+                days = (as_of_date_obj - ref_date).days
+                breakdown[_ageing_bucket(days)] += alloc_amount
+
+            # Residual outstanding comes from the ledger's opening balance:
+            # age it from the Opening Balance Date when available.
             if outstanding_amount > 0.001:
-                breakdown['90_plus'] += outstanding_amount
+                ob_days = None
+                if opening_balance_date:
+                    try:
+                        ob_date = datetime.strptime(str(opening_balance_date), '%Y-%m-%d')
+                        if age_by != 'voucher_date':
+                            ob_date = ob_date + timedelta(days=int(credit_days or 0))
+                        ob_days = (as_of_date_obj - ob_date).days
+                    except (ValueError, TypeError):
+                        ob_days = None
+                if ob_days is None:
+                    breakdown['3y_plus'] += outstanding_amount
+                else:
+                    breakdown[_ageing_bucket(ob_days)] += outstanding_amount
 
             for k in breakdown:
                 breakdown[k] = round(breakdown[k], 2)
@@ -677,6 +790,210 @@ def get_ageing_report_data(group_code, as_of_date=None, company_id=None):
         return report_data
     except Exception as e:
         print(f"Error in get_ageing_report_data: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_party_matching_data(ledger_name, from_date=None, to_date=None, company_id=None):
+    """Statement of all debits and credits for a Debtor/Creditor ledger with a
+    'matched reference' per row: the settlement number(s) the entry was matched
+    under, or the voucher's invoice reference / linked voucher."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return []
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        q = """
+            SELECT le.id, v.date, v.voucher_number, v.voucher_type, v.narration,
+                   le.amount, le.type, v.original_invoice_ref, v.linked_voucher_number
+            FROM ledger_entries le
+            JOIN vouchers v ON le.voucher_number = v.voucher_number AND le.company_id = v.company_id
+            WHERE v.company_id = %s AND le.ledger_name = %s
+        """
+        params = [company_id, ledger_name]
+        if from_date:
+            q += " AND v.date >= %s"
+            params.append(from_date)
+        if to_date:
+            q += " AND v.date <= %s"
+            params.append(to_date)
+        q += " ORDER BY v.date, v.voucher_id"
+        cursor.execute(q, params)
+        rows = cursor.fetchall()
+
+        # Settlement matches per ledger entry
+        cursor.execute("""
+            SELECT sa.ledger_entry_id, s.settlement_number, sa.assigned_amount
+            FROM settlement_allocations sa
+            JOIN settlements s ON sa.settlement_id = s.id AND s.company_id = sa.company_id
+            WHERE sa.company_id = %s AND s.ledger_name = %s
+        """, (company_id, ledger_name))
+        matches = {}
+        matched_amounts = {}
+        for le_id, s_no, amt in cursor.fetchall():
+            matches.setdefault(le_id, set()).add(s_no)
+            matched_amounts[le_id] = matched_amounts.get(le_id, 0.0) + float(amt or 0)
+
+        result = []
+        for le_id, dt, vn, vtype, narr, amt, t, inv_ref, linked_vn in rows:
+            amt = float(amt or 0)
+            settle_refs = sorted(matches.get(le_id, []))
+            if settle_refs:
+                match_ref = ", ".join(settle_refs)
+            elif linked_vn:
+                match_ref = linked_vn
+            elif inv_ref:
+                match_ref = inv_ref
+            else:
+                match_ref = ''
+            matched_amt = round(matched_amounts.get(le_id, 0.0), 2)
+            if matched_amt >= amt - 0.005 and matched_amt > 0:
+                status = 'Matched'
+            elif matched_amt > 0:
+                status = 'Partial'
+            elif match_ref:
+                status = 'Referenced'
+            else:
+                status = 'Open'
+            result.append({
+                'date': dt,
+                'voucher_number': vn,
+                'voucher_type': vtype,
+                'description': narr or '',
+                'debit': round(amt, 2) if t == 'Debit' else 0.0,
+                'credit': round(amt, 2) if t == 'Credit' else 0.0,
+                'match_ref': match_ref,
+                'matched_amount': matched_amt,
+                'status': status,
+            })
+        return result
+    except Exception as e:
+        print(f"Error in get_party_matching_data: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_inventory_ageing_data(as_of_date=None, company_id=None, location_name=None):
+    """Age each item's closing stock into buckets by acquisition date (FIFO:
+    remaining stock is attributed to the most recent receipts). Opening stock
+    ages from its Purchase Date (item_opening_balances.opening_date)."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return []
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if not as_of_date:
+            as_of_date = datetime.today().strftime('%Y-%m-%d')
+        as_of_obj = datetime.strptime(as_of_date, '%Y-%m-%d')
+
+        loc_filter = " AND COALESCE(v.location_name, 'Main Location') = %s" if location_name else ""
+        loc_params = [location_name] if location_name else []
+
+        cursor.execute("SELECT item_code, name FROM inventory WHERE company_id = %s ORDER BY name", (company_id,))
+        items = [(r[0], r[1]) for r in cursor.fetchall()]
+
+        bucket_keys = [k for k in AGEING_BUCKET_KEYS if k != 'not_due']
+        report = []
+        for item_code, item_name in items:
+            # Openings (per location) — aged from their Purchase/Opening Date
+            oq = "SELECT quantity, unit_price, opening_date FROM item_opening_balances WHERE company_id = %s AND item_code = %s"
+            oparams = [company_id, item_code]
+            if location_name:
+                oq += " AND location_name = %s"
+                oparams.append(location_name)
+            cursor.execute(oq, oparams)
+            openings = [(float(r[0] or 0), float(r[1] or 0), r[2]) for r in cursor.fetchall()]
+            opening_qty = sum(q for q, _, _ in openings)
+
+            # Movements up to as-of date (voucher dates)
+            cursor.execute(f"""
+                SELECT v.voucher_type, v.date, ie.quantity, ie.unit_price, ie.type
+                FROM item_entries ie
+                JOIN vouchers v ON ie.voucher_number = v.voucher_number AND ie.company_id = v.company_id
+                WHERE v.company_id = %s AND ie.item_name = %s AND v.date <= %s
+                  AND v.voucher_type != 'Opening'{loc_filter}
+                ORDER BY v.date ASC
+            """, [company_id, item_name, as_of_date] + loc_params)
+            movements = cursor.fetchall()
+
+            receipts = []  # (date, qty, rate)
+            net_moves = 0.0
+            for v_type, v_date, qty, rate, t in movements:
+                qty = float(qty or 0)
+                rate = float(rate or 0)
+                t = t or 'Debit'
+                is_in = (v_type in ('Purchase', 'Sales Return', 'Physical Stock')) or \
+                        (v_type in ('Inventory Transfer', 'Stock Adjustment', 'Reversal') and t == 'Debit')
+                is_out = (v_type in ('Sales', 'Purchase Return')) or \
+                         (v_type in ('Inventory Transfer', 'Stock Adjustment', 'Reversal') and t == 'Credit')
+                if is_in:
+                    receipts.append((v_date, qty, rate))
+                    net_moves += qty
+                elif is_out:
+                    net_moves -= qty
+
+            closing_qty = opening_qty + net_moves
+            if closing_qty <= 0.0001:
+                continue
+
+            buckets_qty = {k: 0.0 for k in bucket_keys}
+            buckets_val = {k: 0.0 for k in bucket_keys}
+            remaining = closing_qty
+
+            # FIFO: what's left on hand came from the newest receipts
+            for v_date, qty, rate in sorted(receipts, key=lambda r: r[0], reverse=True):
+                if remaining <= 0.0001:
+                    break
+                alloc = min(remaining, qty)
+                remaining -= alloc
+                try:
+                    days = (as_of_obj - datetime.strptime(v_date, '%Y-%m-%d')).days
+                except (ValueError, TypeError):
+                    days = 0
+                key = _ageing_bucket(max(days, 0))
+                buckets_qty[key] += alloc
+                buckets_val[key] += alloc * rate
+
+            # Residual is opening stock — aged from its Purchase Date
+            if remaining > 0.0001:
+                for o_qty, o_rate, o_date in openings:
+                    if remaining <= 0.0001:
+                        break
+                    alloc = min(remaining, o_qty)
+                    if alloc <= 0:
+                        continue
+                    remaining -= alloc
+                    days = None
+                    if o_date:
+                        try:
+                            days = (as_of_obj - datetime.strptime(str(o_date), '%Y-%m-%d')).days
+                        except (ValueError, TypeError):
+                            days = None
+                    key = _ageing_bucket(max(days, 0)) if days is not None else '3y_plus'
+                    buckets_qty[key] += alloc
+                    buckets_val[key] += alloc * o_rate
+                if remaining > 0.0001:
+                    # Legacy opening with no recorded date
+                    buckets_qty['3y_plus'] += remaining
+                    buckets_val['3y_plus'] += 0.0
+
+            report.append({
+                'item_code': item_code,
+                'item_name': item_name,
+                'closing_qty': round(closing_qty, 4),
+                'buckets_qty': {k: round(v, 4) for k, v in buckets_qty.items()},
+                'buckets_val': {k: round(v, 2) for k, v in buckets_val.items()},
+                'total_value': round(sum(buckets_val.values()), 2),
+            })
+        return report
+    except Exception as e:
+        print(f"Error in get_inventory_ageing_data: {e}")
         return []
     finally:
         conn.close()
@@ -955,13 +1272,13 @@ def get_vat_detailed_report_data(from_date=None, to_date=None, company_id=None):
             # Purchase/Expense -> Input Section
         
             # Classify based on Voucher Type
-            if vtype in ['Sales', 'Sales Return', 'Service Income', 'Receipt']:
+            if vtype in ['Sales', 'Sales Return', 'Service Income', 'Service Income Return', 'Receipt']:
                 # Output Section
-                # Net VAT = Credit - Debit (Sales is Credit, Return is Debit)
+                # Net VAT = Credit - Debit (Sales/Service Income are Credit, Returns are Debit)
                 net_vat = v_credit - v_debit
-        
-                # Voucher Amount for Return is Positive in DB, but we want to show as Negative
-                if vtype == 'Sales Return':
+
+                # Voucher Amount for Returns is Positive in DB, but we want to show as Negative
+                if vtype in ('Sales Return', 'Service Income Return'):
                     final_total = -amount
                 else:
                     final_total = amount
@@ -1483,8 +1800,29 @@ def replay_movements_by_location(item_name, start_date=None, end_date=None, comp
             opening_qty_baseline = 0.0
 
         pools = {}
-        if opening_qty_baseline > 0:
-            pools[opening_loc] = opening_qty_baseline
+        # Seed per-location openings recorded in item_opening_balances; any
+        # remaining baseline (legacy single-location openings) falls back to
+        # the item's opening_location_name.
+        iob_total = 0.0
+        try:
+            cursor.execute("""
+                SELECT iob.location_name, iob.quantity
+                FROM item_opening_balances iob
+                JOIN inventory i ON i.company_id = iob.company_id AND i.item_code = iob.item_code
+                WHERE iob.company_id = %s AND i.name = %s
+            """, (company_id, item_name))
+            for r in cursor.fetchall():
+                loc_i = r[0] or 'Main Location'
+                q_i = float(r[1] or 0)
+                if q_i <= 0:
+                    continue
+                pools[loc_i] = pools.get(loc_i, 0.0) + q_i
+                iob_total += q_i
+        except Exception:
+            pass
+        residual = opening_qty_baseline - iob_total
+        if residual > 0:
+            pools[opening_loc] = pools.get(opening_loc, 0.0) + residual
 
         cursor.execute(
             """
@@ -1653,7 +1991,7 @@ def get_inventory_stock(item_name, start_date=None, end_date=None, company_id=No
     finally:
         conn.close()
 
-def get_balance_sheet_data(as_of_date=None, company_id=None):
+def get_balance_sheet_data(as_of_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
@@ -1662,6 +2000,39 @@ def get_balance_sheet_data(as_of_date=None, company_id=None):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        if location_name:
+            # Location-wise: per-location openings + movements at that location.
+            cursor.execute("""
+                SELECT l.ledger_name, g.group_name, g.nature
+                FROM ledgers l
+                JOIN groups g ON l.group_code = g.group_code AND l.company_id = g.company_id
+                WHERE l.company_id = %s
+            """, (company_id,))
+            meta = {r[0]: (r[1], r[2]) for r in cursor.fetchall()}
+            balances = _get_location_ledger_balances(cursor, company_id, location_name, to_date_str(as_of_date) if as_of_date else None)
+
+            assets = {}
+            liabilities = {}
+            total_assets = 0.0
+            total_liabilities = 0.0
+            for ledger_name, bal in sorted(balances.items()):
+                if abs(bal) <= 0.001 or ledger_name not in meta:
+                    continue
+                group_name, nature = meta[ledger_name]
+                if nature == 'Assets':
+                    assets.setdefault(group_name, []).append({'ledger_name': ledger_name, 'amount': round(bal, 2)})
+                    total_assets += bal
+                elif nature == 'Liabilities':
+                    liabilities.setdefault(group_name, []).append({'ledger_name': ledger_name, 'amount': round(-bal, 2)})
+                    total_liabilities += -bal
+
+            _, _, _, net_profit = get_profit_and_loss_data(None, as_of_date, company_id, location_name=location_name)
+            if net_profit != 0:
+                liabilities.setdefault('Capital Account', []).append({'ledger_name': 'Net Profit/Loss', 'amount': round(net_profit, 2)})
+                total_liabilities += net_profit
+
+            return {'assets': assets, 'liabilities': liabilities}, round(total_assets, 2), round(total_liabilities, 2)
+
         # Optimization: Use stored balances if date is current
         if is_latest_date(cursor, as_of_date, company_id):
             print(f"get_balance_sheet_data({as_of_date}): Using optimized stored balances.")
@@ -1774,7 +2145,7 @@ def get_balance_sheet_data(as_of_date=None, company_id=None):
     finally:
         conn.close()
 
-def get_profit_and_loss_data(from_date=None, to_date=None, company_id=None):
+def get_profit_and_loss_data(from_date=None, to_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
@@ -1783,6 +2154,87 @@ def get_profit_and_loss_data(from_date=None, to_date=None, company_id=None):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        if location_name:
+            # Location-wise P&L: movements of vouchers tagged with the location.
+            cursor.execute("""
+                SELECT l.ledger_name, g.group_name, g.nature
+                FROM ledgers l
+                JOIN groups g ON l.group_code = g.group_code AND l.company_id = g.company_id
+                WHERE l.company_id = %s AND g.nature IN ('Income', 'Expenses') AND g.group_name != 'Purchase'
+            """, (company_id,))
+            pl_ledgers = {r[0]: (r[1], r[2]) for r in cursor.fetchall()}
+
+            q = """
+                SELECT le.ledger_name, SUM(CASE WHEN le.type='Debit' THEN le.amount ELSE -le.amount END)
+                FROM ledger_entries le
+                JOIN vouchers v ON le.voucher_number = v.voucher_number AND le.company_id = v.company_id
+                WHERE v.company_id = %s AND v.voucher_type != 'Closing'
+                  AND COALESCE(v.location_name, 'Main Location') = %s
+            """
+            params = [company_id, location_name]
+            if from_date:
+                q += " AND v.date >= %s"
+                params.append(from_date)
+            if to_date:
+                q += " AND v.date <= %s"
+                params.append(to_date)
+            q += " GROUP BY le.ledger_name"
+            cursor.execute(q, params)
+
+            income = {}
+            expenses = {}
+            total_income = 0.0
+            total_expenses = 0.0
+            cogs_ledger_total = 0.0
+            for ledger_name, net in cursor.fetchall():
+                if ledger_name not in pl_ledgers:
+                    continue
+                group_name, nature = pl_ledgers[ledger_name]
+                net = float(net or 0)
+                amount = -net if nature == 'Income' else net
+                if ledger_name == 'Cost of Goods Sold':
+                    cogs_ledger_total = amount
+                if abs(amount) <= 0.001:
+                    continue
+                bucket = income if nature == 'Income' else expenses
+                if group_name not in bucket:
+                    bucket[group_name] = []
+                bucket[group_name].append({'ledger_name': ledger_name, 'amount': round(amount, 2)})
+                if nature == 'Income':
+                    total_income += amount
+                else:
+                    total_expenses += amount
+
+            # COGS fallback: when the COGS ledger carries no balance, derive it
+            # from the stored per-line cogs_amount of Sales/Sales Return entries
+            # at this location.
+            if abs(cogs_ledger_total) < 0.01:
+                cq = """
+                    SELECT SUM(CASE WHEN v.voucher_type = 'Sales' THEN COALESCE(ie.cogs_amount, 0)
+                                    WHEN v.voucher_type = 'Sales Return' THEN -COALESCE(ie.cogs_amount, 0)
+                                    ELSE 0 END)
+                    FROM item_entries ie
+                    JOIN vouchers v ON ie.voucher_number = v.voucher_number AND ie.company_id = v.company_id
+                    WHERE v.company_id = %s AND COALESCE(v.location_name, 'Main Location') = %s
+                      AND v.voucher_type IN ('Sales', 'Sales Return')
+                """
+                cparams = [company_id, location_name]
+                if from_date:
+                    cq += " AND v.date >= %s"
+                    cparams.append(from_date)
+                if to_date:
+                    cq += " AND v.date <= %s"
+                    cparams.append(to_date)
+                cursor.execute(cq, cparams)
+                cogs_val = float(cursor.fetchone()[0] or 0)
+                if abs(cogs_val) > 0.001:
+                    if 'Cost of Goods Sold' not in expenses:
+                        expenses['Cost of Goods Sold'] = []
+                    expenses['Cost of Goods Sold'].append({'ledger_name': 'Cost of Goods Sold', 'amount': round(cogs_val, 2)})
+                    total_expenses += cogs_val
+
+            net_profit = total_income - total_expenses
+            return {'income': income, 'expenses': expenses}, round(total_income, 2), round(total_expenses, 2), round(net_profit, 2)
         cursor.execute("""
             SELECT l.ledger_name, g.group_name, g.nature
             FROM ledgers l
@@ -2194,5 +2646,76 @@ def get_closing_inventory_data(as_of_date=None, company_id=None):
     except Exception as e:
         print(f"Error in get_closing_inventory_data: {str(e)}")
         return [], 0
+    finally:
+        conn.close()
+
+
+def get_gl_dump_data(from_date=None, to_date=None, company_id=None):
+    """
+    GL Dump: all ledger entries for the selected period,
+    ordered by date and voucher number.
+    """
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return []
+
+    from_date_str = to_date_str(from_date)
+    to_date_str_ = to_date_str(to_date)
+
+    date_filter = ""
+    params = [company_id]
+    if from_date_str:
+        date_filter += " AND v.date >= %s"
+        params.append(from_date_str)
+    if to_date_str_:
+        date_filter += " AND v.date <= %s"
+        params.append(to_date_str_)
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT
+                v.date,
+                v.voucher_number,
+                v.voucher_type,
+                le.ledger_name,
+                CASE WHEN le.type = 'Debit' THEN le.amount ELSE 0 END AS debit,
+                CASE WHEN le.type = 'Credit' THEN le.amount ELSE 0 END AS credit,
+                COALESCE(cc.center_name, '') AS cost_center,
+                COALESCE(v.narration, '') AS narration,
+                COALESCE(v.entry_date, '') AS posted_at,
+                COALESCE(v.created_by, at.username, '') AS posted_by
+            FROM ledger_entries le
+            JOIN vouchers v
+                ON v.voucher_number = le.voucher_number AND v.company_id = le.company_id
+            LEFT JOIN cost_centers cc
+                ON cc.center_code = le.cost_center_code AND cc.company_id = le.company_id
+            LEFT JOIN (
+                SELECT company_id, voucher_number, MIN(username) AS username
+                FROM audit_trail
+                WHERE action = 'CREATE'
+                GROUP BY company_id, voucher_number
+            ) at ON at.voucher_number = v.voucher_number AND at.company_id = v.company_id
+            WHERE v.company_id = %s{date_filter}
+            ORDER BY 1, 2
+        """, tuple(params))
+        rows = cursor.fetchall()
+        return [
+            {
+                "date": r['date'] if hasattr(r, 'keys') else r[0],
+                "voucher_number": r['voucher_number'] if hasattr(r, 'keys') else r[1],
+                "voucher_type": r['voucher_type'] if hasattr(r, 'keys') else r[2],
+                "ledger_name": r['ledger_name'] if hasattr(r, 'keys') else r[3],
+                "debit": float((r['debit'] if hasattr(r, 'keys') else r[4]) or 0),
+                "credit": float((r['credit'] if hasattr(r, 'keys') else r[5]) or 0),
+                "cost_center": r['cost_center'] if hasattr(r, 'keys') else r[6],
+                "narration": r['narration'] if hasattr(r, 'keys') else r[7],
+                "posted_at": r['posted_at'] if hasattr(r, 'keys') else r[8],
+                "posted_by": r['posted_by'] if hasattr(r, 'keys') else r[9],
+            }
+            for r in rows
+        ]
     finally:
         conn.close()

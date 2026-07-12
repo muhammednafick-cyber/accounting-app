@@ -10,6 +10,13 @@ from . import import_bp
 @import_bp.route("/download_voucher_template/<voucher_type>", methods=["GET"])
 @login_required
 def download_voucher_template(voucher_type):
+    # Returns must be entered manually by pulling the source Sales/Purchase voucher
+    if voucher_type in ("Sales Return", "Purchase Return"):
+        return (
+            f"{voucher_type} vouchers cannot be imported from Excel. "
+            "Please enter them manually by pulling the original voucher.",
+            400,
+        )
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
     worksheet = workbook.add_worksheet(voucher_type)
@@ -26,9 +33,7 @@ def download_voucher_template(voucher_type):
             "Quantity",
             "Rate",
             "VAT %",
-            "VAT Ledger",
             "Discount Amount",
-            "Location",
             "Cost Center"
         ]
     elif voucher_type == "Purchase":
@@ -37,30 +42,11 @@ def download_voucher_template(voucher_type):
             "Date",
             "Narration",
             "Party Ledger Name",
-            "Party Ledger Name",
             "Item Name",
             "Quantity",
             "Rate",
             "VAT %",
             "Discount Amount",
-            "Location",
-            "Cost Center",
-            "Reference Number",
-            "Invoice Date",
-            "Weight (KG)"
-        ]
-    elif voucher_type == "Purchase Return":
-         headers = [
-            "Voucher Group ID",
-            "Date",
-            "Narration",
-            "Party Ledger Name",
-            "Item Name",
-            "Quantity",
-            "Rate",
-            "VAT %",
-            "Discount Amount",
-            "Location",
             "Cost Center",
             "Reference Number",
             "Invoice Date",
@@ -108,7 +94,6 @@ def download_voucher_template(voucher_type):
             "Type",
             "Item Name",
             "Quantity",
-            "Location",
             "Cost Center"
         ]
     elif voucher_type == "Expense":
@@ -120,7 +105,6 @@ def download_voucher_template(voucher_type):
             "Amount",
             "Type", # Dr/Cr
             "VAT %",
-            "Location",
             "Cost Center",
             "Reference Number",
             "Invoice Date"
@@ -134,7 +118,6 @@ def download_voucher_template(voucher_type):
             "Amount",
             "Type", # Dr/Cr
             "VAT %",
-            "Location",
             "Cost Center"
         ]
 
@@ -147,7 +130,6 @@ def download_voucher_template(voucher_type):
             "Ledger Name",
             "Amount",
             "Type", # Dr/Cr
-            "Location",
             "Cost Center"
         ]
 
@@ -163,17 +145,12 @@ def download_voucher_template(voucher_type):
     if voucher_type == "Sales":
         sample_data = [
             "1", "2023-12-31", "Sales Invoice #101", "Customer A", "Sales Account",
-            "Item X", 10, 100, 5, "Output VAT 5%", 0, "Main Location", "Project A"
+            "Item X", 10, 100, 5, 0, "Project A"
         ]
     elif voucher_type == "Purchase":
         sample_data = [
             "1", "2023-12-31", "Purchase Bill #55", "Supplier B",
-            "Item Y", 20, 50, 5, 0, "Warehouse 1", "Project B", "INV-55", "2023-12-30", 15.5
-        ]
-    elif voucher_type == "Purchase Return":
-        sample_data = [
-            "1", "2023-12-31", "Purchase Return #55", "Supplier B",
-            "Item Y", 5, 50, 5, 0, "Warehouse 1", "Project B", "RET-55", "2023-12-30", 0
+            "Item Y", 20, 50, 5, 0, "Project B", "INV-55", "2023-12-30", 15.5
         ]
     elif voucher_type == "Additional Charge":
         sample_data = [
@@ -197,38 +174,38 @@ def download_voucher_template(voucher_type):
     elif voucher_type == "Stock Adjustment":
         sample_data = [
             "1", "2023-12-31", "Stock Taking", "Stock Loss Account", "Debit",
-            "Item Z", 2, "Main Location", "Project A"
+            "Item Z", 2, "Project A"
         ]
         # Note: Type Debit = Expense (Stock Out), Type Credit = Income (Stock In)
     elif voucher_type == "Expense":
          sample_data = [
             "1", "2023-12-31", "Office Rent", "Rent Expense",
-            1000, "Debit", 5, "Main Location", "Project A", "INV-101", "2023-12-30"
+            1000, "Debit", 5, "Project A", "INV-101", "2023-12-30"
         ]
     elif voucher_type == "Service Income":
          sample_data = [
-            "1", "2023-12-31", "Consulting", "Service Income Ledger", 
-            2000, "Credit", 5, "Main Location", "Project A"
+            "1", "2023-12-31", "Consulting", "Service Income Ledger",
+            2000, "Credit", 5, "Project A"
         ]
     elif voucher_type == "Receipt":
          sample_data = [
-            "1", "2023-12-31", "Customer Payment", "Customer A", 
-            5000, "Credit", "Main Location", "Project A"
+            "1", "2023-12-31", "Customer Payment", "Customer A",
+            5000, "Credit", "Project A"
         ]
     elif voucher_type == "Payment":
          sample_data = [
-            "1", "2023-12-31", "Vendor Payment", "Supplier B", 
-            2000, "Debit", "Main Location", "Project A"
+            "1", "2023-12-31", "Vendor Payment", "Supplier B",
+            2000, "Debit", "Project A"
         ]
     elif voucher_type == "Journal":
          sample_data = [
-            "1", "2023-12-31", "Adjustment", "Expense Account", 
-            500, "Debit", 5, "Main Location", "Project A"
+            "1", "2023-12-31", "Adjustment", "Expense Account",
+            500, "Debit", 5, "Project A"
         ]
          # Maybe add second row for Journal?
     else:
          # Generic fallback
-         sample_data = ["1", "2023-12-31", "Narration", "Party Ledger Name", 100, "Debit", "Main Location", "Cost Center"]
+         sample_data = ["1", "2023-12-31", "Narration", "Party Ledger Name", 100, "Debit", "Cost Center"]
 
     # Correct specific mappings based on headers
     if voucher_type == "Inventory Transfer":
@@ -247,7 +224,7 @@ def download_voucher_template(voucher_type):
         
         # Add a second row for Journal to show balancing?
         if voucher_type == "Journal":
-             sample_data_2 = ["1", "2023-12-31", "Adjustment", "Cash Account", 500, "Credit", 0, "Main Location", "Project A"]
+             sample_data_2 = ["1", "2023-12-31", "Adjustment", "Cash Account", 500, "Credit", 0, "Project A"]
              for col, data in enumerate(sample_data_2):
                 if col < len(headers):
                     worksheet.write(2, col, data)
@@ -312,6 +289,7 @@ def download_ledger_template():
         "Group Name",
         "Opening Balance",
         "Opening Balance Type",
+        "Opening Balance Date", # Mandatory (DD-MM-YYYY or YYYY-MM-DD)
         "Sub Group Name" # Optional
     ]
     for col, header in enumerate(headers):
@@ -372,7 +350,8 @@ def download_inventory_template():
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
     worksheet = workbook.add_worksheet("Inventory")
 
-    # 10 COLUMNS - includes Purchase Date and Balancing Ledger for Opening Balance
+    # Includes Purchase Date and Balancing Ledger for Opening Balance.
+    # No Location column: opening stock lands on the active location.
     headers = [
         "Item Code",
         "Item Name",
@@ -383,7 +362,7 @@ def download_inventory_template():
         "Opening Price (Cost)",        # Optional
         "Purchase Date",               # Optional - per-item opening date (DD-MM-YYYY)
         "Balancing Ledger",            # Optional - ledger to credit for double-entry
-        "Location"                     # Optional
+        "Selling Price"                # Optional - creates/updates Selling Price Master
     ]
 
     # Write headers
@@ -404,7 +383,7 @@ def download_inventory_template():
     worksheet.set_column(6, 6, 18)   # Opening Price (Cost)
     worksheet.set_column(7, 7, 15)   # Purchase Date
     worksheet.set_column(8, 8, 25)   # Balancing Ledger
-    worksheet.set_column(9, 9, 20)   # Location
+    worksheet.set_column(9, 9, 14)   # Selling Price
 
     # Data validations
     last_row = 1001
@@ -421,11 +400,23 @@ def download_inventory_template():
         'validate': 'decimal', 'criteria': '>=', 'value': 0,
         'input_title': 'Opening Price (Cost)', 'input_message': 'Enter a number >= 0 (optional)'
     })
+    worksheet.data_validation(1, 7, last_row, 7, {
+        'validate': 'any',
+        'input_title': 'Purchase Date', 'input_message': 'DD-MM-YYYY. Required if Opening Quantity > 0; leave blank otherwise.'
+    })
+    worksheet.data_validation(1, 8, last_row, 8, {
+        'validate': 'any',
+        'input_title': 'Balancing Ledger', 'input_message': 'Exact ledger name to credit. Required if Opening Quantity > 0.'
+    })
+    worksheet.data_validation(1, 9, last_row, 9, {
+        'validate': 'decimal', 'criteria': '>=', 'value': 0,
+        'input_title': 'Selling Price', 'input_message': 'Enter a number >= 0 (optional). Saved to Selling Price Master.'
+    })
 
     # Example rows
     example_data = [
-        ["IT001", "Tomato", "VEGETABLES", "KG", 5, 10, 40.00, "01-01-2024", "Opening Stock Account", "Main Location"],
-        ["IT002", "Rice",   "GROCERY",    "KG", 0, 20,  35.00, "01-01-2024", "Opening Stock Account", ""],
+        ["IT001", "Tomato", "VEGETABLES", "KG", 5, 10, 40.00, "01-01-2024", "Opening Stock Account", 55.00],
+        ["IT002", "Rice",   "GROCERY",    "KG", 0, 20,  35.00, "01-01-2024", "Opening Stock Account", 42.50],
         ["IT003", "Milk",   "DAIRY",      "LTR",5,  0,   "",   "",           "",                       ""],
     ]
 
@@ -437,6 +428,8 @@ def download_inventory_template():
     worksheet.write(len(example_data) + 2, 0, "Notes:", bold)
     worksheet.write(len(example_data) + 3, 0, "Purchase Date: DD-MM-YYYY format. Leave blank to use company fiscal year start.", note_fmt)
     worksheet.write(len(example_data) + 4, 0, "Balancing Ledger: Exact ledger name to credit (e.g. 'Opening Stock Account'). Leave blank to skip credit entry.", note_fmt)
+    worksheet.write(len(example_data) + 5, 0, "Selling Price: Optional. If filled, the Selling Price Master is created/updated for the item. Leave blank to skip.", note_fmt)
+    worksheet.write(len(example_data) + 6, 0, "Location: Opening stock is saved against the active location (default location if not switched). Re-upload with another active location to add openings there.", note_fmt)
 
     workbook.close()
     output.seek(0)

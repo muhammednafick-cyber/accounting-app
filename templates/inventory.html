@@ -132,6 +132,10 @@
         </div>
 
         <div class="form-row">
+            <label>Selling Price:</label>
+            <input type="number" step="0.01" min="0" name="selling_price" placeholder="Optional">
+        </div>
+        <div class="form-row">
             <label>Opening Quantity:</label>
             <input type="number" step="0.01" name="opening_quantity" placeholder="0">
         </div>
@@ -156,12 +160,7 @@
         {% if multiple_locations_enabled %}
         <div class="form-row">
             <label>Location:</label>
-            <select name="location_name" class="select2" data-placeholder="Select Location">
-                <option></option>
-                {% for loc in locations %}
-                <option value="{{ loc.location_name }}">{{ loc.location_name }}</option>
-                {% endfor %}
-            </select>
+            <input type="text" value="{{ opening_location }}" readonly title="Opening stock is saved against the active location. Use the Location Switcher in the main menu to change it." style="background:#f2f2f2; cursor:not-allowed;">
         </div>
         {% endif %}
         {% if company and company.vat_applicable == 1 %}
@@ -172,8 +171,49 @@
         {% else %}
         <input type="hidden" name="vat_rate" value="0">
         {% endif %}
-        <button type="button" class="btn" onclick="submitAddInventory()">Add Item</button>
+        <button type="button" class="btn" id="addItemBtn" onclick="submitAddInventory()">Add Item</button>
+        <button type="button" class="btn" id="cancelEditBtn" style="display:none; background:#7f8c8d;" onclick="cancelEdit()">Cancel Edit</button>
     </form>
+</div>
+
+<div class="form-section">
+    <h2>Existing Items</h2>
+    <input type="text" id="itemSearch" placeholder="Search by code or name..." style="width:320px; margin-bottom:10px;" oninput="filterItems()">
+    <div style="max-height:420px; overflow:auto;">
+        <table id="itemsTable">
+            <thead>
+                <tr>
+                    <th>Item Code</th>
+                    <th>Item Name</th>
+                    <th>Group</th>
+                    <th>Unit</th>
+                    <th>VAT %</th>
+                    <th style="text-align:right;">Stock</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for it in items %}
+                <tr data-search="{{ (it.item_code ~ ' ' ~ it.name) | lower }}" {% if not it.is_active %}style="opacity:.55;"{% endif %}>
+                    <td>{{ it.item_code }}</td>
+                    <td>{{ it.name }}</td>
+                    <td>{{ it.group_name or '' }}</td>
+                    <td>{{ it.unit_code or '' }}</td>
+                    <td>{{ it.vat_rate or 0 }}</td>
+                    <td style="text-align:right;">{{ '%.2f' % (it.stock_quantity or 0) }}</td>
+                    <td>{% if it.is_active %}<span style="color:green;">Active</span>{% else %}<span style="color:#c0392b;">Blocked</span>{% endif %}</td>
+                    <td>
+                        <button type="button" class="btn" style="padding:2px 10px;"
+                            onclick="editItem('{{ it.item_code|e }}', '{{ it.name|e }}', '{{ (it.group_name or '')|e }}', '{{ (it.unit_code or '')|e }}', '{{ it.vat_rate or 0 }}')">Edit</button>
+                        <button type="button" class="btn" style="padding:2px 10px; background:{% if it.is_active %}#c0392b{% else %}#27ae60{% endif %};"
+                            onclick="toggleActive('{{ it.item_code|e }}', {{ 0 if it.is_active else 1 }})">{% if it.is_active %}Block{% else %}Unblock{% endif %}</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <hr>
@@ -181,7 +221,8 @@
 <div id="importSection" class="import-section-container">
     <h3>Import Inventory Items from Excel</h3>
     <p style="margin-bottom:15px; color:#666;"><strong>Required columns:</strong> Item Code, Item Name, Group Name, Unit, VAT %.
-        Optional columns: Opening Quantity, Opening Price (Cost), Location.
+        Optional columns: Selling Price, Opening Quantity, Opening Price (Cost).
+        Opening stock is saved against the <strong>active location</strong> (see the Location Switcher in the main menu).
         <strong>If Opening Quantity is filled:</strong> Purchase Date and Balancing Ledger are also required.</p>
 
     <div class="import-controls">
@@ -264,6 +305,7 @@
                     "Unit": row["Unit"] || "NOS",
 
                     "VAT 5%": parseFloat(row["VAT 5%"] ?? row["VAT %"] ?? 0) || 0,
+                    "Selling Price": row["Selling Price"] ?? "",
                     "Opening Quantity": row["Opening Quantity"] ?? "",
                     "Opening Price (Cost)": row["Opening Price (Cost)"] ?? "",
                     "Purchase Date": row["Purchase Date"] ?? "",
@@ -364,19 +406,56 @@
                 alert("Opening price (cost) is required when opening quantity is entered");
                 return;
             }
-            if (multipleLocationsEnabled) {
-                const locSel = formEl.querySelector('select[name="location_name"]');
-                if (!locSel || !locSel.value) {
-                    alert("Location is required when opening quantity is entered");
-                    return;
-                }
-            }
         }
         const formData = new FormData(formEl);
         fetch("/add_inventory", { method: "POST", body: formData })
             .then(r => r.json())
             .then(data => {
                 alert(data.success ? data.message : "Error: " + data.message);
+                if (data.success) location.reload();
+            });
+    }
+
+    function filterItems() {
+        const q = document.getElementById('itemSearch').value.toLowerCase();
+        document.querySelectorAll('#itemsTable tbody tr').forEach(tr => {
+            tr.style.display = (tr.dataset.search || '').includes(q) ? '' : 'none';
+        });
+    }
+
+    function editItem(code, name, group, unit, vat) {
+        const formEl = document.getElementById('addInventoryForm');
+        formEl.querySelector('input[name="item_code"]').value = code;
+        formEl.querySelector('input[name="item_code"]').readOnly = true;
+        formEl.querySelector('input[name="name"]').value = name;
+        $(formEl.querySelector('select[name="stock_group_name"]')).val(group).trigger('change');
+        formEl.querySelector('input[name="unit_code"]').value = unit;
+        const vatEl = formEl.querySelector('input[name="vat_rate"]');
+        if (vatEl) vatEl.value = vat;
+        document.getElementById('addItemBtn').textContent = 'Update Item';
+        document.getElementById('cancelEditBtn').style.display = '';
+        formEl.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelEdit() {
+        const formEl = document.getElementById('addInventoryForm');
+        formEl.reset();
+        formEl.querySelector('input[name="item_code"]').readOnly = false;
+        $(formEl.querySelector('select[name="stock_group_name"]')).val('').trigger('change');
+        document.getElementById('addItemBtn').textContent = 'Add Item';
+        document.getElementById('cancelEditBtn').style.display = 'none';
+    }
+
+    function toggleActive(code, newState) {
+        const action = newState ? 'unblock' : 'block';
+        if (!confirm(`Are you sure you want to ${action} item ${code}?`)) return;
+        const fd = new FormData();
+        fd.append('item_code', code);
+        fd.append('is_active', newState);
+        fetch('/toggle_inventory_active', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(data => {
+                alert(data.success ? data.message : 'Error: ' + data.message);
                 if (data.success) location.reload();
             });
     }

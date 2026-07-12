@@ -13,8 +13,8 @@ def open_browser():
     webbrowser.open_new('http://localhost:5000/')
 
 if __name__ == "__main__":
-    db_path = app.config["DB_PATH"]
-    print(f"Starting app with DB path: {db_path}")
+    from database.config import DB_HOST, DB_PORT, DB_NAME
+    print(f"Starting app with PostgreSQL: {DB_HOST}:{DB_PORT}/{DB_NAME}")
 
     port = int(os.environ.get("PORT", 5000))
 

@@ -1,4 +1,3 @@
-import sqlite3
 import pandas as pd
 from datetime import datetime
 from .config import get_connection, DB_TYPE

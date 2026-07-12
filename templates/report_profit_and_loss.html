@@ -34,6 +34,15 @@
     <input type="text" id="from_date" placeholder="DD-MM-YYYY" style="width:140px;" readonly>
     <label style="font-size:.85rem;font-weight:500;">To</label>
     <input type="text" id="to_date" placeholder="DD-MM-YYYY" style="width:140px;" readonly>
+    {% if switcher_locations %}
+    <label style="font-size:.85rem;font-weight:500;">Location</label>
+    <select id="report_location" style="min-width:150px;">
+        <option value="">All Locations</option>
+        {% for loc in switcher_locations %}
+        <option value="{{ loc.location_name }}">{{ loc.location_name }}</option>
+        {% endfor %}
+    </select>
+    {% endif %}
     <button class="btn btn-primary" onclick="fetchProfitAndLoss()">Generate</button>
     <button class="btn btn-outline-success" onclick="exportProfitAndLoss()">Export to Excel</button>
 </div>
@@ -79,7 +88,10 @@ function fetchProfitAndLoss() {
     const toDate   = document.getElementById('to_date').value;
     const isoFrom  = toISO(fromDate);
     const isoTo    = toISO(toDate);
-    $.get('/get_profit_and_loss', { from_date: fromDate, to_date: toDate }, function(data) {
+    const locEl = document.getElementById('report_location');
+    const reqParams = { from_date: fromDate, to_date: toDate };
+    if (locEl && locEl.value) reqParams.location = locEl.value;
+    $.get('/get_profit_and_loss', reqParams, function(data) {
         const incomeTbody = $('#incomeTable tbody').empty();
         for (const group in data.profit_and_loss.income) {
             data.profit_and_loss.income[group].forEach((ledger, i) => {

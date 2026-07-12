@@ -6,7 +6,6 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 import os
 import shutil
-import sqlite3
 from werkzeug.security import generate_password_hash
 
 from database import (
@@ -24,7 +23,6 @@ from database import (
 
 from database.accounts_db import ensure_default_groups
 
-from database.config import DB_PATH
 from .models import admin_required, setup_access_required
 
 company_bp = Blueprint('company_bp', __name__)
@@ -84,7 +82,8 @@ def select_company():
     try:
         # Set session for company context
         session['company_id'] = company_id
-        
+        session.pop('active_location', None)  # Reset location switcher for new company
+
         # Get company settings
         # Pass company_id explicitly to ensure we get settings for the selected company
         company = get_company_settings(company_id=company_id)
@@ -174,6 +173,7 @@ def create_new_company():
             # 5. Set session
             session['company_id'] = company_id
             session['company_name'] = company_name
+            session.pop('active_location', None)  # Reset location switcher for new company
             
             flash(f'Company "{company_name}" created successfully!', 'success')
             return redirect(url_for('dashboard_bp.dashboard'))
@@ -219,6 +219,35 @@ def company_settings():
     return render_template('company_settings.html', company=company)
 
 # ===== LOCATION/GODOWN MANAGEMENT =====
+
+@company_bp.route('/set_active_location', methods=['POST'])
+@login_required
+def set_active_location():
+    """Set the session-wide active location (main-menu Location Switcher)."""
+    from database import get_locations
+    location_name = (request.form.get('location_name') or '').strip()
+
+    company = get_company_settings()
+    if not company or not company.get('multiple_locations_applicable'):
+        flash('Location-wise accounting is not enabled.', 'error')
+        return redirect(request.referrer or url_for('dashboard_bp.dashboard'))
+
+    valid_names = {l['location_name'] for l in get_locations()}
+    if location_name not in valid_names:
+        flash(f"Unknown location: {location_name}", 'error')
+        return redirect(request.referrer or url_for('dashboard_bp.dashboard'))
+
+    # Non-admin users may only switch to locations allocated to them
+    if not current_user.is_admin:
+        from database import get_user_locations
+        allowed = get_user_locations(current_user.id)
+        if allowed and location_name not in allowed:
+            flash(f"You are not allowed to use location: {location_name}", 'error')
+            return redirect(request.referrer or url_for('dashboard_bp.dashboard'))
+
+    session['active_location'] = location_name
+    flash(f'Active location switched to: {location_name}', 'success')
+    return redirect(request.referrer or url_for('dashboard_bp.dashboard'))
 
 @company_bp.route('/manage-locations', methods=['GET'])
 @login_required

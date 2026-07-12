@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Inventory Ageing{% endblock %}
+
+{% block content %}
+    <h1>Inventory Ageing</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="as_of_date">As Of Date:</label>
+            <input type="text" id="as_of_date" name="as_of_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+        </div>
+        {% if switcher_locations %}
+        <div class="entry">
+            <label for="report_location">Location:</label>
+            <select id="report_location" class="input-standard-width">
+                <option value="">All Locations</option>
+                {% for loc in switcher_locations %}
+                <option value="{{ loc.location_name }}">{{ loc.location_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <div class="entry">
+            <label for="show_mode">Show:</label>
+            <select id="show_mode" class="input-standard-width">
+                <option value="value">Value</option>
+                <option value="qty">Quantity</option>
+            </select>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="fetchReport()">Show Report</button>
+    </form>
+
+    <div id="reportContainer" style="margin-top: 20px; overflow-x:auto;">
+        <table id="reportTable" class="table-bordered" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th style="text-align: right;">Closing Qty</th>
+                    <th style="text-align: right;">Total Value</th>
+                    <th style="text-align: right;">0-3 Months</th>
+                    <th style="text-align: right;">3-6 Months</th>
+                    <th style="text-align: right;">6-9 Months</th>
+                    <th style="text-align: right;">9-12 Months</th>
+                    <th style="text-align: right;">1-2 Years</th>
+                    <th style="text-align: right;">2-3 Years</th>
+                    <th style="text-align: right;">Over 3 Years</th>
+                </tr>
+            </thead>
+            <tbody id="reportBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const asOfDateInput = document.getElementById('as_of_date');
+            if (!asOfDateInput.value) {
+                const now = new Date();
+                const day = String(now.getDate()).padStart(2, '0');
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                asOfDateInput.value = `${day}-${month}-${now.getFullYear()}`;
+            }
+        });
+
+        function fetchReport() {
+            const asOfDate = document.getElementById('as_of_date').value;
+            const locEl = document.getElementById('report_location');
+            let url = `/get_inventory_ageing?as_of_date=${asOfDate}`;
+            if (locEl && locEl.value) url += `&location=${encodeURIComponent(locEl.value)}`;
+
+            fetch(url)
+                .then(r => r.json())
+                .then(response => {
+                    const tbody = document.getElementById('reportBody');
+                    tbody.innerHTML = '';
+                    if (!response.success) {
+                        alert('Error: ' + response.message);
+                        return;
+                    }
+                    const data = response.data;
+                    if (data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;">No stock on hand</td></tr>';
+                        return;
+                    }
+                    const mode = document.getElementById('show_mode').value;
+                    const keys = ['0_90', '91_180', '181_270', '271_365', '1_2y', '2_3y', '3y_plus'];
+                    data.forEach(item => {
+                        const buckets = mode === 'qty' ? item.buckets_qty : item.buckets_val;
+                        const dec = mode === 'qty' ? 2 : 2;
+                        let cells = `
+                            <td>${item.item_name}</td>
+                            <td style="text-align:right;">${parseFloat(item.closing_qty).toFixed(2)}</td>
+                            <td style="text-align:right;">${parseFloat(item.total_value).toFixed(2)}</td>`;
+                        keys.forEach(k => {
+                            cells += `<td style="text-align:right;">${parseFloat(buckets[k] || 0).toFixed(dec)}</td>`;
+                        });
+                        const row = document.createElement('tr');
+                        row.innerHTML = cells;
+                        tbody.appendChild(row);
+                    });
+                })
+                .catch(err => { console.error(err); alert('An error occurred while fetching the report.'); });
+        }
+    </script>
+{% endblock %}

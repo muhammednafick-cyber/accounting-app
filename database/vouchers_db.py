@@ -7,6 +7,7 @@ from .reports_db import calculate_weighted_average_price, calculate_weighted_ave
 from datetime import datetime
 from .financial_year_db import get_fy_by_date, get_fy_by_id
 from .company_db import get_current_company_id
+from .audit_db import log_audit, get_current_username
 
 # _initialize_voucher_tables removed - handled by unified_db
 
@@ -98,16 +99,31 @@ def add_additional_charges_voucher(date, linked_voucher_number, charges, narrati
             if linked_res:
                 date = linked_res['date'] if hasattr(linked_res, 'keys') else linked_res[0]
 
-        # 1. Generate Voucher Number
+        # Financial Year validation (same rule as add_voucher)
+        fy = get_fy_by_date(date, company_id=company_id)
+        if not fy:
+            raise Exception(f"No Financial Year defined for date {date}. Please create a Financial Year first.")
+        if fy['is_locked']:
+            raise Exception(f"Financial Year {fy['fy_code']} is locked. Cannot add additional charges.")
+
+        # 1. Generate Voucher Number (FY-based, like all other vouchers)
         voucher_type = "Additional Charge"
         prefix = "ADD"
-        cursor.execute("SELECT COUNT(*) as count FROM vouchers WHERE company_id = %s AND voucher_type = %s", (company_id, voucher_type))
-        count_res = cursor.fetchone()
-        if count_res:
-             count = count_res['count'] if isinstance(count_res, dict) or hasattr(count_res, 'keys') else count_res[0]
-        else:
-             count = 0
-        voucher_number = f"{prefix}-{str(count + 1).zfill(5)}"
+        full_prefix = f"FY{str(fy['start_date'])[2:4]}-{prefix}"
+        cursor.execute(
+            "SELECT voucher_number FROM vouchers WHERE company_id = %s AND voucher_number LIKE %s ORDER BY length(voucher_number) DESC, voucher_number DESC LIMIT 1",
+            (company_id, f"{full_prefix}-%")
+        )
+        last_row = cursor.fetchone()
+        new_seq = 1
+        if last_row:
+            last_no = last_row['voucher_number'] if hasattr(last_row, 'keys') else last_row[0]
+            try:
+                new_seq = int(str(last_no).split('-')[-1]) + 1
+            except (ValueError, IndexError):
+                new_seq = 1
+        new_seq = apply_voucher_number_settings(cursor, company_id, voucher_type, full_prefix, new_seq)
+        voucher_number = f"{full_prefix}-{str(new_seq).zfill(6)}"
         
         cursor.execute("SELECT COALESCE(MAX(voucher_id),0)+1 as next_id FROM vouchers WHERE company_id = %s", (company_id,))
         next_vid_res = cursor.fetchone()
@@ -125,9 +141,15 @@ def add_additional_charges_voucher(date, linked_voucher_number, charges, narrati
         
         # 2. Insert Voucher Header
         cursor.execute("""
-            INSERT INTO vouchers (company_id, voucher_number, voucher_type, date, posting_date, amount, narration, entry_date, voucher_id, linked_voucher_number)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (company_id, voucher_number, voucher_type, date, posting_date, total_voucher_amount, narration, entry_date, next_vid, linked_voucher_number))
+            INSERT INTO vouchers (company_id, voucher_number, voucher_type, date, posting_date, amount, narration, entry_date, voucher_id, linked_voucher_number, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (company_id, voucher_number, voucher_type, date, posting_date, total_voucher_amount, narration, entry_date, next_vid, linked_voucher_number, get_current_username()))
+
+        cursor.execute(
+            "INSERT INTO audit_trail (company_id, voucher_number, action, username, details, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (company_id, voucher_number, 'CREATE', get_current_username(),
+             f"{voucher_type} voucher dated {date}, amount {round(total_voucher_amount, 2)}", entry_date)
+        )
         
         # 3. Fetch Linked Purchase Invoice Items
         cursor.execute("""
@@ -246,14 +268,14 @@ def add_additional_charges_voucher(date, linked_voucher_number, charges, narrati
         for p_ledger, p_amount in party_credits.items():
             if p_amount <= 0: continue
             
-            # Verify Party Ledger Exists
-            cursor.execute("SELECT COUNT(*) as count FROM ledgers WHERE company_id = %s AND ledger_name = %s", (company_id, p_ledger))
+            # Verify Party Ledger Exists and is not blocked
+            cursor.execute("SELECT COALESCE(is_active, 1) FROM ledgers WHERE company_id = %s AND ledger_name = %s", (company_id, p_ledger))
             res = cursor.fetchone()
-            exists = 0
-            if res:
-                 exists = res['count'] if isinstance(res, dict) or hasattr(res, 'keys') else res[0]
-            if exists == 0:
+            if not res:
                 raise ValueError(f"Party Ledger '{p_ledger}' does not exist. Please create it first.")
+            active_flag = res['coalesce'] if hasattr(res, 'keys') else res[0]
+            if not active_flag:
+                raise ValueError(f"Party Ledger '{p_ledger}' is blocked. Unblock it in Manage Ledgers to use it.")
 
             # Credit Party
             cursor.execute("""
@@ -583,6 +605,33 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
     
     if fy['is_locked'] and not allow_locked_fy:
         raise Exception(f"Financial Year {fy['fy_code']} is locked. Cannot add voucher.")
+
+    # Blocked masters: reject vouchers referencing blocked ledgers or items.
+    # Enforced here so manual entry, Excel import and chatbot behave identically.
+    _check_conn = db_connection or get_connection()
+    try:
+        _cur = _check_conn.cursor()
+        entry_ledger_names = {e.get('ledger_name') for e in (ledger_entries or []) if e.get('ledger_name')}
+        if entry_ledger_names:
+            _cur.execute(
+                "SELECT ledger_name FROM ledgers WHERE company_id = %s AND COALESCE(is_active,1) = 0 AND ledger_name = ANY(%s)",
+                (company_id, list(entry_ledger_names))
+            )
+            blocked = [r[0] for r in _cur.fetchall()]
+            if blocked:
+                raise Exception(f"Ledger(s) blocked: {', '.join(blocked)}. Unblock them in Manage Ledgers to use them.")
+        entry_item_names = {e.get('item_name') for e in (item_entries or []) if e.get('item_name')}
+        if entry_item_names:
+            _cur.execute(
+                "SELECT name FROM inventory WHERE company_id = %s AND COALESCE(is_active,1) = 0 AND name = ANY(%s)",
+                (company_id, list(entry_item_names))
+            )
+            blocked_items = [r[0] for r in _cur.fetchall()]
+            if blocked_items:
+                raise Exception(f"Item(s) blocked: {', '.join(blocked_items)}. Unblock them in Manage Inventory to use them.")
+    finally:
+        if db_connection is None:
+            _check_conn.close()
 
     if db_connection:
         conn = db_connection
@@ -921,7 +970,12 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
             except (ValueError, TypeError):
                 pass
 
-        cursor.execute("SELECT voucher_number FROM vouchers WHERE company_id = %s AND voucher_number LIKE %s ORDER BY length(voucher_number) DESC, voucher_number DESC LIMIT 1", (company_id, f"{prefix}-%"))
+        # FY-level numbering: the financial year is part of the prefix
+        # (e.g. FY23-SAL-000001), so each FY restarts from 1 and the same
+        # number can exist across years.
+        fy_tag = f"FY{str(fy['start_date'])[2:4]}"
+        full_prefix = f"{fy_tag}-{prefix}"
+        cursor.execute("SELECT voucher_number FROM vouchers WHERE company_id = %s AND voucher_number LIKE %s ORDER BY length(voucher_number) DESC, voucher_number DESC LIMIT 1", (company_id, f"{full_prefix}-%"))
         row = cursor.fetchone()
         if row:
             last_no = row['voucher_number'] if isinstance(row, dict) or hasattr(row, 'keys') else row[0]
@@ -934,7 +988,9 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
         else:
             new_seq = 1
 
-        voucher_number = f"{prefix}-{str(new_seq).zfill(5)}"
+        new_seq = apply_voucher_number_settings(cursor, company_id, voucher_type, full_prefix, new_seq)
+
+        voucher_number = f"{full_prefix}-{str(new_seq).zfill(6)}"
         cursor.execute("SELECT COALESCE(MAX(voucher_id),0)+1 as next_id FROM vouchers WHERE company_id = %s", (company_id,))
         row_vid = cursor.fetchone()
         if isinstance(row_vid, dict) or hasattr(row_vid, 'keys'):
@@ -944,9 +1000,15 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
         total_amount = total_debit
         
         cursor.execute("""
-            INSERT INTO vouchers (company_id, voucher_number, voucher_type, date, posting_date, amount, cost_center_code, narration, location_name, entry_date, voucher_id, credit_days, due_date, original_invoice_date, original_invoice_ref, linked_voucher_number)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (company_id, voucher_number, voucher_type, date, posting_date, total_amount, cost_center_code, narration, location_name, entry_date, next_vid, credit_days, due_date, original_invoice_date, original_invoice_ref, linked_voucher_number))
+            INSERT INTO vouchers (company_id, voucher_number, voucher_type, date, posting_date, amount, cost_center_code, narration, location_name, entry_date, voucher_id, credit_days, due_date, original_invoice_date, original_invoice_ref, linked_voucher_number, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (company_id, voucher_number, voucher_type, date, posting_date, total_amount, cost_center_code, narration, location_name, entry_date, next_vid, credit_days, due_date, original_invoice_date, original_invoice_ref, linked_voucher_number, get_current_username()))
+
+        cursor.execute(
+            "INSERT INTO audit_trail (company_id, voucher_number, action, username, details, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (company_id, voucher_number, 'CREATE', get_current_username(),
+             f"{voucher_type} voucher dated {date}, amount {round(total_amount, 2)}", entry_date)
+        )
         
         if voucher_type != 'Inventory Transfer':
             for entry in ledger_entries:
@@ -1003,7 +1065,7 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
                 entry['amount'],
                 entry['ledger_name'],
                 entry['type'],
-                entry.get('_location_override', location_name),
+                entry.get('_location_override') or entry.get('location_name') or location_name,
                 entry.get('cost_center_code'),
                 cogs_rate,
                 cogs_amount,
@@ -1559,6 +1621,127 @@ def recalculate_running_balance_for_item(item_name, start_date=None, company_id=
         if should_close:
             conn.close()
 
+def apply_voucher_number_settings(cursor, company_id, voucher_type, prefix, new_seq):
+    """Enforce the admin-assigned upper limit per voucher type (max_number,
+    0 = unlimited). Numbering itself auto-increments per financial year."""
+    try:
+        cursor.execute(
+            "SELECT max_number FROM voucher_number_settings WHERE company_id = %s AND voucher_type = %s",
+            (company_id, voucher_type)
+        )
+        vns = cursor.fetchone()
+    except Exception as e:
+        print(f"voucher_number_settings lookup skipped: {e}")
+        return new_seq
+    if not vns:
+        return new_seq
+    max_number = int(vns[0] or 0)
+    if max_number and new_seq > max_number:
+        raise Exception(
+            f"Voucher number limit reached for {voucher_type}: the next number would be "
+            f"{prefix}-{str(new_seq).zfill(6)} but the allowed range ends at {prefix}-{str(max_number).zfill(6)}. "
+            f"Ask an admin to increase the range in Voucher Numbering."
+        )
+    return new_seq
+
+def remove_item_opening(item_name, location_name, company_id=None, db_connection=None):
+    """Remove existing Opening-voucher entries for (item, location) so a new
+    opening balance can replace them (opening upsert: overwrite same location,
+    keep other locations untouched). Reverses stock and ledger impact; deletes
+    the Opening voucher entirely when this was its only remaining item entry.
+    Returns the number of item entries removed."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        raise Exception("Company ID is required")
+
+    if db_connection:
+        conn = db_connection
+        should_close = False
+    else:
+        conn = get_connection()
+        should_close = True
+    cursor = conn.cursor()
+    loc = location_name or 'Main Location'
+    removed = 0
+    try:
+        cursor.execute("""
+            SELECT ie.id, ie.voucher_number, ie.quantity, ie.amount
+            FROM item_entries ie
+            JOIN vouchers v ON v.voucher_number = ie.voucher_number AND v.company_id = ie.company_id
+            WHERE ie.company_id = %s AND v.voucher_type = 'Opening'
+              AND ie.item_name = %s AND COALESCE(ie.location_name, 'Main Location') = %s
+        """, (company_id, item_name, loc))
+        rows = [(r[0], r[1], float(r[2] or 0), float(r[3] or 0)) for r in cursor.fetchall()]
+        if not rows:
+            return 0
+
+        touched_vouchers = set()
+        for ie_id, vn, qty, amount in rows:
+            touched_vouchers.add(vn)
+            # Reverse stock (Opening entries are Debit/inward)
+            cursor.execute(
+                "UPDATE inventory SET stock_quantity = stock_quantity - %s WHERE company_id = %s AND name = %s",
+                (qty, company_id, item_name)
+            )
+            # Reverse the auto Inventory debit for this line
+            cursor.execute("""
+                UPDATE ledger_entries SET amount = amount - %s
+                WHERE company_id = %s AND voucher_number = %s AND ledger_name = 'Inventory' AND type = 'Debit'
+            """, (amount, company_id, vn))
+            if cursor.rowcount:
+                cursor.execute(
+                    "UPDATE ledgers SET closing_balance = closing_balance - %s WHERE company_id = %s AND ledger_name = 'Inventory'",
+                    (amount, company_id)
+                )
+            # Reduce the balancing credit entry (if any) by the same amount
+            cursor.execute("""
+                SELECT id, ledger_name, amount FROM ledger_entries
+                WHERE company_id = %s AND voucher_number = %s AND type = 'Credit'
+                ORDER BY amount DESC LIMIT 1
+            """, (company_id, vn))
+            cr = cursor.fetchone()
+            if cr:
+                cr_id, cr_ledger, cr_amount = cr[0], cr[1], float(cr[2] or 0)
+                reduce_by = min(cr_amount, amount)
+                cursor.execute("UPDATE ledger_entries SET amount = amount - %s WHERE id = %s AND company_id = %s",
+                               (reduce_by, cr_id, company_id))
+                cursor.execute(
+                    "UPDATE ledgers SET closing_balance = closing_balance + %s WHERE company_id = %s AND ledger_name = %s",
+                    (reduce_by, company_id, cr_ledger)
+                )
+            cursor.execute("UPDATE vouchers SET amount = amount - %s WHERE company_id = %s AND voucher_number = %s",
+                           (amount, company_id, vn))
+            cursor.execute("DELETE FROM item_entries WHERE id = %s AND company_id = %s", (ie_id, company_id))
+            removed += 1
+
+        # Clean up vouchers left with no item entries
+        for vn in touched_vouchers:
+            cursor.execute("SELECT COUNT(*) FROM item_entries WHERE company_id = %s AND voucher_number = %s", (company_id, vn))
+            if (cursor.fetchone()[0] or 0) == 0:
+                cursor.execute("DELETE FROM ledger_entries WHERE company_id = %s AND voucher_number = %s", (company_id, vn))
+                cursor.execute("DELETE FROM vouchers WHERE company_id = %s AND voucher_number = %s", (company_id, vn))
+            else:
+                # Drop zeroed ledger entries
+                cursor.execute("DELETE FROM ledger_entries WHERE company_id = %s AND voucher_number = %s AND ABS(amount) < 0.005", (company_id, vn))
+            cursor.execute(
+                "INSERT INTO audit_trail (company_id, voucher_number, action, username, details) VALUES (%s, %s, %s, %s, %s)",
+                (company_id, vn, 'UPDATE', get_current_username(),
+                 f"Replaced opening for item '{item_name}' at location '{loc}'")
+            )
+
+        if should_close:
+            conn.commit()
+            recalculate_running_balance_for_item(item_name, None, company_id=company_id)
+        return removed
+    except Exception as e:
+        if should_close:
+            conn.rollback()
+        raise Exception(f"Error replacing item opening: {str(e)}")
+    finally:
+        if should_close:
+            conn.close()
+
 def delete_voucher(voucher_number, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -1612,7 +1795,13 @@ def delete_voucher(voucher_number, company_id=None):
         cursor.execute("DELETE FROM item_entries WHERE company_id = %s AND voucher_number = %s", (company_id, voucher_number))
         cursor.execute("DELETE FROM ledger_entries WHERE company_id = %s AND voucher_number = %s", (company_id, voucher_number))
         cursor.execute("DELETE FROM vouchers WHERE company_id = %s AND voucher_number = %s", (company_id, voucher_number))
-        
+
+        cursor.execute(
+            "INSERT INTO audit_trail (company_id, voucher_number, action, username, details) VALUES (%s, %s, %s, %s, %s)",
+            (company_id, voucher_number, 'DELETE', get_current_username(),
+             f"Deleted {v_type} voucher dated {v_date}")
+        )
+
         conn.commit()
         
         # Recalculate WAP for affected items
@@ -1689,6 +1878,10 @@ def update_voucher_entries(voucher_number, item_entries, ledger_entries, narrati
     cursor = conn.cursor()
     try:
         cursor.execute("UPDATE vouchers SET narration = %s WHERE company_id = %s AND voucher_number = %s", (narration, company_id, voucher_number))
+        cursor.execute(
+            "INSERT INTO audit_trail (company_id, voucher_number, action, username, details) VALUES (%s, %s, %s, %s, %s)",
+            (company_id, voucher_number, 'UPDATE', get_current_username(), "Voucher entries updated")
+        )
         conn.commit()
     finally:
         conn.close()

@@ -28,6 +28,15 @@
 <div class="dashboard-section d-flex align-items-center gap-3 flex-wrap">
     <label style="font-size:.85rem;font-weight:500;">As of Date</label>
     <input type="text" id="as_of_date" placeholder="DD-MM-YYYY" style="width:140px;" readonly>
+    {% if switcher_locations %}
+    <label style="font-size:.85rem;font-weight:500;">Location</label>
+    <select id="report_location" style="min-width:150px;">
+        <option value="">All Locations</option>
+        {% for loc in switcher_locations %}
+        <option value="{{ loc.location_name }}">{{ loc.location_name }}</option>
+        {% endfor %}
+    </select>
+    {% endif %}
     <button class="btn btn-primary" onclick="fetchTrialBalance()">Show</button>
     <button class="btn btn-outline-success" onclick="exportTrialBalance()">Export to Excel</button>
 </div>
@@ -68,7 +77,9 @@ function fetchTrialBalance() {
     const asOfDate = document.getElementById('as_of_date').value;
     if (!asOfDate) { alert('Please select a date.'); return; }
     const iso = toISO(asOfDate);
-    fetch(`/get_trial_balance?as_of_date=${asOfDate}`)
+    const locEl = document.getElementById('report_location');
+    const locParam = (locEl && locEl.value) ? `&location=${encodeURIComponent(locEl.value)}` : '';
+    fetch(`/get_trial_balance?as_of_date=${asOfDate}${locParam}`)
         .then(r => r.json())
         .then(data => {
             const tbody = document.getElementById('trialBalanceBody');

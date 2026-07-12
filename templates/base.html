@@ -32,11 +32,27 @@
             {% if session.get('company_name') %}
             <span class="company-badge">{{ session.get('company_name') }}</span>
             {% endif %}
+            {% if current_user.is_authenticated and switcher_locations %}
+            <form method="POST" action="{{ url_for('company_bp.set_active_location') }}" class="location-switcher"
+                style="display:inline-flex; align-items:center; gap:5px; margin-left:12px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                <span title="Active Location" style="font-size:14px;">📍</span>
+                <select name="location_name" onchange="this.form.submit()" title="Switch Active Location"
+                    style="max-width:180px; padding:2px 6px; border-radius:4px; font-size:13px;">
+                    {% for loc in switcher_locations %}
+                    <option value="{{ loc.location_name }}" {% if loc.location_name == active_location %}selected{% endif %}>
+                        {{ loc.location_name }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% endif %}
         </div>
 
         {% if current_user.is_authenticated %}
         <ul class="nav-menu">
+            {% if not (current_user.is_authenticated and current_user.hide_dashboard and not current_user.is_admin) %}
             <li><a href="{{ url_for('dashboard_bp.dashboard') }}">Dashboard</a></li>
+            {% endif %}
 
             {% if can_access('accounting_master') %}
             <li class="dropdown">
@@ -53,6 +69,8 @@
                     {% endif %}
                     {% if can_access('accounting_master.ledgers') %}
                     <li><a href="{{ url_for('master_bp.manage_ledgers') }}">Manage Ledgers</a></li>
+                    <li><a href="{{ url_for('master_bp.manage_parties', kind='customers') }}">Manage Customers</a></li>
+                    <li><a href="{{ url_for('master_bp.manage_parties', kind='vendors') }}">Manage Vendors</a></li>
                     {% endif %}
                     {% if can_access('accounting_master.credit_terms') %}
                     <li><a href="{{ url_for('master_bp.manage_credit_terms') }}">Manage Credit Terms</a></li>
@@ -110,6 +128,7 @@
                     {% endif %}
                     {% if can_access('inventory_master.inventory') %}
                     <li><a href="{{ url_for('master_bp.manage_inventory') }}">Manage Inventory</a></li>
+                    <li><a href="{{ url_for('master_bp.manage_selling_prices') }}">Selling Price Master</a></li>
                     {% endif %}
                     {% if can_access('inventory_master.vendor_item_mappings') %}
                     <li><a href="{{ url_for('master_bp.vendor_item_mappings') }}">Vendor Item Mappings</a></li>
@@ -150,6 +169,7 @@
                         <a href="#" class="dropdown-toggle">Registers</a>
                         <ul class="dropdown-menu">
                             <li><a href="{{ url_for('report_bp.report_daybook') }}">Daybook</a></li>
+                            <li><a href="{{ url_for('report_bp.report_gl_dump') }}">GL Dump</a></li>
                             {% if company and company.inventory_applicable == 1 %}
                             <li><a href="{{ url_for('report_bp.report_register', voucher_type='Sales') }}">Sales
                                     Register</a></li>
@@ -223,6 +243,7 @@
                             <li><a href="{{ url_for('report_bp.report_vat_summary') }}">VAT Summary</a></li>
                             <li><a href="{{ url_for('report_bp.report_vat_detailed') }}">VAT Detailed</a></li>
                             <li><a href="{{ url_for('report_bp.report_vat_expense') }}">Expense VAT</a></li>
+                            <li><a href="{{ url_for('report_bp.report_vat_service_income') }}">Service Income VAT</a></li>
                         </ul>
                     </li>
                     {% endif %}
@@ -233,6 +254,8 @@
                         <a href="#" class="dropdown-toggle">Other</a>
                         <ul class="dropdown-menu">
                             <li><a href="{{ url_for('report_bp.report_ageing') }}">Ageing Report</a></li>
+                            <li><a href="{{ url_for('report_bp.report_inventory_ageing') }}">Inventory Ageing</a></li>
+                            <li><a href="{{ url_for('report_bp.report_party_matching') }}">Party Matching</a></li>
                         </ul>
                     </li>
                     {% endif %}
@@ -244,6 +267,7 @@
             <li class="dropdown">
                 <a href="#" class="dropdown-toggle">Print</a>
                 <ul class="dropdown-menu">
+                    <li><a href="{{ url_for('print_bp.print_documents') }}">Print Documents</a></li>
                     {% if can_access('print.jv_print') %}
                     <li><a href="{{ url_for('print_bp.print_jv') }}">JV print</a></li>
                     {% endif %}
@@ -268,6 +292,9 @@
                     {% endif %}
                     {% if can_access('setup.voucher_config') %}
                     <li><a href="{{ url_for('admin_config_bp.voucher_config_page') }}">Voucher Configuration</a></li>
+                    {% endif %}
+                    {% if current_user.is_authenticated and current_user.is_admin %}
+                    <li><a href="{{ url_for('admin_config_bp.voucher_numbering_page') }}">Voucher Numbering</a></li>
                     {% endif %}
                     {% if can_access('setup.user_management') %}
                     <li><a href="{{ url_for('auth_bp.admin') }}">User Management</a></li>

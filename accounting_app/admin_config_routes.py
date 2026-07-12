@@ -53,6 +53,132 @@ def save_config_api():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
+VOUCHER_PREFIXES = {
+    "Sales": "SAL", "Sales Return": "SR", "Purchase": "PUR", "Purchase Return": "PR",
+    "Receipt": "REC", "Payment": "PAY", "Contra": "CON", "Journal": "JOU",
+    "Expense": "EXP", "Service Income": "SRV", "Service Income Return": "SER",
+    "Stock Adjustment": "SAD", "Inventory Transfer": "ITR", "Opening": "OPEN",
+    "Settlement": "S",  # Matching/Settlement vouchers
+    "Additional Charge": "ADD",
+}
+
+
+def _current_fy_tag(company_id):
+    from database.financial_year_db import get_fy_by_date
+    from datetime import datetime
+    try:
+        fy = get_fy_by_date(datetime.today().strftime('%Y-%m-%d'), company_id=company_id)
+        if fy:
+            return f"FY{str(fy['start_date'])[2:4]}"
+    except Exception:
+        pass
+    return "FY??"
+
+
+def _last_used_number(cursor, company_id, voucher_type, full_prefix):
+    table, col = ("settlements", "settlement_number") if voucher_type == "Settlement" else ("vouchers", "voucher_number")
+    cursor.execute(
+        f"SELECT {col} FROM {table} WHERE company_id = %s AND {col} LIKE %s ORDER BY length({col}) DESC, {col} DESC LIMIT 1",
+        (company_id, f"{full_prefix}-%")
+    )
+    r = cursor.fetchone()
+    if r:
+        try:
+            return int(str(r[0]).split('-')[-1])
+        except (ValueError, IndexError):
+            pass
+    return 0
+
+
+def _voucher_numbering_rows(company_id, fy_tag=None):
+    from database.config import get_connection
+    if not fy_tag:
+        fy_tag = _current_fy_tag(company_id)
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT voucher_type, COALESCE(max_number, 0) FROM voucher_number_settings WHERE company_id = %s", (company_id,))
+        settings = {r[0]: int(r[1] or 0) for r in cursor.fetchall()}
+        rows = []
+        for vtype, prefix in VOUCHER_PREFIXES.items():
+            full_prefix = f"{fy_tag}-{prefix}"
+            last_used = _last_used_number(cursor, company_id, vtype, full_prefix)
+            rows.append({
+                "voucher_type": vtype,
+                "prefix": full_prefix,
+                "last_used": last_used,
+                "effective_next": last_used + 1,
+                "max_number": settings.get(vtype, 0),
+            })
+        return rows, fy_tag
+    finally:
+        conn.close()
+
+
+@admin_config_bp.route("/admin/voucher_numbering")
+@login_required
+def voucher_numbering_page():
+    """Admin-only: assign the next voucher number per type (prefix fixed)."""
+    if not current_user.is_admin:
+        return jsonify({"success": False, "message": "Admin access only"}), 403
+    from database.company_db import get_current_company_id
+    from database.financial_year_db import get_all_fys
+    company_id = get_current_company_id()
+    # All defined FYs (newest first) for the year selector
+    fys = get_all_fys() or []
+    fy_tags = [f"FY{str(fy['start_date'])[2:4]}" for fy in fys]
+    selected = (request.args.get("fy") or "").strip() or _current_fy_tag(company_id)
+    if fy_tags and selected not in fy_tags:
+        selected = fy_tags[0]
+    rows, fy_tag = _voucher_numbering_rows(company_id, fy_tag=selected)
+    return render_template("admin/voucher_numbering.html", rows=rows, fy_tag=fy_tag,
+                           fy_tags=fy_tags, current_fy=_current_fy_tag(company_id),
+                           username=current_user.username)
+
+
+@admin_config_bp.route("/api/save_voucher_numbering", methods=["POST"])
+@login_required
+def save_voucher_numbering():
+    if not current_user.is_admin:
+        return jsonify({"success": False, "message": "Admin access only"}), 403
+    data = request.get_json() or {}
+    voucher_type = data.get("voucher_type")
+    if voucher_type not in VOUCHER_PREFIXES:
+        return jsonify({"success": False, "message": "Unknown voucher type"}), 400
+    try:
+        max_number = int(data.get("max_number") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "Max number must be a whole number (0 or blank = unlimited)"}), 400
+    if max_number < 0:
+        max_number = 0
+
+    from database.company_db import get_current_company_id
+    from database.config import get_connection
+    company_id = get_current_company_id()
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        fy_tag = _current_fy_tag(company_id)
+        full_prefix = f"{fy_tag}-{VOUCHER_PREFIXES[voucher_type]}"
+        last_used = _last_used_number(cursor, company_id, voucher_type, full_prefix)
+        if max_number and max_number <= last_used:
+            return jsonify({"success": False, "message": f"Max number must be above the last used number in the current FY ({full_prefix}-{str(last_used).zfill(6)})."}), 400
+
+        cursor.execute("""
+            INSERT INTO voucher_number_settings (company_id, voucher_type, next_number, max_number)
+            VALUES (%s, %s, 1, %s)
+            ON CONFLICT (company_id, voucher_type) DO UPDATE SET max_number = EXCLUDED.max_number
+        """, (company_id, voucher_type, max_number))
+        conn.commit()
+        limit_txt = f"vouchers allowed up to {full_prefix}-{str(max_number).zfill(6)} per FY" if max_number else "no upper limit"
+        return jsonify({"success": True, "message": f"{voucher_type}: {limit_txt}."})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
+    finally:
+        conn.close()
+
+
 @admin_config_bp.route("/admin/reset_company", methods=["POST"])
 @login_required
 @admin_required

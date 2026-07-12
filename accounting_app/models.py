@@ -3,7 +3,6 @@ from functools import wraps
 
 from flask import redirect, url_for
 from flask_login import UserMixin, current_user
-import sqlite3
 
 from . import get_db_connection
 from database.company_db import get_current_company_id
@@ -63,7 +62,7 @@ PERMISSION_KEYS = (
 
 
 class User(UserMixin):
-    def __init__(self, id, username, email, password_hash, is_admin, is_principal=0, permissions=None):
+    def __init__(self, id, username, email, password_hash, is_admin, is_principal=0, permissions=None, hide_dashboard=0):
         self.id = id
         self.username = username
         self.email = email
@@ -71,6 +70,7 @@ class User(UserMixin):
         self.is_admin = bool(is_admin)
         self.is_principal = bool(is_principal)
         self.permissions = set(permissions or [])
+        self.hide_dashboard = bool(hide_dashboard)
 
     def can_access(self, perm_key):
         """Admin and Principal users can access every assignable area;
@@ -159,7 +159,7 @@ def get_sales_group_code(company_id=None):
         conn.close()
         print(f"get_sales_group_code: {result[0] if result else None}")
         return result[0] if result else None
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_sales_group_code: {str(e)}")
         return None
 
@@ -178,7 +178,7 @@ def get_purchase_group_code(company_id=None):
         conn.close()
         print(f"get_purchase_group_code: {result[0] if result else None}")
         return result[0] if result else None
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_purchase_group_code: {str(e)}")
         return None
 
@@ -198,7 +198,7 @@ def get_cost_center_code(cost_center_name, company_id=None):
         code = result[0] if result else None
         print(f"Cost center code for {cost_center_name}: {code}")
         return code
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_cost_center_code: {str(e)}")
         return None
 
@@ -270,7 +270,7 @@ def get_ledger_group_name_map(company_id=None):
         mapping = {name: group for (name, group) in rows}
         print(f"Ledger->Group map: {mapping}")
         return mapping
-    except sqlite3.Error as e:
+    except Exception as e:
         print(f"Error in get_ledger_group_name_map: {str(e)}")
         return {}
 

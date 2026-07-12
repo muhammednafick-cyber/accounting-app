@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Voucher Numbering{% endblock %}
+
+{% block content %}
+<h1>Voucher Numbering — {{ fy_tag }}{% if fy_tag == current_fy %} (current){% endif %}</h1>
+<p style="color:#666; max-width:760px;">Voucher numbers are per financial year: the FY is part of the number
+(e.g. <strong>{{ fy_tag }}-SAL-000001</strong>) and numbering restarts from 1 each year, so the same number can
+exist in different years. Numbers auto-increment; here you only set the <strong>maximum number allowed per FY</strong>
+for each voucher type — the limit is set <strong>once and applies to every financial year</strong> (each year gets its
+own full range). Once a year's limit is reached, no more vouchers of that type can be created in that year until an
+admin increases it (0 or blank = unlimited). Includes Settlement (Matching) vouchers.</p>
+
+{% if fy_tags %}
+<div style="margin-bottom:14px;">
+    <label style="font-weight:600;">View usage for Financial Year:</label>
+    <select onchange="window.location.href='/admin/voucher_numbering?fy=' + this.value" style="min-width:120px;">
+        {% for t in fy_tags %}
+        <option value="{{ t }}" {% if t == fy_tag %}selected{% endif %}>{{ t }}{% if t == current_fy %} (current){% endif %}</option>
+        {% endfor %}
+    </select>
+</div>
+{% endif %}
+
+<div style="max-width:780px; overflow-x:auto;">
+    <table border="1" cellspacing="0" cellpadding="6" style="width:100%; border-collapse:collapse;">
+        <thead>
+            <tr style="background:#2563AB; color:#fff;">
+                <th style="text-align:left;">Voucher Type</th>
+                <th>Prefix</th>
+                <th style="text-align:right;">Last Used ({{ fy_tag }})</th>
+                <th style="text-align:right;">Next Number</th>
+                <th>Max Number (0 = unlimited)</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td>{{ r.voucher_type }}</td>
+                <td style="text-align:center;">{{ r.prefix }}-</td>
+                <td style="text-align:right;">{{ '%06d' % r.last_used if r.last_used else '—' }}</td>
+                <td style="text-align:right;"><strong>{{ '%06d' % r.effective_next }}</strong></td>
+                <td style="text-align:center;">
+                    <input type="number" id="vm_{{ loop.index }}" min="0" value="{{ r.max_number }}" style="width:120px; text-align:right;">
+                </td>
+                <td>
+                    <button type="button" class="btn" style="padding:2px 12px; background:#27ae60; color:#fff;"
+                        onclick="saveNumbering('{{ r.voucher_type|e }}', 'vm_{{ loop.index }}')">Save</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<div id="vnMessage" style="margin-top:12px; font-weight:bold;"></div>
+
+<script>
+    function saveNumbering(voucherType, maxInputId) {
+        const maxVal = document.getElementById(maxInputId).value;
+        fetch('/api/save_voucher_numbering', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ voucher_type: voucherType, max_number: parseInt(maxVal || '0', 10) })
+        })
+        .then(r => r.json())
+        .then(d => {
+            const el = document.getElementById('vnMessage');
+            el.textContent = d.message;
+            el.style.color = d.success ? '#27ae60' : '#e74c3c';
+            if (d.success) setTimeout(() => location.reload(), 900);
+        })
+        .catch(e => { alert('Error: ' + e); });
+    }
+</script>
+{% endblock %}

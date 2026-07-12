@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Party Matching{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+{% endblock %}
+
+{% block content %}
+    <h1>Debtors / Creditors Matching</h1>
+    <form class="dashboard-section">
+        <div class="entry">
+            <label for="party_type">Party Type:</label>
+            <select id="party_type" class="input-standard-width" onchange="fillLedgers()">
+                <option value="debtors">Debtor (Customer)</option>
+                <option value="creditors">Creditor (Supplier)</option>
+            </select>
+        </div>
+        <div class="entry">
+            <label for="ledger_name">Party:</label>
+            <select id="ledger_name" class="select2 input-standard-width" data-placeholder="Select Party">
+                <option></option>
+            </select>
+        </div>
+        <div class="entry">
+            <label for="from_date">From:</label>
+            <input type="text" id="from_date" class="input-standard-width" placeholder="DD-MM-YYYY">
+        </div>
+        <div class="entry">
+            <label for="to_date">To:</label>
+            <input type="text" id="to_date" class="input-standard-width" placeholder="DD-MM-YYYY">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="fetchReport()">Show</button>
+        <button type="button" class="btn btn-info" onclick="exportCSV()">Export CSV</button>
+    </form>
+
+    <div style="margin-top: 20px; overflow-x:auto;">
+        <table id="reportTable" class="table-bordered" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Voucher No.</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th style="text-align:right;">Debit</th>
+                    <th style="text-align:right;">Credit</th>
+                    <th>Matching Reference</th>
+                    <th style="text-align:right;">Matched Amount</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="reportBody"></tbody>
+            <tfoot id="reportFoot"></tfoot>
+        </table>
+    </div>
+
+    <script>
+        const DEBTORS = {{ debtors | map(attribute='ledger_name') | list | tojson }};
+        const CREDITORS = {{ creditors | map(attribute='ledger_name') | list | tojson }};
+        let lastData = [];
+
+        function fillLedgers() {
+            const type = document.getElementById('party_type').value;
+            const list = type === 'debtors' ? DEBTORS : CREDITORS;
+            const sel = $('#ledger_name');
+            sel.empty().append('<option></option>');
+            list.forEach(n => sel.append(new Option(n, n)));
+            sel.trigger('change');
+        }
+
+        $(document).ready(function() {
+            $('.select2').select2({ allowClear: true, placeholder: function() { return $(this).data('placeholder'); } });
+            fillLedgers();
+        });
+
+        function toISO(d) {
+            if (!d) return '';
+            const p = d.split('-');
+            return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : d;
+        }
+
+        function fetchReport() {
+            const ledger = document.getElementById('ledger_name').value;
+            if (!ledger) { alert('Please select a party.'); return; }
+            let url = `/get_party_matching?ledger_name=${encodeURIComponent(ledger)}`;
+            const f = toISO(document.getElementById('from_date').value);
+            const t = toISO(document.getElementById('to_date').value);
+            if (f) url += `&from_date=${f}`;
+            if (t) url += `&to_date=${t}`;
+
+            fetch(url).then(r => r.json()).then(resp => {
+                const tbody = document.getElementById('reportBody');
+                const tfoot = document.getElementById('reportFoot');
+                tbody.innerHTML = ''; tfoot.innerHTML = '';
+                if (!resp.success) { alert('Error: ' + resp.message); return; }
+                lastData = resp.data;
+                if (lastData.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">No transactions found</td></tr>';
+                    return;
+                }
+                let totD = 0, totC = 0;
+                lastData.forEach(r => {
+                    totD += r.debit; totC += r.credit;
+                    const statusColor = r.status === 'Matched' ? 'green' : (r.status === 'Partial' ? 'orange' : (r.status === 'Referenced' ? '#2563ab' : '#c0392b'));
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${r.date}</td>
+                        <td>${r.voucher_number}</td>
+                        <td>${r.voucher_type}</td>
+                        <td>${r.description}</td>
+                        <td style="text-align:right;">${r.debit ? r.debit.toFixed(2) : ''}</td>
+                        <td style="text-align:right;">${r.credit ? r.credit.toFixed(2) : ''}</td>
+                        <td>${r.match_ref}</td>
+                        <td style="text-align:right;">${r.matched_amount ? r.matched_amount.toFixed(2) : ''}</td>
+                        <td style="color:${statusColor}; font-weight:600;">${r.status}</td>`;
+                    tbody.appendChild(row);
+                });
+                tfoot.innerHTML = `<tr style="font-weight:bold; border-top:2px solid #444;">
+                    <td colspan="4" style="text-align:right;">Totals</td>
+                    <td style="text-align:right;">${totD.toFixed(2)}</td>
+                    <td style="text-align:right;">${totC.toFixed(2)}</td>
+                    <td colspan="2" style="text-align:right;">Balance</td>
+                    <td style="text-align:right;">${(totD - totC).toFixed(2)}</td></tr>`;
+            }).catch(e => { console.error(e); alert('Error fetching report.'); });
+        }
+
+        function exportCSV() {
+            if (!lastData.length) { alert('Run the report first.'); return; }
+            const header = ['Date','Voucher No','Type','Description','Debit','Credit','Matching Reference','Matched Amount','Status'];
+            const lines = [header.join(',')];
+            lastData.forEach(r => {
+                const esc = s => `"${String(s == null ? '' : s).replace(/"/g, '""')}"`;
+                lines.push([r.date, r.voucher_number, r.voucher_type, esc(r.description), r.debit, r.credit, esc(r.match_ref), r.matched_amount, r.status].join(','));
+            });
+            const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `party_matching_${document.getElementById('ledger_name').value}.csv`;
+            a.click();
+        }
+    </script>
+{% endblock %}

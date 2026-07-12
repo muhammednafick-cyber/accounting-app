@@ -21,9 +21,10 @@ def add_user(username, email, password_hash, is_admin=0, is_principal=0):
     return master_add_user(username, email, password_hash, is_admin, is_principal)
 
 def _tuple(user):
-    # id, username, email, password_hash, is_admin, is_principal
+    # id, username, email, password_hash, is_admin, is_principal, hide_dashboard
     return (user['id'], user['username'], user['email'], user['password_hash'],
-            user['is_admin'], user.get('is_principal', 0) or 0)
+            user['is_admin'], user.get('is_principal', 0) or 0,
+            user.get('hide_dashboard', 0) or 0)
 
 def get_user_by_username(username):
     user = master_get_user_by_username(username)
@@ -44,7 +45,8 @@ def get_all_users():
     result = []
     for user in users:
         result.append((user['id'], user['username'], user['email'],
-                       user['is_admin'], user.get('is_principal', 0) or 0))
+                       user['is_admin'], user.get('is_principal', 0) or 0,
+                       user.get('hide_dashboard', 0) or 0))
     return result
 
 def update_user(user_id, email, password_hash=None):

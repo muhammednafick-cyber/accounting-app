@@ -33,6 +33,12 @@ def init_unified_db():
     except Exception:
         pass  # SQLite has no IF NOT EXISTS on ADD COLUMN; ignore if exists
 
+    # Hide-dashboard flag: users land on Vouchers instead of the Dashboard
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_dashboard INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
     # Per-user menu permissions
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_permissions (
@@ -137,6 +143,19 @@ def init_unified_db():
         )
     """)
 
+    # Per-user allowed locations (empty = all locations; admins always all)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_locations (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL,
+            location_name TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(user_id, company_id, location_name)
+        )
+    """)
+
     # Master Groups (NEW)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS master_groups (
@@ -202,11 +221,93 @@ def init_unified_db():
             closing_balance DOUBLE PRECISION DEFAULT 0,
             sub_group_id INTEGER,
             credit_days INTEGER DEFAULT 0,
+            opening_balance_date TEXT,
             FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
             FOREIGN KEY (company_id, group_code) REFERENCES groups(company_id, group_code),
             FOREIGN KEY (sub_group_id) REFERENCES sub_groups(id),
             UNIQUE(company_id, ledger_code),
             UNIQUE(company_id, ledger_name)
+        )
+    """)
+
+    # Add opening_balance_date column to ledgers if it doesn't exist (for existing DBs)
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='ledgers' AND column_name='opening_balance_date'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE ledgers ADD COLUMN opening_balance_date TEXT")
+
+    # Blocked/active flag for ledgers (blocked ledgers can't be used in new vouchers)
+    cursor.execute("ALTER TABLE ledgers ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1")
+
+    # Party (Customer/Vendor) details — printed on Tax Invoices / Purchase docs
+    cursor.execute("ALTER TABLE ledgers ADD COLUMN IF NOT EXISTS address TEXT")
+    cursor.execute("ALTER TABLE ledgers ADD COLUMN IF NOT EXISTS contact_person TEXT")
+    cursor.execute("ALTER TABLE ledgers ADD COLUMN IF NOT EXISTS phone TEXT")
+    cursor.execute("ALTER TABLE ledgers ADD COLUMN IF NOT EXISTS email TEXT")
+    cursor.execute("ALTER TABLE ledgers ADD COLUMN IF NOT EXISTS trn TEXT")
+
+    # Ledger renames must cascade to tables referencing ledgers by name
+    for tbl, con in (
+        ('ledger_entries', 'ledger_entries_company_id_ledger_name_fkey'),
+        ('item_entries', 'item_entries_company_id_ledger_name_fkey'),
+        ('settlements', 'settlements_company_id_ledger_name_fkey'),
+    ):
+        try:
+            cursor.execute(f"""
+                SELECT 1 FROM pg_constraint WHERE conname = '{con}'
+                  AND pg_get_constraintdef(oid) NOT ILIKE '%%ON UPDATE CASCADE%%'
+            """)
+            if cursor.fetchone():
+                cursor.execute(f"ALTER TABLE {tbl} DROP CONSTRAINT {con}")
+                cursor.execute(f"""
+                    ALTER TABLE {tbl} ADD CONSTRAINT {con}
+                    FOREIGN KEY (company_id, ledger_name)
+                    REFERENCES ledgers(company_id, ledger_name) ON UPDATE CASCADE
+                """)
+        except Exception as e:
+            print(f"FK cascade migration skipped for {tbl}: {e}")
+
+    # Ledger Opening Balances per Location
+    cursor.execute("SELECT to_regclass('ledger_opening_balances')")
+    lob_exists = cursor.fetchone()[0] is not None
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ledger_opening_balances (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            ledger_code TEXT NOT NULL,
+            location_name TEXT NOT NULL,
+            opening_balance DOUBLE PRECISION DEFAULT 0,
+            opening_balance_type TEXT DEFAULT 'Debit',
+            opening_balance_date TEXT,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(company_id, ledger_code, location_name)
+        )
+    """)
+    if not lob_exists:
+        # One-time migration: move existing single opening balances to each
+        # company's default location (fallback 'Main Location').
+        cursor.execute("""
+            INSERT INTO ledger_opening_balances
+                (company_id, ledger_code, location_name, opening_balance, opening_balance_type, opening_balance_date)
+            SELECT l.company_id, l.ledger_code,
+                   COALESCE((SELECT loc.location_name FROM locations loc
+                             WHERE loc.company_id = l.company_id AND loc.is_default = 1 LIMIT 1), 'Main Location'),
+                   l.opening_balance, COALESCE(l.opening_balance_type, 'Debit'), l.opening_balance_date
+            FROM ledgers l
+            WHERE COALESCE(l.opening_balance, 0) <> 0
+        """)
+
+    # Item Opening Balances per Location
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS item_opening_balances (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            item_code TEXT NOT NULL,
+            location_name TEXT NOT NULL,
+            quantity DOUBLE PRECISION DEFAULT 0,
+            unit_price DOUBLE PRECISION DEFAULT 0,
+            opening_date TEXT,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(company_id, item_code, location_name)
         )
     """)
 
@@ -273,6 +374,12 @@ def init_unified_db():
         )
     """)
 
+    # Blocked/active flag for items (blocked items can't be used in new vouchers)
+    cursor.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1")
+
+    # Item names must be unique per company regardless of case/spacing
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_name_ci ON inventory (company_id, LOWER(TRIM(name)))")
+
     # Vouchers
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vouchers (
@@ -293,11 +400,32 @@ def init_unified_db():
             original_invoice_ref TEXT,
             linked_voucher_number TEXT,
             posting_date TEXT,
+            created_by TEXT,
             FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
             FOREIGN KEY (company_id, cost_center_code) REFERENCES cost_centers(company_id, center_code),
             UNIQUE(company_id, voucher_number)
         )
     """)
+
+    # Add created_by column to vouchers if it doesn't exist (for existing DBs)
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='vouchers' AND column_name='created_by'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE vouchers ADD COLUMN created_by TEXT")
+
+    # Audit Trail: one row per action on a transaction (create / update / delete)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_trail (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            voucher_number TEXT,
+            action TEXT NOT NULL,
+            username TEXT,
+            details TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_trail_voucher ON audit_trail (company_id, voucher_number)")
 
     # Additional Charge Entries
     cursor.execute("""
@@ -413,6 +541,22 @@ def init_unified_db():
         )
     """)
 
+    # Voucher numbering: admin-assigned next number per voucher type
+    # (prefix is fixed; number can only be increased)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS voucher_number_settings (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            voucher_type TEXT NOT NULL,
+            next_number INTEGER NOT NULL DEFAULT 1,
+            max_number INTEGER DEFAULT 0,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(company_id, voucher_type)
+        )
+    """)
+    # Upper limit per voucher type (0 = unlimited) — for existing DBs
+    cursor.execute("ALTER TABLE voucher_number_settings ADD COLUMN IF NOT EXISTS max_number INTEGER DEFAULT 0")
+
     # Voucher Type Configs
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS voucher_type_configs (
@@ -517,6 +661,19 @@ def init_unified_db():
             setting_value TEXT,
             FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
             UNIQUE(company_id, setting_key)
+        )
+    """)
+
+    # Selling Price Master (maintained separately from the inventory item master)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS selling_prices (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            item_code TEXT NOT NULL,
+            selling_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+            updated_at TEXT,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(company_id, item_code)
         )
     """)
 

@@ -2,11 +2,12 @@
 Modular database package for accounting app
 """
 
-from .config import DB_PATH, get_connection, execute_insert_returning_id
+from .config import get_connection, execute_insert_returning_id
 from .company_db import *
 from .users_db import *
 from .accounts_db import *
 from .inventory_db import *
+from .selling_price_db import upsert_selling_price, get_selling_price_map, get_selling_prices_with_items
 from .vouchers_db import *
 from .reports_db import *
 from .financial_year_db import *
@@ -38,7 +39,6 @@ def initialize_db():
     print("Database initialization complete via Unified DB Schema!")
 
 __all__ = [
-    'DB_PATH',
     'get_connection',
     'execute_insert_returning_id',
     'initialize_db',
@@ -52,6 +52,10 @@ __all__ = [
     'add_recent_company',
     # Reports
     'get_coa_balances',
+    # Selling Price Master
+    'upsert_selling_price',
+    'get_selling_price_map',
+    'get_selling_prices_with_items',
     # Inventory
     'ensure_default_units',
     'get_inventory_groups',
@@ -62,8 +66,12 @@ __all__ = [
     'delete_unit',
     'add_inventory',
     'get_inventory_details',
+    'get_item_opening_balances',
+    'upsert_item_opening_balance',
+    'remove_item_opening',
     'get_items',
     'delete_inventory',
+    'set_inventory_active',
     # Locations
     'get_locations',
     'get_all_locations',
@@ -72,6 +80,9 @@ __all__ = [
     'delete_location',
     'activate_location',
     'get_default_location',
+    'get_user_locations',
+    'set_user_locations',
+    'coerce_allowed_location',
     # Accounts
     'get_groups',
     'get_master_groups',
@@ -82,6 +93,13 @@ __all__ = [
     'get_ledger_details',
     'add_ledger',
     'delete_ledger',
+    'get_ledger_opening_balances',
+    'upsert_ledger_opening_balance',
+    'set_ledger_active',
+    'update_ledger_master',
+    'update_party_details',
+    'get_party_details',
+    'get_party_ledgers',
     'get_cost_centers',
     'add_cost_center',
     'delete_cost_center',

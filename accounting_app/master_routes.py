@@ -1,7 +1,6 @@
-from flask import Blueprint, render_template, request, jsonify, send_file
+from flask import Blueprint, render_template, request, jsonify, send_file, redirect, url_for
 import datetime
 from flask_login import login_required, current_user
-import sqlite3
 import io
 import xlsxwriter
 
@@ -38,6 +37,8 @@ from database import (
     add_voucher,
     update_ledger_credit_terms,
     get_current_company_id,
+    upsert_selling_price,
+    get_selling_prices_with_items,
 )
 from . import get_db_connection
 from .models import parse_date
@@ -247,19 +248,173 @@ def download_sub_group_template():
     return send_file(output, download_name="SubGroup_Template.xlsx", as_attachment=True)
 
     
+def _active_location_name():
+    """Location that opening balances are saved against: the session's active
+    location (main-menu switcher), falling back to the default location.
+    Clamped to the user's allowed locations for non-admin users."""
+    from flask import session
+    from database import coerce_allowed_location
+    name = (session.get('active_location') or '').strip()
+    if not name:
+        default_loc = get_default_location()
+        name = default_loc['location_name'] if default_loc else 'Main Location'
+    try:
+        name = coerce_allowed_location(name, user_id=current_user.id, is_admin=current_user.is_admin)
+    except Exception:
+        pass
+    return name
+
+
 @master_bp.route("/manage-accounting-master/ledgers")
 @login_required
 def manage_ledgers():
     groups = get_groups()
     sub_groups = get_sub_groups()
     prefill_ledger_name = request.args.get("name", "")
+    from database import get_ledger_details
+    ledgers = get_ledger_details()
     return render_template(
         "ledger.html",
         groups=groups,
         sub_groups=sub_groups,
+        ledgers=ledgers,
         prefill_ledger_name=prefill_ledger_name,
+        opening_location=_active_location_name(),
         username=current_user.username,
     )
+
+
+PARTY_KINDS = {
+    "customers": {"group_code": "G007", "title": "Customers", "singular": "Customer"},
+    "vendors": {"group_code": "G008", "title": "Vendors", "singular": "Vendor"},
+}
+
+
+@master_bp.route("/manage-accounting-master/<kind>")
+@login_required
+def manage_parties(kind):
+    cfg = PARTY_KINDS.get(kind)
+    if not cfg:
+        return redirect(url_for("master_bp.manage_ledgers"))
+    from database import get_party_ledgers
+    parties = get_party_ledgers(cfg["group_code"])
+    return render_template(
+        "party.html",
+        kind=kind,
+        cfg=cfg,
+        parties=parties,
+        opening_location=_active_location_name(),
+        username=current_user.username,
+    )
+
+
+@master_bp.route("/save_party", methods=["POST"])
+@login_required
+def save_party():
+    """Add a Customer/Vendor or update its details (upsert like ledgers)."""
+    kind = request.form.get("kind", "")
+    cfg = PARTY_KINDS.get(kind)
+    if not cfg:
+        return jsonify({"success": False, "message": "Invalid party type"}), 400
+    ledger_code = request.form.get("ledger_code", "").strip()
+    ledger_name = request.form.get("ledger_name", "").strip()
+    opening_balance = request.form.get("opening_balance") or 0
+    opening_balance_type = request.form.get("opening_balance_type", "Debit" if kind == "customers" else "Credit")
+    opening_balance_date = (request.form.get("opening_balance_date") or "").strip()
+    credit_days = request.form.get("credit_days") or 0
+    is_edit = request.form.get("edit_mode") == "1"
+    try:
+        from database import update_party_details, update_ledger_master
+        if is_edit:
+            update_ledger_master(ledger_code, ledger_name, cfg["group_code"])
+        else:
+            if not opening_balance_date:
+                return jsonify({"success": False, "message": "Opening Balance Date is required"}), 400
+            add_ledger(
+                ledger_code, ledger_name, cfg["group_code"], opening_balance, opening_balance_type,
+                credit_days=int(credit_days or 0),
+                opening_balance_date=opening_balance_date,
+                location_name=_active_location_name(),
+            )
+        update_party_details(
+            ledger_code,
+            address=request.form.get("address"),
+            contact_person=request.form.get("contact_person"),
+            phone=request.form.get("phone"),
+            email=request.form.get("email"),
+            trn=request.form.get("trn"),
+        )
+        if not is_edit and int(credit_days or 0) > 0:
+            from database.accounts_db import update_ledger_credit_terms
+            update_ledger_credit_terms(ledger_code, int(credit_days or 0))
+        return jsonify({"success": True, "message": f"{cfg['singular']} saved successfully!"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
+
+@master_bp.route("/download_party_template/<kind>")
+@login_required
+def download_party_template(kind):
+    cfg = PARTY_KINDS.get(kind)
+    if not cfg:
+        return "Unknown party type", 400
+    import io
+    import xlsxwriter
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    worksheet = workbook.add_worksheet(cfg["title"])
+    headers = [
+        "Ledger Code", f"{cfg['singular']} Name", "Opening Balance", "Opening Balance Type",
+        "Opening Balance Date", "Credit Days", "Address", "Contact Person", "Phone", "Email", "TRN"
+    ]
+    header_fmt = workbook.add_format({'bold': True, 'bg_color': '#2563AB', 'font_color': '#FFFFFF'})
+    note_fmt = workbook.add_format({'italic': True, 'font_color': '#666666'})
+    for col, h in enumerate(headers):
+        worksheet.write(0, col, h, header_fmt)
+        worksheet.set_column(col, col, 18)
+    worksheet.freeze_panes(1, 0)
+    default_type = "Debit" if kind == "customers" else "Credit"
+    worksheet.write_row(1, 0, ["L10001", f"Sample {cfg['singular']}", 1000, default_type, "01-01-2026", 30,
+                               "Office 1, Street 2, Dubai", "Mr. Ahmed", "0501234567", "a@b.com", "100123456700003"])
+    worksheet.data_validation(1, 3, 1001, 3, {'validate': 'list', 'source': ['Debit', 'Credit']})
+    worksheet.write(4, 0, "Notes:", workbook.add_format({'bold': True}))
+    worksheet.write(5, 0, "Opening Balance Date: DD-MM-YYYY. Opening balances land on the active location (menu switcher).", note_fmt)
+    worksheet.write(6, 0, "Re-upload with another active location to add opening balances for that location.", note_fmt)
+    workbook.close()
+    output.seek(0)
+    return send_file(output, download_name=f"{cfg['title']}_Template.xlsx", as_attachment=True)
+
+
+@master_bp.route("/update_ledger", methods=["POST"])
+@login_required
+def update_ledger_route():
+    ledger_code = request.form.get("ledger_code", "").strip()
+    ledger_name = request.form.get("ledger_name", "").strip()
+    group_name = request.form.get("group_name")
+    sub_group_id = request.form.get("sub_group_id")
+    try:
+        groups = get_groups()
+        group_code = next((g['group_code'] for g in groups if g['group_name'] == group_name), None)
+        if not group_code:
+            return jsonify({"success": False, "message": "Invalid Group Name"}), 400
+        from database import update_ledger_master
+        update_ledger_master(ledger_code, ledger_name, group_code, sub_group_id)
+        return jsonify({"success": True, "message": "Ledger updated successfully!"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
+
+@master_bp.route("/toggle_ledger_active", methods=["POST"])
+@login_required
+def toggle_ledger_active():
+    ledger_code = request.form.get("ledger_code", "").strip()
+    is_active = request.form.get("is_active") == "1"
+    try:
+        from database import set_ledger_active
+        set_ledger_active(ledger_code, is_active)
+        return jsonify({"success": True, "message": ("Ledger unblocked" if is_active else "Ledger blocked") + " successfully!"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
 
 @master_bp.route("/api/master/get_ledgers")
 @login_required
@@ -349,6 +504,10 @@ def add_new_ledger():
     sub_group_id = request.form.get("sub_group_id")
     opening_balance = request.form.get("opening_balance") or 0
     opening_balance_type = request.form.get("opening_balance_type", "Debit")
+    opening_balance_date = (request.form.get("opening_balance_date") or "").strip()
+
+    if not opening_balance_date:
+        return jsonify({"success": False, "message": "Opening Balance Date is required"}), 400
 
     try:
         groups = get_groups()
@@ -358,9 +517,11 @@ def add_new_ledger():
             return jsonify({"success": False, "message": "Invalid Group Name"}), 400
 
         add_ledger(
-            ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, sub_group_id
+            ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, sub_group_id,
+            opening_balance_date=opening_balance_date,
+            location_name=_active_location_name()
         )
-        return jsonify({"success": True, "message": "Ledger added successfully!"})
+        return jsonify({"success": True, "message": f"Ledger saved (opening balance for {_active_location_name()})!"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
 
@@ -495,12 +656,16 @@ def manage_inventory():
     locations = get_locations() if multiple_locations_enabled else []
     current_date = datetime.date.today().strftime("%d-%m-%Y")
     all_ledgers = [l['ledger_name'] for l in get_ledgers()]
+    from database import get_inventory_details
+    items = get_inventory_details()
     return render_template(
         "inventory.html",
+        items=items,
         inventory_groups=inventory_groups,
         units=units,
         multiple_locations_enabled=multiple_locations_enabled,
         locations=locations,
+        opening_location=_active_location_name(),
         current_date=current_date,
         all_ledgers=all_ledgers,
         company=company,
@@ -527,6 +692,14 @@ def add_inventory_route():
     if not stock_group_code:
         return jsonify({"success": False, "message": "Invalid Group Name"})
 
+    selling_price_str = request.form.get("selling_price", "").strip()
+    if selling_price_str:
+        try:
+            if float(selling_price_str) < 0:
+                return jsonify({"success": False, "message": "Selling Price cannot be negative"})
+        except ValueError:
+            return jsonify({"success": False, "message": f"Selling Price is not a number: {selling_price_str}"})
+
     opening_quantity_str = request.form.get("opening_quantity", "")
     opening_price_str = request.form.get("opening_price", "")
     location_name_form = request.form.get("location_name")
@@ -534,65 +707,34 @@ def add_inventory_route():
     purchase_date_str = request.form.get("purchase_date") or request.form.get("fiscal_year")
     try:
         add_inventory(item_code, name, stock_group_code, unit_code, unit_price, vat_rate)
+        if selling_price_str:
+            upsert_selling_price(item_code, selling_price_str)
         opening_qty = float(opening_quantity_str) if opening_quantity_str else 0.0
         company = get_company_settings()
         multiple_locations_enabled = bool(company and company.get('multiple_locations_applicable'))
-        default_loc = get_default_location()
         final_location_name = None
         if opening_qty > 0:
             if not opening_price_str:
                 return jsonify({"success": False, "message": "Opening price (cost) is required when opening quantity is entered"})
             opening_price = round(float(opening_price_str), 2)
-            if multiple_locations_enabled and not location_name_form:
-                return jsonify({"success": False, "message": "Location is required when opening quantity is entered"})
+            # Opening stock is saved against the active location (read-only field
+            # on the form); switch it via the main-menu Location Switcher.
             if multiple_locations_enabled:
-                final_location_name = location_name_form or (default_loc['location_name'] if default_loc else "Main Location")
+                final_location_name = _active_location_name()
             else:
                 final_location_name = "Main Location"
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            company_id = get_current_company_id()
-            stock_val = opening_qty * (opening_price or 0.0)
-            cursor.execute(
-                "UPDATE inventory SET stock_quantity = %s, opening_price = %s, stock_value = %s WHERE name = %s AND company_id = %s",
-                (opening_qty, opening_price, stock_val, name, company_id),
-            )
-            try:
-                # PostgreSQL compatible schema check
-                cursor.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'inventory'
-                """)
-                cols = [row[0] for row in cursor.fetchall()]
-                
-                if 'opening_location_name' not in cols:
-                    cursor.execute("ALTER TABLE inventory ADD COLUMN opening_location_name TEXT")
-                if 'opening_price' not in cols:
-                    cursor.execute("ALTER TABLE inventory ADD COLUMN opening_price REAL")
-            except Exception:
-                # Fallback for SQLite
-                try:
-                    cursor.execute("PRAGMA table_info(inventory)")
-                    cols = [row[1] for row in cursor.fetchall()]
-                    if 'opening_location_name' not in cols:
-                        cursor.execute("ALTER TABLE inventory ADD COLUMN opening_location_name TEXT")
-                    if 'opening_price' not in cols:
-                        cursor.execute("ALTER TABLE inventory ADD COLUMN opening_price REAL")
-                except Exception:
-                    pass
-            cursor.execute(
-                "UPDATE inventory SET opening_location_name = %s WHERE name = %s AND company_id = %s",
-                (final_location_name, name, company_id),
-            )
-            conn.commit()
-            conn.close()
             try:
                 date_str = parse_date(purchase_date_str) if purchase_date_str else None
                 if not date_str:
                     fy = (company or {}).get('financial_year_start') or '01-01'
                     today_year = datetime.date.today().year
                     date_str = f"{today_year}-{fy}"
+
+                # Upsert semantics: replace any previous opening for this item at
+                # this location; openings at other locations stay untouched.
+                from database import remove_item_opening, upsert_item_opening_balance
+                remove_item_opening(name, final_location_name)
+                upsert_item_opening_balance(item_code, final_location_name, opening_qty, opening_price, opening_date=date_str)
 
                 item_entries = [{
                     'item_name': name,
@@ -622,6 +764,49 @@ def add_inventory_route():
         return jsonify({"success": False, "message": str(e)})
 
 
+@master_bp.route("/toggle_inventory_active", methods=["POST"])
+@login_required
+def toggle_inventory_active():
+    item_code = request.form.get("item_code", "").strip()
+    is_active = request.form.get("is_active") == "1"
+    try:
+        from database import set_inventory_active
+        set_inventory_active(item_code, is_active)
+        return jsonify({"success": True, "message": ("Item unblocked" if is_active else "Item blocked") + " successfully!"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
+
+# ========= SELLING PRICE MASTER =========
+@master_bp.route("/manage-selling-prices")
+@login_required
+def manage_selling_prices():
+    items = get_selling_prices_with_items()
+    return render_template(
+        "selling_price_master.html",
+        items=items,
+        username=current_user.username,
+    )
+
+
+@master_bp.route("/update_selling_price", methods=["POST"])
+@login_required
+def update_selling_price_route():
+    item_code = request.form.get("item_code", "").strip()
+    selling_price_str = request.form.get("selling_price", "").strip()
+    if not item_code:
+        return jsonify({"success": False, "message": "Item code is required"})
+    if not selling_price_str:
+        return jsonify({"success": False, "message": "Selling price is required"})
+    try:
+        saved = upsert_selling_price(item_code, selling_price_str)
+        return jsonify({"success": True, "message": "Selling price saved", "selling_price": saved})
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "message": f"Selling price is not a number: {selling_price_str}"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
 @master_bp.route("/delete_inventory", methods=["POST"])
 @login_required
 def delete_inventory_route():
@@ -645,7 +830,7 @@ def export_ledger():
 
         headers = [
             "Ledger Code", "Ledger Name", "Group Code", "Group Name",
-            "Nature", "Opening Balance", "Opening Type", "Closing Balance"
+            "Nature", "Opening Balance", "Opening Type", "Opening Balance Date", "Closing Balance"
         ]
         for col, header in enumerate(headers):
             worksheet.write(0, col, header)
@@ -659,7 +844,8 @@ def export_ledger():
             worksheet.write(row, 4, ledger.get('nature', ''))
             worksheet.write(row, 5, ledger.get('opening_balance', 0))
             worksheet.write(row, 6, ledger.get('opening_balance_type', ''))
-            worksheet.write(row, 7, ledger.get('closing_balance', 0))
+            worksheet.write(row, 7, ledger.get('opening_balance_date', '') or '')
+            worksheet.write(row, 8, ledger.get('closing_balance', 0))
 
         workbook.close()
         output.seek(0)

@@ -1,6 +1,5 @@
-from flask import Blueprint, render_template, session, jsonify
+from flask import Blueprint, render_template, session, jsonify, redirect, url_for
 from flask_login import login_required, current_user
-import sqlite3
 
 from database import (
     get_groups,
@@ -157,6 +156,9 @@ def get_vite_assets():
 @dashboard_bp.route("/")
 @login_required
 def dashboard():
+    # Users with the dashboard hidden land on the Vouchers page instead
+    if getattr(current_user, "hide_dashboard", False) and not current_user.is_admin:
+        return redirect(url_for("voucher_bp.vouchers"))
     assets = get_vite_assets()
     return render_template("react_dashboard.html", username=current_user.username, vite_assets=assets)
 

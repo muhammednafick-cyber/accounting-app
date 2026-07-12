@@ -2,7 +2,6 @@ from flask import Blueprint, request, send_file, jsonify
 from flask_login import login_required
 import io
 import pandas as pd
-import sqlite3
 
 from database import (
     get_ledger_details,
@@ -36,6 +35,7 @@ def export_ledger():
                 "Nature",
                 "Opening Balance",
                 "Opening Balance Type",
+                "Opening Balance Date",
                 "Closing Balance",
             ],
         )
@@ -58,8 +58,25 @@ def export_ledger():
 def export_inventory():
     try:
         inventory = get_inventory_details()
+        from database import get_selling_price_map
+        selling_price_map = get_selling_price_map()
+        rows = [
+            {
+                "Item Code": i.get("item_code"),
+                "Item Name": i.get("name"),
+                "Group Code": i.get("stock_group_code"),
+                "Group Name": i.get("group_name"),
+                "Unit": i.get("unit_code"),
+                "Selling Price": selling_price_map.get(i.get("item_code"), ""),
+                "Opening Quantity": i.get("stock_quantity"),
+                "VAT %": i.get("vat_rate"),
+                "Opening Price (Cost)": i.get("opening_price"),
+                "Location": i.get("opening_location_name"),
+            }
+            for i in inventory
+        ]
         df = pd.DataFrame(
-            inventory,
+            rows,
             columns=[
                 "Item Code",
                 "Item Name",

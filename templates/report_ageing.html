@@ -23,6 +23,13 @@
             <label for="as_of_date">As Of Date:</label>
             <input type="text" id="as_of_date" name="as_of_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
         </div>
+        <div class="entry">
+            <label for="age_by">Age By:</label>
+            <select id="age_by" name="age_by" class="input-standard-width">
+                <option value="due_date">Due Date (credit terms)</option>
+                <option value="voucher_date">Voucher Date</option>
+            </select>
+        </div>
         <button type="button" class="btn btn-primary" onclick="fetchReport()">Show Report</button>
         <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
     </form>
@@ -34,10 +41,13 @@
                     <th>Party Name</th>
                     <th style="text-align: right;">Total Balance</th>
                     <th style="text-align: right;">Not Due</th>
-                    <th style="text-align: right;">0-30 Days</th>
-                    <th style="text-align: right;">31-60 Days</th>
-                    <th style="text-align: right;">61-90 Days</th>
-                    <th style="text-align: right;">> 90 Days</th>
+                    <th style="text-align: right;">0-3 Months</th>
+                    <th style="text-align: right;">3-6 Months</th>
+                    <th style="text-align: right;">6-9 Months</th>
+                    <th style="text-align: right;">9-12 Months</th>
+                    <th style="text-align: right;">1-2 Years</th>
+                    <th style="text-align: right;">2-3 Years</th>
+                    <th style="text-align: right;">Over 3 Years</th>
                 </tr>
             </thead>
             <tbody id="reportBody"></tbody>
@@ -75,7 +85,8 @@
                 return;
             }
 
-            window.location.href = `/export_report/ageing?type=${reportType}&as_of_date=${asOfDate}`;
+            const ageBy = document.getElementById('age_by').value;
+            window.location.href = `/export_report/ageing?type=${reportType}&as_of_date=${asOfDate}&age_by=${ageBy}`;
         }
 
         function fetchReport() {
@@ -87,7 +98,8 @@
                 return;
             }
 
-            fetch(`/get_ageing_report?type=${reportType}&as_of_date=${asOfDate}`)
+            const ageBy = document.getElementById('age_by').value;
+            fetch(`/get_ageing_report?type=${reportType}&as_of_date=${asOfDate}&age_by=${ageBy}`)
                 .then(response => response.json())
                 .then(response => {
                     if (response.success) {
@@ -96,21 +108,20 @@
                         tbody.innerHTML = '';
                         
                         if (data.length === 0) {
-                            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No data found</td></tr>';
+                            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;">No data found</td></tr>';
                             return;
                         }
 
+                        const bucketKeys = ['not_due', '0_90', '91_180', '181_270', '271_365', '1_2y', '2_3y', '3y_plus'];
                         data.forEach(item => {
                             const row = document.createElement('tr');
-                            row.innerHTML = `
+                            let cells = `
                                 <td>${item.ledger_name}</td>
-                                <td style="text-align: right;">${parseFloat(item.balance).toFixed(2)}</td>
-                                <td style="text-align: right;">${parseFloat(item.buckets.not_due).toFixed(2)}</td>
-                                <td style="text-align: right;">${parseFloat(item.buckets['0_30']).toFixed(2)}</td>
-                                <td style="text-align: right;">${parseFloat(item.buckets['31_60']).toFixed(2)}</td>
-                                <td style="text-align: right;">${parseFloat(item.buckets['61_90']).toFixed(2)}</td>
-                                <td style="text-align: right;">${parseFloat(item.buckets['90_plus']).toFixed(2)}</td>
-                            `;
+                                <td style="text-align: right;">${parseFloat(item.balance).toFixed(2)}</td>`;
+                            bucketKeys.forEach(k => {
+                                cells += `<td style="text-align: right;">${parseFloat(item.buckets[k] || 0).toFixed(2)}</td>`;
+                            });
+                            row.innerHTML = cells;
                             tbody.appendChild(row);
                         });
                     } else {

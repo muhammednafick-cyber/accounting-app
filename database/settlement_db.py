@@ -11,28 +11,47 @@ def init_settlement_tables():
     # but we keep it updated for now or for localized initialization.
     pass 
 
-def get_next_settlement_number(company_id=None):
+def _settlement_fy_prefix(date_str, company_id):
+    """FY-tagged settlement prefix, e.g. FY23-S. Falls back to plain S when no
+    FY covers the date."""
+    from .financial_year_db import get_fy_by_date
+    try:
+        fy = get_fy_by_date(date_str, company_id=company_id) if date_str else None
+        if fy:
+            return f"FY{str(fy['start_date'])[2:4]}-S"
+    except Exception:
+        pass
+    return "S"
+
+def _next_settlement_seq(cursor, company_id, full_prefix):
+    cursor.execute(
+        "SELECT settlement_number FROM settlements WHERE settlement_number LIKE %s AND company_id = %s ORDER BY length(settlement_number) DESC, settlement_number DESC LIMIT 1",
+        (f"{full_prefix}-%", company_id)
+    )
+    row = cursor.fetchone()
+    if row:
+        last_no = row['settlement_number'] if isinstance(row, dict) or hasattr(row, 'keys') else row[0]
+        try:
+            return int(last_no.split('-')[-1]) + 1
+        except (ValueError, IndexError):
+            return 1
+    return 1
+
+def get_next_settlement_number(company_id=None, date_str=None):
     if company_id is None:
         company_id = get_current_company_id()
 
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        # Use MAX logic to avoid collisions if settlements are deleted
-        cursor.execute("SELECT settlement_number FROM settlements WHERE settlement_number LIKE 'S-%%' AND company_id = %s ORDER BY length(settlement_number) DESC, settlement_number DESC LIMIT 1", (company_id,))
-        row = cursor.fetchone()
-        if row:
-            last_no = row['settlement_number'] if isinstance(row, dict) or hasattr(row, 'keys') else row[0]
-            try:
-                parts = last_no.split('-')
-                last_seq = int(parts[-1])
-                new_seq = last_seq + 1
-            except (ValueError, IndexError):
-                new_seq = 1
-        else:
-            new_seq = 1
+        from datetime import datetime as _dt
+        full_prefix = _settlement_fy_prefix(date_str or _dt.today().strftime('%Y-%m-%d'), company_id)
+        new_seq = _next_settlement_seq(cursor, company_id, full_prefix)
 
-        return f"S-{str(new_seq).zfill(5)}"
+        from .vouchers_db import apply_voucher_number_settings
+        new_seq = apply_voucher_number_settings(cursor, company_id, 'Settlement', full_prefix, new_seq)
+
+        return f"{full_prefix}-{str(new_seq).zfill(6)}"
     finally:
         conn.close()
 
@@ -52,21 +71,13 @@ def create_settlement(ledger_name, settlement_date, allocations, auto_posted_vou
     cursor = conn.cursor()
     try:
         if should_close:
-            s_num = get_next_settlement_number(company_id=company_id)
+            s_num = get_next_settlement_number(company_id=company_id, date_str=settlement_date)
         else:
-            cursor.execute("SELECT settlement_number FROM settlements WHERE settlement_number LIKE 'S-%%' AND company_id = %s ORDER BY length(settlement_number) DESC, settlement_number DESC LIMIT 1", (company_id,))
-            row = cursor.fetchone()
-            if row:
-                last_no = row['settlement_number'] if isinstance(row, dict) or hasattr(row, 'keys') else row[0]
-                try:
-                    parts = last_no.split('-')
-                    last_seq = int(parts[-1])
-                    new_seq = last_seq + 1
-                except (ValueError, IndexError):
-                    new_seq = 1
-            else:
-                new_seq = 1
-            s_num = f"S-{str(new_seq).zfill(5)}"
+            full_prefix = _settlement_fy_prefix(settlement_date, company_id)
+            new_seq = _next_settlement_seq(cursor, company_id, full_prefix)
+            from .vouchers_db import apply_voucher_number_settings
+            new_seq = apply_voucher_number_settings(cursor, company_id, 'Settlement', full_prefix, new_seq)
+            s_num = f"{full_prefix}-{str(new_seq).zfill(6)}"
         
         # Calculate total settled amount (sum of debits or sum of credits - they should conceptually match after auto-post)
         total_amt = sum(float(a['assigned_amount']) for a in allocations) / 2.0 

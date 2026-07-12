@@ -18,6 +18,17 @@
             <label for="to_date">To Date:</label>
             <input type="text" id="to_date" name="to_date" class="input-standard-width" placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
         </div>
+        {% if switcher_locations %}
+        <div class="entry">
+            <label for="report_location">Location:</label>
+            <select id="report_location">
+                <option value="">All Locations</option>
+                {% for loc in switcher_locations %}
+                <option value="{{ loc.location_name }}">{{ loc.location_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
         <button type="button" class="btn btn-info" onclick="exportReport()">Export to Excel</button>
     </form>
 
@@ -26,7 +37,9 @@
             const voucherType = document.getElementById('voucher_type').value;
             const fromDate = document.getElementById('from_date').value;
             const toDate = document.getElementById('to_date').value;
-            window.location.href = `/export_report/register?voucher_type=${encodeURIComponent(voucherType)}&from_date=${fromDate}&to_date=${toDate}`;
+            const locEl = document.getElementById('report_location');
+            const locParam = (locEl && locEl.value) ? `&location=${encodeURIComponent(locEl.value)}` : '';
+            window.location.href = `/export_report/register?voucher_type=${encodeURIComponent(voucherType)}&from_date=${fromDate}&to_date=${toDate}${locParam}`;
         }
         
         // Auto-load if dates are not set (optional, maybe show current month)

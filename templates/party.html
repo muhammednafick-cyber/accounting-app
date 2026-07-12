@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Manage {{ cfg.title }}{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+    .form-group { margin-bottom: 12px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; max-width: 900px; }
+    label { display: block; margin-bottom: 4px; font-weight: 600; }
+    .form-group input, .form-group select, .form-group textarea { width: 100%; box-sizing: border-box; }
+    #partyMessage, #partyImportMessage { margin-top: 10px; font-weight: bold; }
+    .import-section-container { border: 1px solid #ddd; padding: 16px; margin-top: 20px; border-radius: 6px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Manage {{ cfg.title }}</h1>
+
+<h2 id="partyFormTitle">Add New {{ cfg.singular }}</h2>
+<form id="partyForm">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="edit_mode" id="party_edit_mode" value="0">
+    <div class="form-grid">
+        <div class="form-group">
+            <label>Ledger Code</label>
+            <input type="text" name="ledger_code" required>
+        </div>
+        <div class="form-group">
+            <label>{{ cfg.singular }} Name</label>
+            <input type="text" name="ledger_name" required>
+        </div>
+        <div class="form-group opening-field">
+            <label>Opening Balance</label>
+            <input type="number" step="0.01" name="opening_balance" value="0">
+        </div>
+        <div class="form-group opening-field">
+            <label>Opening Balance Type</label>
+            <select name="opening_balance_type">
+                <option value="Debit" {% if kind == 'customers' %}selected{% endif %}>Debit</option>
+                <option value="Credit" {% if kind == 'vendors' %}selected{% endif %}>Credit</option>
+            </select>
+        </div>
+        <div class="form-group opening-field">
+            <label>Opening Balance Date <span style="color:#e74c3c;">*</span></label>
+            <input type="date" name="opening_balance_date">
+        </div>
+        <div class="form-group opening-field">
+            <label>Opening Balance Location</label>
+            <input type="text" value="{{ opening_location }}" readonly style="background:#f2f2f2; cursor:not-allowed;"
+                title="Opening balance is saved against the active location (main-menu Location Switcher).">
+        </div>
+        <div class="form-group">
+            <label>Credit Days</label>
+            <input type="number" name="credit_days" value="0" min="0">
+        </div>
+        <div class="form-group">
+            <label>TRN Number</label>
+            <input type="text" name="trn" placeholder="e.g. 100123456700003">
+        </div>
+        <div class="form-group" style="grid-column: 1 / -1;">
+            <label>Address</label>
+            <textarea name="address" rows="2" placeholder="Office, Street, City, Country"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Contact Person</label>
+            <input type="text" name="contact_person">
+        </div>
+        <div class="form-group">
+            <label>Phone</label>
+            <input type="text" name="phone">
+        </div>
+        <div class="form-group">
+            <label>Email</label>
+            <input type="email" name="email">
+        </div>
+    </div>
+    <button type="button" class="btn" id="partySaveBtn" onclick="submitParty()">Add {{ cfg.singular }}</button>
+    <button type="button" class="btn" id="partyCancelBtn" style="display:none; background:#7f8c8d;" onclick="cancelPartyEdit()">Cancel Edit</button>
+    <button type="button" class="btn" style="background:#3498db; color:#fff;" onclick="document.getElementById('partyImportSection').style.display='block'">Import Excel</button>
+    <div id="partyMessage"></div>
+</form>
+
+<div id="partyImportSection" class="import-section-container" style="display:none;">
+    <h3>Import {{ cfg.title }} from Excel</h3>
+    <p style="color:#666;"><strong>Required:</strong> Ledger Code, {{ cfg.singular }} Name, Opening Balance, Opening Balance Type, Opening Balance Date.
+        <strong>Optional:</strong> Credit Days, Address, Contact Person, Phone, Email, TRN.<br>
+        Opening balances land on the <strong>active location</strong>; re-upload with another active location to add balances there (same location overwrites).</p>
+    <input type="file" id="partyExcelFile" accept=".xlsx,.xls" />
+    <a href="/download_party_template/{{ kind }}"><button type="button" class="btn" style="background:#27ae60; color:#fff;">Download Template</button></a>
+    <button type="button" class="btn btn-primary" onclick="importParties()">Upload &amp; Import</button>
+    <div id="partyImportMessage"></div>
+</div>
+
+<hr style="margin: 35px 0;">
+
+<h2>Existing {{ cfg.title }}</h2>
+<input type="text" id="partySearch" placeholder="Search by code, name, phone or TRN..." style="width:340px; margin-bottom:10px;" oninput="filterParties()">
+<div style="max-height:440px; overflow:auto;">
+    <table border="1" cellspacing="0" cellpadding="4" style="width:100%; border-collapse:collapse;" id="partiesTable">
+        <thead>
+            <tr>
+                <th>Code</th>
+                <th>Name</th>
+                <th>TRN</th>
+                <th>Contact</th>
+                <th>Phone</th>
+                <th style="text-align:right;">Balance</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in parties %}
+            <tr data-search="{{ (p.ledger_code ~ ' ' ~ p.ledger_name ~ ' ' ~ (p.phone or '') ~ ' ' ~ (p.trn or '')) | lower }}"
+                {% if not p.is_active %}style="opacity:.55;"{% endif %}>
+                <td>{{ p.ledger_code }}</td>
+                <td>{{ p.ledger_name }}</td>
+                <td>{{ p.trn or '' }}</td>
+                <td>{{ p.contact_person or '' }}</td>
+                <td>{{ p.phone or '' }}</td>
+                <td style="text-align:right;">{{ '%.2f' % (p.closing_balance or 0) }}</td>
+                <td>{% if p.is_active %}<span style="color:green;">Active</span>{% else %}<span style="color:#c0392b;">Blocked</span>{% endif %}</td>
+                <td style="white-space:nowrap;">
+                    <button type="button" class="btn" style="padding:2px 10px;"
+                        onclick='editParty({{ {
+                            "code": p.ledger_code, "name": p.ledger_name, "credit_days": p.credit_days or 0,
+                            "address": p.address or "", "contact": p.contact_person or "",
+                            "phone": p.phone or "", "email": p.email or "", "trn": p.trn or ""
+                        } | tojson }})'>Edit</button>
+                    <button type="button" class="btn" style="padding:2px 10px; background:{% if p.is_active %}#c0392b{% else %}#27ae60{% endif %}; color:#fff;"
+                        onclick="togglePartyActive('{{ p.ledger_code|e }}', {{ 0 if p.is_active else 1 }})">{% if p.is_active %}Block{% else %}Unblock{% endif %}</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+    function submitParty() {
+        const form = document.getElementById('partyForm');
+        const fd = new FormData(form);
+        if (fd.get('edit_mode') !== '1' && !fd.get('opening_balance_date')) {
+            alert('Opening Balance Date is required.');
+            return;
+        }
+        fetch('/save_party', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => {
+                const el = document.getElementById('partyMessage');
+                el.textContent = d.message;
+                el.style.color = d.success ? '#27ae60' : '#e74c3c';
+                if (d.success) setTimeout(() => location.reload(), 900);
+            });
+    }
+
+    function editParty(p) {
+        const form = document.getElementById('partyForm');
+        document.getElementById('party_edit_mode').value = '1';
+        form.querySelector('[name="ledger_code"]').value = p.code;
+        form.querySelector('[name="ledger_code"]').readOnly = true;
+        form.querySelector('[name="ledger_name"]').value = p.name;
+        form.querySelector('[name="credit_days"]').value = p.credit_days;
+        form.querySelector('[name="address"]').value = p.address;
+        form.querySelector('[name="contact_person"]').value = p.contact;
+        form.querySelector('[name="phone"]').value = p.phone;
+        form.querySelector('[name="email"]').value = p.email;
+        form.querySelector('[name="trn"]').value = p.trn;
+        document.querySelectorAll('.opening-field').forEach(el => el.style.display = 'none');
+        document.getElementById('partySaveBtn').textContent = 'Update {{ cfg.singular }}';
+        document.getElementById('partyCancelBtn').style.display = '';
+        document.getElementById('partyFormTitle').textContent = 'Edit {{ cfg.singular }}';
+        form.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelPartyEdit() {
+        const form = document.getElementById('partyForm');
+        form.reset();
+        document.getElementById('party_edit_mode').value = '0';
+        form.querySelector('[name="ledger_code"]').readOnly = false;
+        document.querySelectorAll('.opening-field').forEach(el => el.style.display = '');
+        document.getElementById('partySaveBtn').textContent = 'Add {{ cfg.singular }}';
+        document.getElementById('partyCancelBtn').style.display = 'none';
+        document.getElementById('partyFormTitle').textContent = 'Add New {{ cfg.singular }}';
+    }
+
+    function filterParties() {
+        const q = document.getElementById('partySearch').value.toLowerCase();
+        document.querySelectorAll('#partiesTable tbody tr').forEach(tr => {
+            tr.style.display = (tr.dataset.search || '').includes(q) ? '' : 'none';
+        });
+    }
+
+    function togglePartyActive(code, newState) {
+        const action = newState ? 'unblock' : 'block';
+        if (!confirm(`Are you sure you want to ${action} ${code}?`)) return;
+        const fd = new FormData();
+        fd.append('ledger_code', code);
+        fd.append('is_active', newState);
+        fetch('/toggle_ledger_active', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(d => { alert(d.message); if (d.success) location.reload(); });
+    }
+
+    function importParties() {
+        const fileInput = document.getElementById('partyExcelFile');
+        const file = fileInput.files[0];
+        if (!file) return alert('Please select an Excel file.');
+        const msgDiv = document.getElementById('partyImportMessage');
+        msgDiv.textContent = 'Reading file...';
+        msgDiv.style.color = '#555';
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                if (!rows.length) { msgDiv.textContent = 'Excel file is empty.'; msgDiv.style.color = 'red'; return; }
+
+                function excelDateToISO(val) {
+                    if (val === undefined || val === null || val === '') return '';
+                    if (typeof val === 'number') {
+                        const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+                        return d.toISOString().slice(0, 10);
+                    }
+                    return String(val).trim();
+                }
+
+                const data = rows.map(r => ({
+                    ledger_code: r['Ledger Code'],
+                    ledger_name: r['{{ cfg.singular }} Name'] || r['Ledger Name'],
+                    opening_balance: parseFloat(r['Opening Balance'] || 0),
+                    opening_balance_type: String(r['Opening Balance Type'] || '{{ "Debit" if kind == "customers" else "Credit" }}').trim(),
+                    opening_balance_date: excelDateToISO(r['Opening Balance Date']),
+                    credit_days: r['Credit Days'] || 0,
+                    address: r['Address'] || '',
+                    contact_person: r['Contact Person'] || '',
+                    phone: String(r['Phone'] || ''),
+                    email: r['Email'] || '',
+                    trn: String(r['TRN'] || '')
+                }));
+
+                msgDiv.textContent = 'Uploading ' + data.length + ' rows...';
+                fetch('/queue_import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_name: file.name,
+                        voucher_type: '{{ cfg.singular }}',
+                        json_data: JSON.stringify(data)
+                    })
+                })
+                .then(r => r.json())
+                .then(d => {
+                    msgDiv.textContent = d.message;
+                    msgDiv.style.color = d.success ? '#27ae60' : '#e74c3c';
+                    if (d.success) setTimeout(() => window.location.href = '/report/import-queue', 1200);
+                });
+            } catch (err) {
+                msgDiv.textContent = 'Error reading file: ' + err;
+                msgDiv.style.color = 'red';
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+</script>
+{% endblock %}

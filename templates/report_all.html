@@ -226,6 +226,13 @@
                 <div class="tile-desc">Overdue receivables and payables by age bucket</div>
                 <div class="tile-arrow">Open →</div>
             </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_party_matching') }}">
+                <div class="tile-accent accent-ledger"></div>
+                <div class="tile-icon">🔗</div>
+                <div class="tile-name">Party Matching</div>
+                <div class="tile-desc">Debtor/creditor debits and credits with matched references</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
         </div>
     </div>
 
@@ -243,6 +250,13 @@
                 <div class="tile-icon">📋</div>
                 <div class="tile-name">Daybook</div>
                 <div class="tile-desc">All vouchers posted on a selected date</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_gl_dump') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">🗂️</div>
+                <div class="tile-name">GL Dump</div>
+                <div class="tile-desc">All ledger entries for a selected period</div>
                 <div class="tile-arrow">Open →</div>
             </a>
             <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Payment') }}">
@@ -381,6 +395,13 @@
                 <div class="tile-desc">Items with stock quantity below zero</div>
                 <div class="tile-arrow">Open →</div>
             </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_inventory_ageing') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">⏳</div>
+                <div class="tile-name">Inventory Ageing</div>
+                <div class="tile-desc">Closing stock split into age buckets by purchase date</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
         </div>
     </div>
     {% endif %}
@@ -413,6 +434,13 @@
                 <div class="tile-icon">🧾</div>
                 <div class="tile-name">Expense VAT</div>
                 <div class="tile-desc">Expense vouchers with VAT, invoice date and description</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_vat_service_income') }}">
+                <div class="tile-accent accent-vat"></div>
+                <div class="tile-icon">🛠️</div>
+                <div class="tile-name">Service Income VAT</div>
+                <div class="tile-desc">Output VAT on service income and its returns</div>
                 <div class="tile-arrow">Open →</div>
             </a>
         </div>

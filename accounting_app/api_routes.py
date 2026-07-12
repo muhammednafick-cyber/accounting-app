@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request
 from flask_login import login_required, current_user
-import sqlite3
 from datetime import datetime
 
 from database import (

@@ -285,6 +285,10 @@
                                     onchange="togglePerms(this, 'perms-{{ user[0] }}')">
                                 Principal (all menus except Admin)
                             </label>
+                            <label style="display:block; margin-bottom:5px;">
+                                <input type="checkbox" name="hide_dashboard" {% if user[5] %}checked{% endif %}>
+                                Hide Dashboard (user lands on Vouchers)
+                            </label>
                             <div id="perms-{{ user[0] }}" class="menu-tree" style="{% if user[4] %}display:none;{% endif %}">
                                 {% set uperms = user_perms.get(user[0], []) %}
                                 {% for menu in menu_tree %}
@@ -317,6 +321,20 @@
                                 </div>
                                 {% endfor %}
                             </div>
+                            {% if all_locations %}
+                            <div style="margin-top:8px; padding-top:6px; border-top:1px solid #ddd;">
+                                <strong style="display:block; margin-bottom:4px;">Allowed Locations</strong>
+                                <span style="display:block; font-size:.78rem; color:#777; margin-bottom:4px;">None checked = all locations</span>
+                                {% set ulocs = user_locs.get(user[0], []) %}
+                                {% for loc in all_locations %}
+                                <label style="display:block;">
+                                    <input type="checkbox" name="locations" value="{{ loc.location_name }}"
+                                        {% if loc.location_name in ulocs %}checked{% endif %}>
+                                    {{ loc.location_name }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
                             <button type="submit" class="btn-sm btn-success" style="margin-top:5px;">Save Access</button>
                         </form>
                         {% endif %}

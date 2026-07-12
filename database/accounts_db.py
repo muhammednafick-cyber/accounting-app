@@ -341,8 +341,8 @@ def get_ledger_details(company_id=None):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT l.ledger_code, l.ledger_name, g.group_code, g.group_name, g.nature,
-               l.opening_balance, l.opening_balance_type, l.closing_balance,
-               sg.sub_group_name, l.credit_days
+               l.opening_balance, l.opening_balance_type, l.opening_balance_date, l.closing_balance,
+               sg.sub_group_name, l.credit_days, COALESCE(l.is_active, 1) AS is_active
         FROM ledgers l
         JOIN groups g ON l.group_code = g.group_code AND l.company_id = g.company_id
         LEFT JOIN sub_groups sg ON l.sub_group_id = sg.id
@@ -362,24 +362,25 @@ def get_ledgers(group_code=None, exclude_sales_purchase=False, company_id=None):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        active = "COALESCE(is_active, 1) = 1"
         if group_code:
             if isinstance(group_code, (list, tuple)):
                 placeholders = ','.join(['%s'] * len(group_code))
-                query = f"SELECT ledger_code, ledger_name, group_code, closing_balance FROM ledgers WHERE company_id = %s AND group_code IN ({placeholders})"
+                query = f"SELECT ledger_code, ledger_name, group_code, closing_balance FROM ledgers WHERE company_id = %s AND {active} AND group_code IN ({placeholders})"
                 params = [company_id] + list(group_code)
                 cursor.execute(query, tuple(params))
             else:
                 cursor.execute(
-                    "SELECT ledger_code, ledger_name, group_code, closing_balance FROM ledgers WHERE company_id = %s AND group_code = %s",
+                    f"SELECT ledger_code, ledger_name, group_code, closing_balance FROM ledgers WHERE company_id = %s AND {active} AND group_code = %s",
                     (company_id, group_code)
                 )
         elif exclude_sales_purchase:
             cursor.execute(
-                "SELECT ledger_code, ledger_name, group_code, closing_balance FROM ledgers WHERE company_id = %s AND group_code NOT IN ('G001', 'G002')",
+                f"SELECT ledger_code, ledger_name, group_code, closing_balance FROM ledgers WHERE company_id = %s AND {active} AND group_code NOT IN ('G001', 'G002')",
                 (company_id,)
             )
         else:
-            cursor.execute("SELECT ledger_code, ledger_name, group_code, closing_balance, credit_days FROM ledgers WHERE company_id = %s", (company_id,))
+            cursor.execute(f"SELECT ledger_code, ledger_name, group_code, closing_balance, credit_days FROM ledgers WHERE company_id = %s AND {active}", (company_id,))
         ledgers = cursor.fetchall()
         return [dict(l) for l in ledgers]
     except Exception as e:
@@ -388,7 +389,94 @@ def get_ledgers(group_code=None, exclude_sales_purchase=False, company_id=None):
     finally:
         conn.close()
 
-def add_ledger(ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, sub_group_id=None, credit_days=0, db_connection=None, company_id=None):
+def _resolve_opening_location(cursor, company_id, location_name=None):
+    """Resolve the location an opening balance should be saved against.
+    Falls back to the company's default location, then 'Main Location'."""
+    location_name = (location_name or '').strip()
+    if location_name:
+        return location_name
+    cursor.execute(
+        "SELECT location_name FROM locations WHERE company_id = %s AND is_active = 1 ORDER BY is_default DESC, location_name LIMIT 1",
+        (company_id,)
+    )
+    row = cursor.fetchone()
+    if row:
+        return row['location_name'] if hasattr(row, 'keys') else row[0]
+    return 'Main Location'
+
+def get_ledger_opening_balances(ledger_code=None, company_id=None):
+    """Per-location opening balances. If ledger_code is None, returns all rows for the company."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return []
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        if ledger_code:
+            cursor.execute("""
+                SELECT ledger_code, location_name, opening_balance, opening_balance_type, opening_balance_date
+                FROM ledger_opening_balances WHERE company_id = %s AND ledger_code = %s
+                ORDER BY location_name
+            """, (company_id, ledger_code))
+        else:
+            cursor.execute("""
+                SELECT ledger_code, location_name, opening_balance, opening_balance_type, opening_balance_date
+                FROM ledger_opening_balances WHERE company_id = %s
+                ORDER BY ledger_code, location_name
+            """, (company_id,))
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def upsert_ledger_opening_balance(cursor, company_id, ledger_code, location_name, opening_balance, opening_balance_type, opening_balance_date):
+    """Overwrite the opening balance for (ledger, location) — or add it for a new
+    location — then recompute the ledger's aggregate opening/closing balances.
+    Runs on the caller's cursor/transaction."""
+    opening_balance = round(float(opening_balance), 2)
+    signed_new = opening_balance if opening_balance_type == 'Debit' else -opening_balance
+
+    # Current signed total of per-location openings for this ledger
+    cursor.execute("""
+        SELECT COALESCE(SUM(CASE WHEN opening_balance_type = 'Credit' THEN -opening_balance ELSE opening_balance END), 0)
+        FROM ledger_opening_balances WHERE company_id = %s AND ledger_code = %s
+    """, (company_id, ledger_code))
+    old_total = float(cursor.fetchone()[0] or 0)
+
+    cursor.execute("""
+        INSERT INTO ledger_opening_balances
+            (company_id, ledger_code, location_name, opening_balance, opening_balance_type, opening_balance_date)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (company_id, ledger_code, location_name)
+        DO UPDATE SET opening_balance = EXCLUDED.opening_balance,
+                      opening_balance_type = EXCLUDED.opening_balance_type,
+                      opening_balance_date = EXCLUDED.opening_balance_date
+    """, (company_id, ledger_code, location_name, opening_balance, opening_balance_type, opening_balance_date))
+
+    cursor.execute("""
+        SELECT COALESCE(SUM(CASE WHEN opening_balance_type = 'Credit' THEN -opening_balance ELSE opening_balance END), 0),
+               MIN(opening_balance_date)
+        FROM ledger_opening_balances WHERE company_id = %s AND ledger_code = %s
+    """, (company_id, ledger_code))
+    row = cursor.fetchone()
+    new_total = float(row[0] or 0)
+    earliest_date = row[1]
+
+    agg_balance = round(abs(new_total), 2)
+    agg_type = 'Debit' if new_total >= 0 else 'Credit'
+    delta = round(new_total - old_total, 2)
+    cursor.execute("""
+        UPDATE ledgers
+        SET opening_balance = %s, opening_balance_type = %s,
+            opening_balance_date = COALESCE(%s, opening_balance_date),
+            closing_balance = closing_balance + %s
+        WHERE company_id = %s AND ledger_code = %s
+    """, (agg_balance, agg_type, earliest_date, delta, company_id, ledger_code))
+
+def add_ledger(ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, sub_group_id=None, credit_days=0, db_connection=None, company_id=None, opening_balance_date=None, location_name=None):
+    """Create a ledger, or — if it already exists — upsert its opening balance for
+    the given location (overwrite same location, add for a new location). The
+    ledger master itself is never duplicated."""
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
@@ -408,29 +496,59 @@ def add_ledger(ledger_code, ledger_name, group_code, opening_balance, opening_ba
         opening_balance_type = str(opening_balance_type).strip()
         opening_balance = round(float(opening_balance), 2)
         closing_balance = opening_balance if opening_balance_type == 'Debit' else -opening_balance
-        
+
+        opening_balance_date = str(opening_balance_date or '').strip()
+        if not opening_balance_date:
+            raise Exception("Opening Balance Date is required.")
+        from datetime import datetime as _dt
+        try:
+            _dt.strptime(opening_balance_date, '%Y-%m-%d')
+        except ValueError:
+            raise Exception(f"Invalid Opening Balance Date '{opening_balance_date}'. Expected YYYY-MM-DD.")
+
         if sub_group_id == '': sub_group_id = None
 
-        # Duplicate checks for clearer errors
-        cursor.execute("SELECT 1 FROM ledgers WHERE company_id = %s AND ledger_code = %s", (company_id, ledger_code))
-        if cursor.fetchone():
-             raise Exception(f"Ledger Code '{ledger_code}' already exists.")
-        
-        cursor.execute("SELECT 1 FROM ledgers WHERE company_id = %s AND ledger_name = %s", (company_id, ledger_name))
-        if cursor.fetchone():
-             raise Exception(f"Ledger Name '{ledger_name}' already exists.")
+        target_location = _resolve_opening_location(cursor, company_id, location_name)
+
+        # Existing ledger (by code or name) -> update opening balance for the
+        # location instead of raising a duplicate error.
+        cursor.execute(
+            "SELECT ledger_code, ledger_name FROM ledgers WHERE company_id = %s AND (ledger_code = %s OR ledger_name = %s)",
+            (company_id, ledger_code, ledger_name)
+        )
+        existing = cursor.fetchone()
+        if existing:
+            existing_code = existing['ledger_code'] if hasattr(existing, 'keys') else existing[0]
+            upsert_ledger_opening_balance(
+                cursor, company_id, existing_code, target_location,
+                opening_balance, opening_balance_type, opening_balance_date
+            )
+            if should_close:
+                conn.commit()
+            print(f"add_ledger: existing '{existing_code}' — opening balance set for location '{target_location}' (Company: {company_id})")
+            return
 
         cursor.execute(
             """
-            INSERT INTO ledgers 
-            (company_id, ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, closing_balance, sub_group_id, credit_days)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO ledgers
+            (company_id, ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, closing_balance, sub_group_id, credit_days, opening_balance_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (company_id, ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, closing_balance, sub_group_id, credit_days)
+            (company_id, ledger_code, ledger_name, group_code, opening_balance, opening_balance_type, closing_balance, sub_group_id, credit_days, opening_balance_date)
         )
+        if opening_balance != 0:
+            cursor.execute("""
+                INSERT INTO ledger_opening_balances
+                    (company_id, ledger_code, location_name, opening_balance, opening_balance_type, opening_balance_date)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (company_id, ledger_code, location_name)
+                DO UPDATE SET opening_balance = EXCLUDED.opening_balance,
+                              opening_balance_type = EXCLUDED.opening_balance_type,
+                              opening_balance_date = EXCLUDED.opening_balance_date
+            """, (company_id, ledger_code, target_location, opening_balance, opening_balance_type, opening_balance_date))
         if should_close:
             conn.commit()
-        print(f"add_ledger: {ledger_code}, {ledger_name}, sub_group: {sub_group_id} (Company: {company_id})")
+        print(f"add_ledger: {ledger_code}, {ledger_name}, location: {target_location} (Company: {company_id})")
     except Exception as e:
         raise Exception(f"Error adding ledger: {str(e)}")
     finally:
@@ -448,6 +566,10 @@ def delete_ledger(ledger_name, company_id=None):
     try:
         # Check if used in vouchers (TODO: Implement voucher check)
         # For now, just delete
+        cursor.execute(
+            "DELETE FROM ledger_opening_balances WHERE company_id = %s AND ledger_code = (SELECT ledger_code FROM ledgers WHERE company_id = %s AND ledger_name = %s)",
+            (company_id, company_id, ledger_name)
+        )
         cursor.execute("DELETE FROM ledgers WHERE company_id = %s AND ledger_name = %s", (company_id, ledger_name))
         if cursor.rowcount == 0:
             raise Exception("Ledger not found.")
@@ -455,6 +577,141 @@ def delete_ledger(ledger_name, company_id=None):
         print(f"delete_ledger: {ledger_name} (Company: {company_id})")
     except Exception as e:
         raise Exception(f"Error deleting ledger: {str(e)}")
+    finally:
+        conn.close()
+
+def update_party_details(ledger_code, address=None, contact_person=None, phone=None, email=None, trn=None, company_id=None, db_connection=None):
+    """Save Customer/Vendor contact details against a ledger."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        raise Exception("Company ID is required")
+    if db_connection:
+        conn = db_connection
+        should_close = False
+    else:
+        conn = get_connection()
+        should_close = True
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE ledgers SET address = %s, contact_person = %s, phone = %s, email = %s, trn = %s
+            WHERE company_id = %s AND ledger_code = %s
+        """, ((address or '').strip() or None, (contact_person or '').strip() or None,
+              (phone or '').strip() or None, (email or '').strip() or None,
+              (trn or '').strip() or None, company_id, ledger_code))
+        if should_close:
+            conn.commit()
+    finally:
+        if should_close:
+            conn.close()
+
+def get_party_details(ledger_name=None, ledger_code=None, company_id=None):
+    """Contact details for a party ledger (by name or code)."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return None
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if ledger_code:
+            cursor.execute("SELECT ledger_code, ledger_name, address, contact_person, phone, email, trn FROM ledgers WHERE company_id = %s AND ledger_code = %s", (company_id, ledger_code))
+        else:
+            cursor.execute("SELECT ledger_code, ledger_name, address, contact_person, phone, email, trn FROM ledgers WHERE company_id = %s AND ledger_name = %s", (company_id, ledger_name))
+        r = cursor.fetchone()
+        if not r:
+            return None
+        return {'ledger_code': r[0], 'ledger_name': r[1], 'address': r[2],
+                'contact_person': r[3], 'phone': r[4], 'email': r[5], 'trn': r[6]}
+    finally:
+        conn.close()
+
+def get_party_ledgers(group_code, company_id=None):
+    """Customers (G007) or Vendors (G008) with their contact details."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return []
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ledger_code, ledger_name, opening_balance, opening_balance_type, closing_balance,
+                   credit_days, address, contact_person, phone, email, trn, COALESCE(is_active, 1) AS is_active
+            FROM ledgers WHERE company_id = %s AND group_code = %s
+            ORDER BY ledger_name
+        """, (company_id, group_code))
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def set_ledger_active(ledger_code, is_active, company_id=None):
+    """Block (0) or unblock (1) a ledger. Blocked ledgers stay in reports and
+    history but are hidden from new-voucher ledger lists."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        raise Exception("Company ID is required")
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE ledgers SET is_active = %s WHERE company_id = %s AND ledger_code = %s",
+            (1 if is_active else 0, company_id, ledger_code)
+        )
+        if cursor.rowcount == 0:
+            raise Exception("Ledger not found.")
+        conn.commit()
+    finally:
+        conn.close()
+
+def update_ledger_master(ledger_code, ledger_name, group_code, sub_group_id=None, company_id=None):
+    """Edit a ledger's name and group. Renames cascade to all transaction
+    tables that reference the ledger by name."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        raise Exception("Company ID is required")
+
+    ledger_name = str(ledger_name).strip()
+    if not ledger_name:
+        raise Exception("Ledger name is required")
+    if sub_group_id == '':
+        sub_group_id = None
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT ledger_name FROM ledgers WHERE company_id = %s AND ledger_code = %s", (company_id, ledger_code))
+        row = cursor.fetchone()
+        if not row:
+            raise Exception("Ledger not found.")
+        old_name = row[0]
+
+        # New name must not belong to another ledger
+        cursor.execute(
+            "SELECT ledger_code FROM ledgers WHERE company_id = %s AND LOWER(TRIM(ledger_name)) = LOWER(%s) AND ledger_code != %s",
+            (company_id, ledger_name, ledger_code)
+        )
+        clash = cursor.fetchone()
+        if clash:
+            raise Exception(f"Ledger name '{ledger_name}' is already used by ledger {clash[0]}.")
+
+        if old_name != ledger_name:
+            # FKs on ledger_entries/item_entries/settlements are ON UPDATE
+            # CASCADE (see unified_db migration), so renaming the ledger row
+            # cascades to all transaction tables automatically.
+            cursor.execute("UPDATE ledgers SET ledger_name = %s WHERE company_id = %s AND ledger_code = %s", (ledger_name, company_id, ledger_code))
+
+        cursor.execute(
+            "UPDATE ledgers SET group_code = %s, sub_group_id = %s WHERE company_id = %s AND ledger_code = %s",
+            (group_code, sub_group_id, company_id, ledger_code)
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

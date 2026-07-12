@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{ voucher.voucher_type }} {{ voucher.voucher_number }}</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #222; margin: 30px; }
+        .header { display: flex; justify-content: space-between; border-bottom: 3px solid #444; padding-bottom: 12px; }
+        .company h2 { margin: 0 0 4px 0; }
+        .company div { color: #555; }
+        .doc-title h1 { margin: 0; font-size: 22px; }
+        .meta { margin-top: 15px; }
+        .meta td { padding: 2px 8px 2px 0; }
+        .label { color: #666; }
+        table.lines { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        table.lines th { background: #444; color: #fff; padding: 6px 8px; text-align: left; }
+        table.lines th.num, table.lines td.num { text-align: right; }
+        table.lines td { border-bottom: 1px solid #ddd; padding: 6px 8px; }
+        .totals { margin-top: 12px; width: 320px; margin-left: auto; }
+        .totals td { padding: 4px 8px; }
+        .totals .grand { font-weight: bold; border-top: 2px solid #444; font-size: 15px; }
+        .footer { margin-top: 40px; display: flex; justify-content: space-between; color: #666; }
+        .sig { border-top: 1px solid #999; padding-top: 4px; width: 200px; text-align: center; }
+        .noprint { margin-bottom: 15px; }
+        @media print { .noprint { display: none; } body { margin: 10mm; } }
+    </style>
+</head>
+<body>
+    <div class="noprint">
+        <button onclick="window.print()">Print</button>
+        <button onclick="window.close()">Close</button>
+    </div>
+
+    <div class="header">
+        <div class="company">
+            <h2>{{ company.name or '' }}</h2>
+            <div>{{ company.address1 or '' }}{% if company.address2 %}, {{ company.address2 }}{% endif %}</div>
+            <div>{{ company.city or '' }}{% if company.country %}, {{ company.country }}{% endif %}</div>
+            {% if company.trn %}<div><strong>TRN: {{ company.trn }}</strong></div>{% endif %}
+        </div>
+        <div class="doc-title">
+            <h1>{{ 'PURCHASE VOUCHER' if voucher.voucher_type == 'Purchase' else 'PURCHASE RETURN' }}</h1>
+            <div style="margin-top:8px;"><strong>No:</strong> {{ voucher.voucher_number }}</div>
+            <div><strong>Date:</strong> {{ voucher.date }}</div>
+        </div>
+    </div>
+
+    <table class="meta">
+        <tr><td class="label">Supplier:</td><td><strong>{{ party }}</strong></td></tr>
+        {% if party_details and party_details.address %}<tr><td class="label">Address:</td><td>{{ party_details.address }}</td></tr>{% endif %}
+        {% if party_details and party_details.trn %}<tr><td class="label">Supplier TRN:</td><td><strong>{{ party_details.trn }}</strong></td></tr>{% endif %}
+        {% if party_details and party_details.phone %}<tr><td class="label">Phone:</td><td>{{ party_details.phone }}</td></tr>{% endif %}
+        {% if voucher.original_invoice_ref %}<tr><td class="label">Supplier Invoice:</td><td>{{ voucher.original_invoice_ref }}{% if voucher.original_invoice_date %} dated {{ voucher.original_invoice_date }}{% endif %}</td></tr>{% endif %}
+        {% if voucher.linked_voucher_number %}<tr><td class="label">Against Voucher:</td><td>{{ voucher.linked_voucher_number }}</td></tr>{% endif %}
+        {% if voucher.location_name %}<tr><td class="label">Location:</td><td>{{ voucher.location_name }}</td></tr>{% endif %}
+        {% if voucher.narration %}<tr><td class="label">Narration:</td><td>{{ voucher.narration }}</td></tr>{% endif %}
+    </table>
+
+    <table class="lines">
+        <thead>
+            <tr>
+                <th style="width:30px;">#</th>
+                <th>Item</th>
+                <th class="num">Qty</th>
+                <th class="num">Rate</th>
+                <th class="num">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for l in lines %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ l.item_name }}</td>
+                <td class="num">{{ '%.2f' % (l.quantity or 0) }}</td>
+                <td class="num">{{ '%.2f' % (l.unit_price or 0) }}</td>
+                <td class="num">{{ '%.2f' % (l.amount or 0) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <table class="totals">
+        <tr><td>Items Total</td><td style="text-align:right;">{{ '%.2f' % subtotal }}</td></tr>
+        {% if discount_total %}
+        <tr><td>Discount</td><td style="text-align:right;">-{{ '%.2f' % discount_total }}</td></tr>
+        {% endif %}
+        {% if vat_total %}
+        <tr><td>Input VAT @ 5%</td><td style="text-align:right;">{{ '%.2f' % vat_total }}</td></tr>
+        {% endif %}
+        <tr class="grand"><td>Total ({{ company.currency or 'AED' }})</td><td style="text-align:right;">{{ '%.2f' % grand_total }}</td></tr>
+    </table>
+
+    <div class="footer">
+        <div class="sig">Prepared By</div>
+        <div class="sig">Approved By</div>
+    </div>
+</body>
+</html>

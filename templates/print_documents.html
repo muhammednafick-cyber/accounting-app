@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Print Documents{% endblock %}
+
+{% block extra_head %}
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<h1>Print Documents</h1>
+<p style="color:#666;">Select a voucher type and document number to print a previously submitted voucher.</p>
+
+<div class="dashboard-section" style="max-width:560px;">
+    <div class="entry" style="margin-bottom:12px;">
+        <label for="pd_type">Voucher Type</label><br>
+        <select id="pd_type" style="min-width:280px;" onchange="loadDocuments()">
+            <option value="">-- Select Voucher Type --</option>
+            {% for vt in voucher_types %}
+            <option value="{{ vt }}">{{ vt }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="entry" style="margin-bottom:12px;">
+        <label for="pd_number">Document Number</label><br>
+        <select id="pd_number" class="select2" style="min-width:380px;" data-placeholder="Select Document" disabled>
+            <option></option>
+        </select>
+    </div>
+    <div id="pd_details" style="color:#555; margin-bottom:12px;"></div>
+    <div>
+        <button type="button" class="btn" id="pd_print_btn" style="background:#2563AB; color:#fff;" onclick="printSelected('doc')" disabled>Print</button>
+        <button type="button" class="btn" id="pd_jv_btn" onclick="printSelected('jv')" disabled>Print JV</button>
+    </div>
+</div>
+
+<script>
+    const DOC_LABELS = {
+        'Sales': 'Tax Invoice',
+        'Service Income': 'Tax Invoice',
+        'Sales Return': 'Tax Credit Note',
+        'Service Income Return': 'Tax Credit Note',
+        'Purchase': 'Purchase Voucher (Item Details)',
+        'Purchase Return': 'Purchase Return (Item Details)',
+    };
+    let docsCache = {};
+
+    $(document).ready(function () {
+        $('#pd_number').select2({ allowClear: true, placeholder: 'Select Document' });
+        $('#pd_number').on('change', onDocumentChange);
+    });
+
+    function loadDocuments() {
+        const vt = document.getElementById('pd_type').value;
+        const numSel = $('#pd_number');
+        numSel.empty().append('<option></option>').prop('disabled', true).trigger('change');
+        document.getElementById('pd_details').textContent = '';
+        setButtons(null);
+        if (!vt) return;
+
+        fetch(`/api/print/voucher_numbers?voucher_type=${encodeURIComponent(vt)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) { alert('Error: ' + (data.message || 'Failed')); return; }
+                docsCache = {};
+                data.documents.forEach(d => {
+                    docsCache[d.voucher_number] = d;
+                    numSel.append(new Option(`${d.voucher_number}  (${d.date})`, d.voucher_number));
+                });
+                numSel.prop('disabled', false).trigger('change');
+                if (!data.documents.length) {
+                    document.getElementById('pd_details').textContent = 'No documents found for this voucher type.';
+                }
+            })
+            .catch(e => { console.error(e); alert('Error loading documents.'); });
+    }
+
+    function onDocumentChange() {
+        const vn = $('#pd_number').val();
+        const detailsEl = document.getElementById('pd_details');
+        if (!vn) { detailsEl.textContent = ''; setButtons(null); return; }
+        const d = docsCache[vn] || {};
+        detailsEl.innerHTML = `<strong>${vn}</strong> — ${d.date || ''} — Amount: ${(d.amount || 0).toFixed(2)}` +
+            (d.narration ? `<br><span style="color:#888;">${d.narration}</span>` : '');
+        setButtons(document.getElementById('pd_type').value);
+    }
+
+    function setButtons(vt) {
+        const printBtn = document.getElementById('pd_print_btn');
+        const jvBtn = document.getElementById('pd_jv_btn');
+        if (!vt) {
+            printBtn.disabled = true; jvBtn.disabled = true;
+            printBtn.textContent = 'Print';
+            return;
+        }
+        const label = DOC_LABELS[vt];
+        printBtn.textContent = label ? `Print ${label}` : 'Print Voucher';
+        printBtn.disabled = false;
+        jvBtn.disabled = false;
+    }
+
+    function printSelected(kind) {
+        const vn = $('#pd_number').val();
+        if (!vn) { alert('Select a document number first.'); return; }
+        const url = kind === 'jv'
+            ? `/print/jv?voucher_number=${encodeURIComponent(vn)}`
+            : `/print/voucher/${encodeURIComponent(vn)}`;
+        window.open(url, '_blank');
+    }
+</script>
+{% endblock %}

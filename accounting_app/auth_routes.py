@@ -15,7 +15,6 @@ from flask_login import (
     current_user,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3
 
 from database import (
     get_user_by_username,
@@ -144,10 +143,17 @@ def admin():
             user_id = request.form["user_id"]
             is_principal = 1 if request.form.get("is_principal") == "on" else 0
             selected_perms = [p for p in request.form.getlist("perms") if p in PERMISSION_KEYS]
+            hide_dashboard = 1 if request.form.get("hide_dashboard") == "on" else 0
             try:
-                from database.master_db import set_user_principal, set_user_permissions
+                from database.master_db import set_user_principal, set_user_permissions, set_user_hide_dashboard
                 set_user_principal(user_id, is_principal)
                 set_user_permissions(user_id, selected_perms)
+                set_user_hide_dashboard(user_id, hide_dashboard)
+                # Allowed locations (empty selection = unrestricted)
+                from database import set_user_locations, get_locations
+                valid_locs = {l['location_name'] for l in get_locations()}
+                selected_locs = [l for l in request.form.getlist("locations") if l in valid_locs]
+                set_user_locations(user_id, selected_locs, company_id=company_id)
                 flash("User access updated successfully", "success")
             except Exception as e:
                 flash(f"Error updating access: {str(e)}", "error")
@@ -190,7 +196,11 @@ def admin():
     # admins live in Admin Management
     users = []
     user_perms = {}
+    user_locs = {}
     from database.master_db import get_user_permissions
+    from database import get_user_locations, get_locations, get_company_settings
+    company = get_company_settings()
+    all_locations = get_locations() if (company and company.get('multiple_locations_applicable')) else []
     for user in get_all_users():
         if user[3]:
             continue
@@ -202,11 +212,17 @@ def admin():
             user_perms[user[0]] = get_user_permissions(user[0])
         except Exception:
             user_perms[user[0]] = set()
+        try:
+            user_locs[user[0]] = get_user_locations(user[0], company_id=company_id)
+        except Exception:
+            user_locs[user[0]] = []
 
     return render_template(
         "admin.html",
         users=users,
         user_perms=user_perms,
+        user_locs=user_locs,
+        all_locations=all_locations,
         permissions=PERMISSIONS,
         menu_tree=MENU_TREE,
         username=current_user.username

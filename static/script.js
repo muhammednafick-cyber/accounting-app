@@ -2493,10 +2493,17 @@ document.addEventListener('DOMContentLoaded', function () {
                         messageDiv.textContent = data.message || 'Operation completed';
                     }
                     if (data.success) {
+                        if (window.__printAfterSubmit && data.voucher_number) {
+                            window.open('/print/voucher/' + encodeURIComponent(data.voucher_number), '_blank');
+                        }
+                        window.__printAfterSubmit = false;
                         setTimeout(() => location.reload(), 1000);
+                    } else {
+                        window.__printAfterSubmit = false;
                     }
                 })
                 .catch(error => {
+                    window.__printAfterSubmit = false;
                     console.error('Error:', error);
                     const messageDiv = document.getElementById('voucherMessageDynamic');
                     if (messageDiv) {
@@ -2716,7 +2723,14 @@ document.addEventListener('DOMContentLoaded', function () {
                     ledger_name: r["Ledger Name"],
                     group_name: r["Group Name"],
                     opening_balance: Number(r["Opening Balance"] || 0),
-                    opening_balance_type: r["Opening Balance Type"]
+                    opening_balance_type: r["Opening Balance Type"],
+                    opening_balance_date: (function (v) {
+                        if (v === undefined || v === null || v === "") return "";
+                        if (typeof v === "number") {
+                            return new Date(Math.round((v - 25569) * 86400 * 1000)).toISOString().slice(0, 10);
+                        }
+                        return String(v).trim();
+                    })(r["Opening Balance Date"])
                 }));
 
                 const payload = {

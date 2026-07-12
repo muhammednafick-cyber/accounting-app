@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Selling Price Master{% endblock %}
+
+{% block extra_head %}
+<style>
+    .sp-toolbar {
+        margin: 20px 0;
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .sp-toolbar input[type="text"],
+    .sp-toolbar select {
+        padding: 8px 10px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        min-width: 250px;
+    }
+
+    table.sp-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+    }
+
+    .sp-table th,
+    .sp-table td {
+        border: 1px solid #ddd;
+        padding: 8px 10px;
+        text-align: left;
+    }
+
+    .sp-table th {
+        background: #2563AB;
+        color: #fff;
+    }
+
+    .sp-table tr:nth-child(even) {
+        background: #f7f9fc;
+    }
+
+    .sp-price-input {
+        width: 120px;
+        padding: 6px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        text-align: right;
+    }
+
+    .sp-price-input.sp-dirty {
+        border-color: #e67e22;
+        background: #fff8ef;
+    }
+
+    .sp-status {
+        font-size: 13px;
+        font-weight: bold;
+        margin-left: 8px;
+    }
+
+    .sp-status.ok { color: #27ae60; }
+    .sp-status.err { color: #e74c3c; }
+
+    .sp-no-price { color: #999; font-style: italic; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Selling Price Master</h1>
+<p style="color:#666;">Selling prices used as the default Unit Selling Price in Sales Vouchers.
+    Prices changed inside a Sales Voucher do <strong>not</strong> update this master.</p>
+
+<div class="sp-toolbar">
+    <input type="text" id="spSearch" placeholder="Search by item code, name or group..." oninput="filterRows()">
+    <select id="spFilter" onchange="filterRows()">
+        <option value="all">All items</option>
+        <option value="with">With selling price</option>
+        <option value="without">Without selling price</option>
+    </select>
+    <span id="spCount" style="color:#666;"></span>
+</div>
+
+<table class="sp-table" id="spTable">
+    <thead>
+        <tr>
+            <th>Item Code</th>
+            <th>Item Name</th>
+            <th>Group</th>
+            <th>Unit</th>
+            <th>Selling Price</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr data-search="{{ (item.item_code ~ ' ' ~ item.name ~ ' ' ~ (item.group_name or '')) | lower }}"
+            data-has-price="{{ 'yes' if item.selling_price is not none else 'no' }}">
+            <td>{{ item.item_code }}</td>
+            <td>{{ item.name }}</td>
+            <td>{{ item.group_name or '' }}</td>
+            <td>{{ item.unit_code or '' }}</td>
+            <td>
+                <input type="number" step="0.01" min="0" class="sp-price-input"
+                    data-item-code="{{ item.item_code }}"
+                    value="{{ '%.2f' | format(item.selling_price) if item.selling_price is not none else '' }}"
+                    placeholder="Not set"
+                    oninput="markDirty(this)"
+                    onkeydown="if(event.key==='Enter'){savePrice(this.closest('tr').querySelector('button'));}">
+                {% if item.selling_price is none %}<span class="sp-no-price">not set</span>{% endif %}
+            </td>
+            <td>
+                <button type="button" class="btn" onclick="savePrice(this)">Save</button>
+                <span class="sp-status"></span>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<script>
+    function filterRows() {
+        const q = document.getElementById('spSearch').value.trim().toLowerCase();
+        const mode = document.getElementById('spFilter').value;
+        let visible = 0;
+        document.querySelectorAll('#spTable tbody tr').forEach(tr => {
+            const matchesText = !q || tr.dataset.search.includes(q);
+            const hasPrice = tr.dataset.hasPrice === 'yes';
+            const matchesMode = mode === 'all' || (mode === 'with' && hasPrice) || (mode === 'without' && !hasPrice);
+            const show = matchesText && matchesMode;
+            tr.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+        document.getElementById('spCount').textContent = visible + ' item(s)';
+    }
+
+    function markDirty(input) {
+        input.classList.add('sp-dirty');
+        const status = input.closest('tr').querySelector('.sp-status');
+        status.textContent = '';
+        status.className = 'sp-status';
+    }
+
+    function savePrice(btn) {
+        const tr = btn.closest('tr');
+        const input = tr.querySelector('.sp-price-input');
+        const status = tr.querySelector('.sp-status');
+        const price = input.value.trim();
+
+        if (price === '') {
+            status.textContent = 'Enter a price';
+            status.className = 'sp-status err';
+            return;
+        }
+        if (isNaN(parseFloat(price)) || parseFloat(price) < 0) {
+            status.textContent = 'Invalid price';
+            status.className = 'sp-status err';
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('item_code', input.dataset.itemCode);
+        formData.append('selling_price', price);
+
+        status.textContent = 'Saving...';
+        status.className = 'sp-status';
+
+        fetch('/update_selling_price', { method: 'POST', body: formData })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    input.classList.remove('sp-dirty');
+                    input.value = parseFloat(data.selling_price).toFixed(2);
+                    tr.dataset.hasPrice = 'yes';
+                    const notSet = tr.querySelector('.sp-no-price');
+                    if (notSet) notSet.remove();
+                    status.textContent = 'Saved';
+                    status.className = 'sp-status ok';
+                } else {
+                    status.textContent = data.message || 'Error';
+                    status.className = 'sp-status err';
+                }
+            })
+            .catch(() => {
+                status.textContent = 'Network error';
+                status.className = 'sp-status err';
+            });
+    }
+
+    filterRows();
+</script>
+{% endblock %}

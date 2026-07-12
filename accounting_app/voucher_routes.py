@@ -1,6 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, flash
 from flask_login import login_required, current_user
-import sqlite3
 import json
 
 from database import (
@@ -232,9 +231,13 @@ def voucher(voucher_type):
         )
         locations = get_locations(company_id=company_id) if multiple_locations_enabled else []
 
+        # Default selling prices come from the Selling Price Master; fall back to
+        # the inventory unit_price when no master record exists for the item.
+        from database import get_selling_price_map
+        selling_price_map = get_selling_price_map(company_id=company_id)
         items_dict = {
             item['name']: {
-                "unit_price": item['unit_price'],
+                "unit_price": selling_price_map.get(item['item_code'], item['unit_price']),
                 "unit_code": item['unit_code'],
                 "vat_rate": item['vat_rate'],
             }
@@ -352,12 +355,12 @@ def api_voucher_items_for_return():
             return jsonify({"success": False, "message": "No company selected"}), 400
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT voucher_type, location_name FROM vouchers WHERE voucher_number = ? AND company_id = ?", (voucher_number, company_id))
+        cur.execute("SELECT voucher_type, location_name, cost_center_code FROM vouchers WHERE voucher_number = ? AND company_id = ?", (voucher_number, company_id))
         row = cur.fetchone()
         if not row:
             conn.close()
             return jsonify({"success": False, "message": "Source voucher not found"}), 404
-        source_type, source_location = row[0], row[1]
+        source_type, source_location, source_cost_center = row[0], row[1], row[2]
         if target_type == "Sales Return" and source_type != "Sales":
             conn.close()
             return jsonify({"success": False, "message": "Select a Sales voucher for Sales Return"}), 400
@@ -368,36 +371,54 @@ def api_voucher_items_for_return():
             conn.close()
             return jsonify({"success": False, "message": "Select a Service Income voucher for Service Income Return"}), 400
         cur.execute("""
-            SELECT item_name, quantity, unit_price, amount, ledger_name, type, COALESCE(location_name, '')
+            SELECT item_name, quantity, unit_price, amount, ledger_name, type, COALESCE(location_name, ''), COALESCE(cost_center_code, '')
             FROM item_entries WHERE voucher_number = ? AND company_id = ?
         """, (voucher_number, company_id))
         items = cur.fetchall()
         cur.execute("""
-            SELECT ledger_name, amount, type
+            SELECT ledger_name, amount, type, COALESCE(cost_center_code, '')
             FROM ledger_entries WHERE voucher_number = ? AND company_id = ?
         """, (voucher_number, company_id))
         ledgers_src = cur.fetchall()
+        # Quantities already returned against this voucher (cap further returns)
+        returned_map = {}
+        try:
+            cur.execute("""
+                SELECT ie.item_name, SUM(ie.quantity)
+                FROM item_entries ie
+                JOIN vouchers v ON ie.voucher_number = v.voucher_number AND ie.company_id = v.company_id
+                WHERE ie.company_id = ? AND v.linked_voucher_number = ? AND v.voucher_type = ?
+                GROUP BY ie.item_name
+            """, (company_id, voucher_number, target_type))
+            returned_map = {r[0]: float(r[1] or 0) for r in cur.fetchall()}
+        except Exception as e:
+            print(f"returned-qty lookup failed: {e}")
         conn.close()
         reversed_items = []
         fixed_type = "Debit" if target_type in ["Sales Return", "Service Income Return"] else "Credit"
-        for item_name, qty, unit_price, amount, ledger_name, type_, loc in items:
+        for item_name, qty, unit_price, amount, ledger_name, type_, loc, cc in items:
             qty_f = float(qty or 0)
+            already_returned = returned_map.get(item_name, 0.0)
+            remaining = max(round(qty_f - already_returned, 4), 0)
             rate = float(unit_price or 0)  # use original voucher unit price
-            line_amount = round(qty_f * rate, 2)
+            line_amount = round(remaining * rate, 2)
             reversed_items.append({
                 "item_name": item_name,
-                "quantity": qty_f,
+                "quantity": remaining,
+                "max_quantity": remaining,
+                "sold_quantity": qty_f,
                 "unit_price": rate,
                 "amount": line_amount,
                 "ledger_name": ledger_name,
                 "type": fixed_type,
                 "location_name": loc or source_location or "Main Location",
+                "cost_center": cc or source_cost_center or "",
             })
         # Collect ledgers used by items to exclude them from explicit ledger entries
         item_ledgers = set(i[4] for i in items)
 
         reversed_ledgers = []
-        for ledger_name, amount, type_ in ledgers_src:
+        for ledger_name, amount, type_, cc in ledgers_src:
             if ledger_name in ("Output VAT 5%", "Input VAT 5%"):
                 continue
             if target_type == "Sales Return" and ledger_name in ("Cost of Goods Sold", "Inventory"):
@@ -413,8 +434,9 @@ def api_voucher_items_for_return():
                 "ledger_name": ledger_name,
                 "amount": float(amount or 0),
                 "type": "Debit" if type_ == "Credit" else "Credit",
+                "cost_center": cc or source_cost_center or "",
             })
-        return jsonify({"success": True, "items": reversed_items, "ledgers": reversed_ledgers})
+        return jsonify({"success": True, "items": reversed_items, "ledgers": reversed_ledgers, "cost_center": source_cost_center or ""})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -423,13 +445,59 @@ def api_voucher_items_for_return():
 @login_required
 def api_item_available_qty():
     item_name = request.args.get("item_name")
-    location_name = request.args.get("location_name") or "Main Location"
-    date_str = request.args.get("date")
+    location_name = (request.args.get("location_name") or "").strip()
+    date_str = parse_date(request.args.get("date"))
     if not item_name:
         return jsonify({"success": False, "message": "item_name is required"}), 400
     try:
+        company_id = get_current_company_id()
+        company = get_company_settings(company_id=company_id)
+        multiple_locations = bool(company and company.get("multiple_locations_applicable"))
+
+        if not multiple_locations:
+            # Locations disabled: show the full company quantity
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT stock_quantity FROM inventory WHERE company_id = ? AND name = ?", (company_id, item_name))
+            row = cur.fetchone()
+            qty = float(row[0] or 0) if row else 0.0
+            if date_str:
+                # Back-dated voucher: remove movements after the date (all locations)
+                cur.execute("""
+                    SELECT COALESCE(SUM(
+                        CASE WHEN v.voucher_type IN ('Purchase','Sales Return','Physical Stock')
+                                  OR (v.voucher_type IN ('Inventory Transfer','Stock Adjustment','Reversal') AND ie.type = 'Debit')
+                             THEN ie.quantity
+                             WHEN v.voucher_type IN ('Sales','Purchase Return')
+                                  OR (v.voucher_type IN ('Inventory Transfer','Stock Adjustment','Reversal') AND ie.type = 'Credit')
+                             THEN -ie.quantity
+                             ELSE 0 END), 0)
+                    FROM item_entries ie
+                    JOIN vouchers v ON ie.voucher_number = v.voucher_number AND ie.company_id = v.company_id
+                    WHERE v.company_id = ? AND ie.item_name = ? AND v.date > ?
+                """, (company_id, item_name, date_str))
+                future = float(cur.fetchone()[0] or 0)
+                qty -= future
+            conn.close()
+            return jsonify({"success": True, "qty": round(qty, 2), "location": "All"})
+
+        # Locations enabled: resolve to the selected/active location, clamped to
+        # the user's allowed locations
+        if not location_name:
+            from flask import session
+            location_name = (session.get("active_location") or "").strip()
+        if not location_name:
+            default_loc = get_default_location(company_id=company_id)
+            location_name = default_loc['location_name'] if default_loc else "Main Location"
+        try:
+            from database import coerce_allowed_location
+            location_name = coerce_allowed_location(location_name, user_id=current_user.id,
+                                                    is_admin=current_user.is_admin, company_id=company_id)
+        except Exception:
+            pass
+
         qty = get_current_stock(item_name, location_name, date=date_str)
-        return jsonify({"success": True, "qty": round(qty, 2)})
+        return jsonify({"success": True, "qty": round(qty, 2), "location": location_name})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
@@ -508,8 +576,17 @@ def add_voucher_route():
     )
     default_loc = get_default_location(company_id=company_id)
     if multiple_locations_enabled:
+        # Session-wide active location (main-menu switcher) takes priority over
+        # any form value: vouchers always inherit the active location.
+        from flask import session
+        valid_location_names = {l['location_name'] for l in get_locations(company_id=company_id)}
+        session_location = session.get("active_location")
+        if session_location not in valid_location_names:
+            session_location = None
         final_location_name = (
-            location_name_form or (default_loc['location_name'] if default_loc else "Main Location")
+            session_location
+            or location_name_form
+            or (default_loc['location_name'] if default_loc else "Main Location")
         )
     else:
         final_location_name = "Main Location"
@@ -781,6 +858,35 @@ def add_voucher_route():
                     url_for("voucher_bp.voucher", voucher_type=voucher_type)
                 )
 
+    # Field-level validation — kept in sync with the Excel import validation
+    # (_validate_required_columns in import_routes/queue_routes.py)
+    validation_errors = []
+    if voucher_type not in ("Inventory Transfer", "Stock Adjustment"):
+        for le in ledger_entries:
+            if not str(le.get("ledger_name") or "").strip():
+                validation_errors.append("Ledger Name is required for every ledger line")
+            if le.get("type") not in ("Debit", "Credit"):
+                validation_errors.append(f"Type must be Debit or Credit for ledger '{le.get('ledger_name')}'")
+            if voucher_type in ("Receipt", "Payment", "Contra", "Journal", "Expense", "Service Income", "Service Income Return") \
+                    and float(le.get("amount") or 0) <= 0:
+                validation_errors.append(f"Amount must be greater than 0 for ledger '{le.get('ledger_name')}'")
+    for ie in item_entries:
+        if not str(ie.get("item_name") or "").strip():
+            validation_errors.append("Item Name is required for every item line")
+        qty = float(ie.get("quantity") or 0)
+        if voucher_type == "Stock Adjustment":
+            if qty == 0:
+                validation_errors.append(f"Quantity cannot be 0 for item '{ie.get('item_name')}'")
+        elif qty <= 0:
+            validation_errors.append(f"Quantity must be greater than 0 for item '{ie.get('item_name')}'")
+    if validation_errors:
+        msg = "; ".join(dict.fromkeys(validation_errors))  # dedupe, keep order
+        print(f"Manual entry validation failed for {voucher_type}: {msg}")
+        if is_ajax:
+            return jsonify({"success": False, "message": msg}), 400
+        flash(msg, "error")
+        return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+
     # Mandatory Cost Center Check
     if company.get("cost_center_applicable") and company.get("cost_center_mandatory") and voucher_type in COST_CENTER_ALLOWED_TYPES:
         # If Header CC is missing, check if relevant lines have it
@@ -843,97 +949,42 @@ def add_voucher_route():
                 f"Injected item VAT ledger: {vat_ledger_name} {vat_type} {total_vat_items}"
             )
 
-    # Expense VAT (Journal vouchers never carry VAT; use Expense for VAT entries)
-    if voucher_type == "Expense":
-        ledger_vat_applicable = request.form.getlist("ledger_vat_applicable[]")
+    # Ledger-level VAT (Expense / Service Income / Service Income Return).
+    # NOTE: do not rely on the ledger_vat_applicable[] checkbox array —
+    # unchecked checkboxes are not submitted, which misaligns the arrays.
+    # The VAT amount inputs are always submitted (0.00 when unchecked), so
+    # sum them per row aligned with the ledger type.
+    if voucher_type in ("Expense", "Service Income", "Service Income Return"):
         ledger_vat_amounts = request.form.getlist("ledger_vat_amount[]")
-        total_input_vat = 0.0
+        # Pad to row count so indexes line up
+        if len(ledger_vat_amounts) < len(ledger_types):
+            ledger_vat_amounts = ledger_vat_amounts + ['0'] * (len(ledger_types) - len(ledger_vat_amounts))
 
-        for name, amount, type_, vat_app, vat_amt in zip(
-            ledger_names,
-            ledger_amounts,
-            ledger_types,
-            ledger_vat_applicable,
-            ledger_vat_amounts,
-        ):
-            if type_ == "Debit" and vat_app in ("1", "Yes", "Y", "true", "True"):
+        if voucher_type == "Expense":
+            vat_side, vat_ledger, vat_entry_type = "Debit", "Input VAT 5%", "Debit"
+        elif voucher_type == "Service Income":
+            vat_side, vat_ledger, vat_entry_type = "Credit", "Output VAT 5%", "Credit"
+        else:  # Service Income Return
+            vat_side, vat_ledger, vat_entry_type = "Debit", "Output VAT 5%", "Debit"
+
+        total_ledger_vat = 0.0
+        for type_, vat_amt in zip(ledger_types, ledger_vat_amounts):
+            if type_ == vat_side:
                 try:
-                    total_input_vat += float(vat_amt or 0)
+                    total_ledger_vat += float(vat_amt or 0)
                 except ValueError:
                     pass
 
-        if total_input_vat > 0:
+        if total_ledger_vat > 0:
             ledger_entries.append(
                 {
-                    "ledger_name": "Input VAT 5%",
-                    "amount": round(total_input_vat, 2),
-                    "type": "Debit",
+                    "ledger_name": vat_ledger,
+                    "amount": round(total_ledger_vat, 2),
+                    "type": vat_entry_type,
                 }
             )
             print(
-                f"Injected expense VAT ledger: Input VAT 5% Debit {total_input_vat}"
-            )
-
-    # Service Income VAT
-    if voucher_type == "Service Income":
-        ledger_vat_applicable = request.form.getlist("ledger_vat_applicable[]")
-        ledger_vat_amounts = request.form.getlist("ledger_vat_amount[]")
-        total_output_vat = 0.0
-
-        for name, amount, type_, vat_app, vat_amt in zip(
-            ledger_names,
-            ledger_amounts,
-            ledger_types,
-            ledger_vat_applicable,
-            ledger_vat_amounts,
-        ):
-            if type_ == "Credit" and vat_app in ("1", "Yes", "Y", "true", "True"):
-                try:
-                    total_output_vat += float(vat_amt or 0)
-                except ValueError:
-                    pass
-
-        if total_output_vat > 0:
-            ledger_entries.append(
-                {
-                    "ledger_name": "Output VAT 5%",
-                    "amount": round(total_output_vat, 2),
-                    "type": "Credit",
-                }
-            )
-            print(
-                f"Injected service income VAT ledger: Output VAT 5% Credit {total_output_vat}"
-            )
-
-    # Service Income Return VAT
-    if voucher_type == "Service Income Return":
-        ledger_vat_applicable = request.form.getlist("ledger_vat_applicable[]")
-        ledger_vat_amounts = request.form.getlist("ledger_vat_amount[]")
-        total_output_vat_reversal = 0.0
-
-        for name, amount, type_, vat_app, vat_amt in zip(
-            ledger_names,
-            ledger_amounts,
-            ledger_types,
-            ledger_vat_applicable,
-            ledger_vat_amounts,
-        ):
-            if type_ == "Debit" and vat_app in ("1", "Yes", "Y", "true", "True"):
-                try:
-                    total_output_vat_reversal += float(vat_amt or 0)
-                except ValueError:
-                    pass
-
-        if total_output_vat_reversal > 0:
-            ledger_entries.append(
-                {
-                    "ledger_name": "Output VAT 5%",
-                    "amount": round(total_output_vat_reversal, 2),
-                    "type": "Debit",
-                }
-            )
-            print(
-                f"Injected service income return VAT ledger: Output VAT 5% Debit {total_output_vat_reversal}"
+                f"Injected {voucher_type} VAT ledger: {vat_ledger} {vat_entry_type} {total_ledger_vat}"
             )
 
     # Final debit/credit balance validation AFTER VAT injections
@@ -1284,15 +1335,8 @@ def get_next_voucher_number():
 
     try:
         company_id = get_current_company_id()
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT COUNT(*) FROM vouchers WHERE voucher_type = ? AND company_id = ?",
-            (voucher_type, company_id),
-        )
-        count = cursor.fetchone()[0]
 
-        # prefixes
+        # prefixes (kept in sync with add_voucher)
         if voucher_type == "Purchase Return":
             prefix = "PR"
         elif voucher_type == "Sales Return":
@@ -1309,10 +1353,36 @@ def get_next_voucher_number():
             prefix = "ITR"
         elif voucher_type == "Opening":
             prefix = "OPEN"
+        elif voucher_type == "Reversal":
+            prefix = "REV"
         else:
             prefix = voucher_type.upper()[:3]
 
-        next_voucher_number = f"{prefix}-{str(count + 1).zfill(5)}"
+        # FY-level numbering preview: FY tag from the voucher date (default today)
+        from datetime import datetime as _dt
+        date_str = parse_date(request.args.get("date")) or _dt.today().strftime('%Y-%m-%d')
+        from database.financial_year_db import get_fy_by_date
+        fy = get_fy_by_date(date_str, company_id=company_id)
+        if fy:
+            full_prefix = f"FY{str(fy['start_date'])[2:4]}-{prefix}"
+        else:
+            full_prefix = prefix
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT voucher_number FROM vouchers WHERE company_id = ? AND voucher_number LIKE ? ORDER BY length(voucher_number) DESC, voucher_number DESC LIMIT 1",
+            (company_id, f"{full_prefix}-%"),
+        )
+        row = cursor.fetchone()
+        new_seq = 1
+        if row:
+            try:
+                new_seq = int(str(row[0]).split('-')[-1]) + 1
+            except (ValueError, IndexError):
+                new_seq = 1
+
+        next_voucher_number = f"{full_prefix}-{str(new_seq).zfill(6)}"
         conn.close()
         print(
             "Next voucher number for "

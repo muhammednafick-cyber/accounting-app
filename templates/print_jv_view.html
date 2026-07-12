@@ -114,6 +114,9 @@
 <body>
     <div class="no-print">
         <button onclick="window.print()" class="btn">Print Voucher</button>
+        <button onclick="window.print()" class="btn" style="background-color:#c0392b;">Save as PDF</button>
+        <a href="{{ url_for('print_bp.export_jv_excel', voucher_number=voucher.voucher_number) }}"
+            class="btn" style="background-color:#27ae60;">Export to Excel</a>
         <a href="{{ url_for('print_bp.print_jv') }}" class="btn btn-secondary">Back to Search</a>
     </div>
 

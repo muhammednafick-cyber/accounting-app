@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}GL Dump{% endblock %}
+
+{% block extra_head %}
+<style>
+    .gl-toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding: 12px 16px;
+        background: var(--card-bg, #fff);
+        border: 1px solid var(--border-color, #dee2e6);
+        border-radius: 6px;
+    }
+    .gl-toolbar label { font-size: 0.85rem; font-weight: 500; margin-bottom: 0; }
+    .gl-toolbar .btn { padding: 5px 14px; font-size: 0.85rem; }
+
+    .gl-table-wrap { overflow: auto; max-height: 70vh; }
+    .gl-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+    .gl-table thead th {
+        background: #2563ab;
+        color: #fff;
+        border-bottom: 2px solid #1a4a8a;
+        padding: 8px 10px;
+        text-align: left;
+        font-weight: 600;
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+    .gl-table thead th.num { text-align: right; }
+    .gl-table tbody tr { border-bottom: 1px solid #edf0f4; }
+    .gl-table tbody tr:hover { background: #f0f5ff; }
+    .gl-table td { padding: 5px 10px; white-space: nowrap; }
+    .gl-table td.narr { white-space: normal; max-width: 300px; }
+    .gl-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .gl-table tfoot td {
+        font-weight: 700;
+        border-top: 2px solid #cdd8e8;
+        background: #f3f6fb;
+        padding: 7px 10px;
+    }
+    #glEmptyMsg { display: none; color: #888; padding: 20px; text-align: center; }
+    #glCount { color: #666; font-size: 0.85rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 style="font-size:1.4rem;">GL Dump — All Entries</h2>
+<p style="color:#666;">All ledger entries for the selected period. Click a voucher number to open the journal entry.</p>
+
+<div class="gl-toolbar">
+    <label>From Date</label>
+    <input type="text" id="from_date" placeholder="DD-MM-YYYY" style="width:130px;" readonly>
+
+    <label>To Date</label>
+    <input type="text" id="to_date" placeholder="DD-MM-YYYY" style="width:130px;" readonly>
+
+    <button class="btn btn-primary" onclick="fetchGlDump()">Show</button>
+    <button class="btn btn-outline-success" onclick="exportGlDump()">Export to Excel</button>
+    <span id="glCount"></span>
+</div>
+
+<div class="gl-table-wrap">
+    <table class="gl-table" id="glTable" style="display:none;">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Voucher No.</th>
+                <th>Type</th>
+                <th>Ledger</th>
+                <th class="num">Debit</th>
+                <th class="num">Credit</th>
+                <th>Cost Center</th>
+                <th>Narration</th>
+                <th>Posted On (Date &amp; Time)</th>
+                <th>Posted By</th>
+            </tr>
+        </thead>
+        <tbody id="glBody"></tbody>
+        <tfoot>
+            <tr>
+                <td colspan="4" style="text-align:right;">Total</td>
+                <td class="num" id="glFootDebit"></td>
+                <td class="num" id="glFootCredit"></td>
+                <td colspan="4"></td>
+            </tr>
+        </tfoot>
+    </table>
+    <div id="glEmptyMsg">No entries found for the selected period.</div>
+</div>
+
+<script>
+flatpickr("#from_date", { dateFormat: "d-m-Y", allowInput: true });
+flatpickr("#to_date",   { dateFormat: "d-m-Y", allowInput: true });
+
+function glToISO(ddmmyyyy) {
+    if (!ddmmyyyy) return '';
+    const p = ddmmyyyy.split('-');
+    return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : ddmmyyyy;
+}
+
+function glFmt(val) {
+    if (!val || val == 0) return '';
+    return parseFloat(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fetchGlDump() {
+    const from = glToISO(document.getElementById('from_date').value);
+    const to   = glToISO(document.getElementById('to_date').value);
+    if (!from || !to) { alert('Please select From and To dates.'); return; }
+
+    fetch(`/api/gl_dump?from_date=${from}&to_date=${to}`)
+        .then(r => r.json())
+        .then(data => {
+            const tbody = document.getElementById('glBody');
+            const table = document.getElementById('glTable');
+            const empty = document.getElementById('glEmptyMsg');
+            tbody.innerHTML = '';
+
+            if (!data.success) { alert(data.message || 'Error loading GL dump.'); return; }
+            if (!data.entries || data.entries.length === 0) {
+                table.style.display = 'none';
+                empty.style.display = 'block';
+                document.getElementById('glCount').textContent = '';
+                return;
+            }
+
+            let totalDebit = 0, totalCredit = 0;
+            let html = '';
+            for (const e of data.entries) {
+                totalDebit  += parseFloat(e.debit)  || 0;
+                totalCredit += parseFloat(e.credit) || 0;
+                const vno = escHtml(e.voucher_number);
+                html += `<tr>
+                    <td>${escHtml(e.date)}</td>
+                    <td><a href="/print/jv?voucher_number=${encodeURIComponent(e.voucher_number)}" target="_blank" title="Open journal entry">${vno}</a></td>
+                    <td>${escHtml(e.voucher_type)}</td>
+                    <td>${escHtml(e.ledger_name)}</td>
+                    <td class="num">${glFmt(e.debit)}</td>
+                    <td class="num">${glFmt(e.credit)}</td>
+                    <td>${escHtml(e.cost_center)}</td>
+                    <td class="narr">${escHtml(e.narration)}</td>
+                    <td>${escHtml(e.posted_at)}</td>
+                    <td>${escHtml(e.posted_by)}</td>
+                </tr>`;
+            }
+            tbody.innerHTML = html;
+            document.getElementById('glFootDebit').textContent  = glFmt(totalDebit);
+            document.getElementById('glFootCredit').textContent = glFmt(totalCredit);
+            document.getElementById('glCount').textContent = `${data.entries.length} entries`;
+
+            table.style.display = '';
+            empty.style.display = 'none';
+        })
+        .catch(e => { console.error(e); alert('Error loading GL dump.'); });
+}
+
+function exportGlDump() {
+    const from = glToISO(document.getElementById('from_date').value);
+    const to   = glToISO(document.getElementById('to_date').value);
+    if (!from || !to) { alert('Please select From and To dates.'); return; }
+    window.location.href = `/export_report/gl_dump?from_date=${from}&to_date=${to}`;
+}
+</script>
+{% endblock %}

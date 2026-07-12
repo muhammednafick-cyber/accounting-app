@@ -83,6 +83,131 @@ Charges on Purchase Voucher
     .vat-input {
         width: 80px !important;
     }
+
+    /* ===== Dynamics 365-style entry grid ===== */
+    .grid-wrap {
+        overflow: auto;
+        max-height: 60vh;
+        max-width: 100%;
+        border: 1px solid #c8c8c8;
+        border-radius: 4px;
+        margin-top: 10px;
+        background: #fff;
+        position: relative;
+    }
+
+    /* The table may grow wider than the page; only .grid-wrap scrolls, never the page */
+    .grid-wrap table {
+        margin-top: 0;
+        width: max-content;
+        min-width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .grid-wrap th,
+    .grid-wrap td {
+        border: none;
+        border-right: 1px solid #e1e1e1;
+        border-bottom: 1px solid #e1e1e1;
+        padding: 4px 8px;
+        white-space: nowrap;
+        background: #fff;
+    }
+
+    /* Sticky header row */
+    .grid-wrap thead th {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: #2563AB;
+        color: #fff;
+        box-shadow: 0 1px 0 #c8c8c8;
+    }
+
+    /* Frozen first two columns (Item, Quantity) of the item grid */
+    #itemTable th:nth-of-type(1),
+    #itemTable td:nth-of-type(1) {
+        position: sticky;
+        left: 0;
+        z-index: 3;
+        min-width: 240px;
+        max-width: 300px;
+    }
+
+    #itemTable th:nth-of-type(2),
+    #itemTable td:nth-of-type(2) {
+        position: sticky;
+        left: 240px;
+        z-index: 3;
+        min-width: 100px;
+        box-shadow: 2px 0 3px -1px rgba(0, 0, 0, 0.15);
+    }
+
+    #itemTable th:nth-of-type(1) {
+        width: 240px;
+        max-width: 240px;
+    }
+
+    #itemTable td:nth-of-type(1) {
+        max-width: 240px;
+    }
+
+    #itemTable thead th:nth-of-type(1),
+    #itemTable thead th:nth-of-type(2) {
+        z-index: 6;
+    }
+
+    /* Controls fill their cells for a spreadsheet look */
+    .grid-wrap td input:not([type=hidden]) {
+        width: 100% !important;
+        min-width: 70px;
+        box-sizing: border-box;
+        border: 1px solid transparent;
+        background: transparent;
+        padding: 4px;
+    }
+
+    .grid-wrap td select:not(.select2-hidden-accessible) {
+        width: 100%;
+        min-width: 110px;
+        box-sizing: border-box;
+    }
+
+    .grid-wrap td input:not([type=hidden]):hover {
+        border-color: #d0d0d0;
+    }
+
+    .grid-wrap td input:focus,
+    .grid-wrap td select:focus {
+        outline: 2px solid #2563AB;
+        outline-offset: -2px;
+        border-radius: 2px;
+        background: #fff;
+    }
+
+    .grid-wrap td .select2-container--focus .select2-selection,
+    .grid-wrap td .select2-selection:focus {
+        outline: 2px solid #2563AB;
+        outline-offset: -2px;
+    }
+
+    .grid-wrap td input[readonly] {
+        color: #555;
+        background: #f7f7f7;
+    }
+
+    /* Compact remove button, excluded from keyboard tab flow */
+    .grid-wrap td .btn {
+        padding: 3px 10px;
+        font-size: 12px;
+    }
+
+    .grid-hint {
+        color: #777;
+        font-size: 12px;
+        margin: 6px 0 0;
+    }
 </style>
 {% endblock %}
 
@@ -155,18 +280,12 @@ Charges on Purchase Voucher
         {% if voucher_type in ['Sales', 'Purchase', 'Expense'] %}
 
         {% endif %}
-        {% if multiple_locations_enabled and voucher_type in ['Sales','Purchase','Sales Return','Purchase Return','Stock
-        Adjustment'] %}
+        {% if multiple_locations_enabled and voucher_type != 'Inventory Transfer' %}
         <div class="form-row">
-            <label for="location_name">Location:</label>
-            <select id="location_name" name="location_name" class="select2" data-placeholder="Select Location">
-                <option></option>
-                {% for loc in locations %}
-                <option value="{{ loc.location_name }}" {% if selected_location_name==loc.location_name %}selected{%
-                    endif %}>{{ loc.location_name }}
-                </option>
-                {% endfor %}
-            </select>
+            <label for="location_name_display">Location:</label>
+            <input type="text" id="location_name_display" value="{{ active_location or '' }}" readonly
+                title="Active location is set from the main menu" style="background-color:#f1f1f1; cursor:not-allowed;">
+            <input type="hidden" id="location_name" name="location_name" value="{{ active_location or '' }}">
         </div>
         {% endif %}
         {% if multiple_locations_enabled and voucher_type == 'Inventory Transfer' %}
@@ -223,6 +342,7 @@ Charges on Purchase Voucher
             <button type="button" class="btn" onclick="loadReturnItems()">Load Ledgers</button>
         </div>
         {% endif %}
+        <div class="grid-wrap" id="ledgerGridWrap">
         <table id="ledgerTable">
             <thead>
                 <tr>
@@ -315,6 +435,7 @@ Charges on Purchase Voucher
 
             </tbody>
         </table>
+        </div>
         <button type="button" class="btn" onclick="addLedgerRow()">Add Ledger Entry</button>
     </div>
     {% endif %}
@@ -330,6 +451,7 @@ Charges on Purchase Voucher
             <button type="button" class="btn" onclick="loadReturnItems()">Load Items</button>
         </div>
         {% endif %}
+        <div class="grid-wrap" id="itemGridWrap">
         <table id="itemTable">
             <thead>
                 <tr>
@@ -455,7 +577,8 @@ Charges on Purchase Voucher
                         <select name="item_ledger_name[]" class="item-ledger-select select2"
                             data-placeholder="Select Ledger" required>
                             <option></option>
-                            {% for ledger in ledgers %}
+                            {% set item_row_ledgers = (ledgers | selectattr('group_code', 'equalto', 'G001') | list) if voucher_type in ['Sales', 'Sales Return'] else ledgers %}
+                            {% for ledger in item_row_ledgers %}
                             <option value="{{ ledger.ledger_name }}" {% if ie.ledger_name==ledger.ledger_name
                                 %}selected{% endif %}>
                                 {{ ledger.ledger_name }}
@@ -540,6 +663,8 @@ Charges on Purchase Voucher
 
             </tbody>
         </table>
+        </div>
+        <p class="grid-hint">Tab / Shift+Tab: next / previous cell &nbsp;•&nbsp; Enter: next row &nbsp;•&nbsp; Arrow keys: move between cells &nbsp;•&nbsp; Tab or &darr; on the last row adds a new row</p>
         <button type="button" class="btn" onclick="addItemRow()">Add Item Entry</button>
         {% if voucher_type not in ['Inventory Transfer','Stock Adjustment'] %}
         <div class="form-row" style="margin-top:8px;">
@@ -650,8 +775,14 @@ Charges on Purchase Voucher
     {% endif %}
 
     <div style="margin-top: 20px;">
+        <button type="button" class="btn" onclick="previewJournal()" style="background-color: #8e44ad; color: white;">
+            Preview Journal
+        </button>
         <button type="submit" class="btn" style="background-color: #4CAF50; color: white;">
-            Submit Voucher
+            Submit
+        </button>
+        <button type="button" class="btn" onclick="submitAndPrint()" style="background-color: #2563AB; color: white;">
+            Submit &amp; Print
         </button>
         <span id="voucherMessageDynamic" class="alert"
             style="display:inline-block; vertical-align:middle; margin-left:12px;"></span>
@@ -700,6 +831,8 @@ Charges on Purchase Voucher
     const ledgerOptionsNoVat = ledgersData.filter(l => !vatLedgers.includes(l.ledger_name)).map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
     const cashBankOptions = ledgersData.filter(l => ['G005', 'G006'].includes(l.group_code)).map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
     const allLedgerOptions = ledgersData.map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+    // Sales / Sales Return item lines book revenue: only ledgers under the Sales group (G001)
+    const salesItemLedgerOptions = ledgersData.filter(l => l.group_code === 'G001').map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
 
     function normalizeText(s) {
         return (s || '').toString().trim();
@@ -2207,6 +2340,12 @@ Charges on Purchase Voucher
         const voucherNumberInput = document.getElementById('voucher_number');
         if (voucherNumberInput && !voucherNumberInput.value && voucherType !== 'Edit Voucher') {
             fetchNextVoucherNumber();
+            // The FY series depends on the voucher date — refresh on change
+            if (dateInput) {
+                dateInput.addEventListener('change', function () {
+                    if (!voucherNumberInput.readOnly) fetchNextVoucherNumber();
+                });
+            }
         }
 
         const nonInventoryTypes = ['Journal', 'Contra', 'Payment', 'Receipt', 'Expense', 'Service Income', 'Service Income Return'];
@@ -2243,7 +2382,15 @@ Charges on Purchase Voucher
     });
 
     function fetchNextVoucherNumber() {
-        fetch('/get_next_voucher_number?voucher_type=' + encodeURIComponent(voucherType))
+        // Include the voucher date so the FY-based series (FY26-SAL-...) matches the date
+        const dateEl = document.getElementById('date');
+        let dateParam = '';
+        if (dateEl && dateEl.value) {
+            const p = dateEl.value.split('-');
+            const iso = p.length === 3 && p[2].length === 4 ? `${p[2]}-${p[1]}-${p[0]}` : dateEl.value;
+            dateParam = '&date=' + encodeURIComponent(iso);
+        }
+        fetch('/get_next_voucher_number?voucher_type=' + encodeURIComponent(voucherType) + dateParam)
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -2633,7 +2780,7 @@ Charges on Purchase Voucher
                 <td>
                     <select name="item_ledger_name[]" class="item-ledger-select select2" data-placeholder="Select Ledger" required>
                         <option></option>
-                        ${ledgerOptionsNoVat}
+                        ${(voucherType === 'Sales' || voucherType === 'Sales Return') ? salesItemLedgerOptions : ledgerOptionsNoVat}
                     </select>
                 </td>
                 ` : `<input type="hidden" name="item_ledger_name[]" value="">`}
@@ -2717,6 +2864,9 @@ Charges on Purchase Voucher
             .then(data => {
                 if (data && data.success) {
                     availSpan.textContent = (data.qty || 0).toFixed(2);
+                    availSpan.title = data.location === 'All'
+                        ? 'Total quantity (all locations)'
+                        : 'Available at ' + (data.location || '');
                 }
             })
             .catch(() => { });
@@ -2772,6 +2922,8 @@ Charges on Purchase Voucher
         const qtyInput = row.querySelector('.quantity-input');
         const priceInput = row.querySelector('.unit-price-input');
         const amountInput = row.querySelector('.item-amount-input');
+        // Stock Adjustment / Inventory Transfer rows have no price or amount cells
+        if (!qtyInput || !priceInput || !amountInput) return;
 
         const qty = parseFloat(qtyInput.value) || 0;
         const price = parseFloat(priceInput.value) || 0;
@@ -2934,6 +3086,119 @@ Charges on Purchase Voucher
         resultsDiv.style.display = 'none';
     }
 
+    // ===== Preview Journal & Submit-and-Print =====
+    function collectJournalPreviewRows() {
+        const rows = [];
+        // Ledger entries as entered (+ ledger-level VAT for Expense / Service Income)
+        let ledgerVatTotal = 0;
+        const ledgerVatSide = voucherType === 'Service Income' ? 'Credit'
+            : (voucherType === 'Expense' || voucherType === 'Service Income Return') ? 'Debit' : null;
+        document.querySelectorAll('#ledgerTable tbody tr, #ledgerEntries .entry').forEach(tr => {
+            const nameEl = tr.querySelector('[name="ledger_name[]"]');
+            const amtEl = tr.querySelector('[name="ledger_amount[]"]');
+            const typeEl = tr.querySelector('[name="ledger_type[]"]');
+            if (nameEl && nameEl.value && amtEl && parseFloat(amtEl.value || 0) !== 0) {
+                const rowType = typeEl ? typeEl.value : '';
+                rows.push({ name: nameEl.value, amount: parseFloat(amtEl.value || 0), type: rowType });
+                if (ledgerVatSide && rowType === ledgerVatSide) {
+                    const vatAmtEl = tr.querySelector('[name="ledger_vat_amount[]"]');
+                    if (vatAmtEl) ledgerVatTotal += parseFloat(vatAmtEl.value || 0);
+                }
+            }
+        });
+        if (ledgerVatSide && ledgerVatTotal > 0.005) {
+            const vatLedgerName = voucherType === 'Expense' ? 'Input VAT 5%' : 'Output VAT 5%';
+            rows.push({ name: vatLedgerName, amount: Math.round(ledgerVatTotal * 100) / 100, type: ledgerVatSide, derived: true });
+        }
+        // Item lines -> aggregated by item ledger, plus VAT
+        const itemAgg = {};
+        let vatTotal = 0;
+        document.querySelectorAll('#itemTable tbody tr').forEach(tr => {
+            const ledEl = tr.querySelector('[name="item_ledger_name[]"]');
+            const amtEl = tr.querySelector('[name="item_amount[]"]');
+            const typeEls = tr.querySelectorAll('[name="item_type[]"]');
+            const vatEl = tr.querySelector('[name="vat_amount[]"]');
+            const amt = amtEl ? parseFloat(amtEl.value || 0) : 0;
+            if (vatEl) vatTotal += parseFloat(vatEl.value || 0);
+            if (!amt) return;
+            let type = '';
+            typeEls.forEach(t => { if (t.value) type = t.value; });
+            let ledger = ledEl && ledEl.value ? ledEl.value : (
+                ['Purchase', 'Purchase Return'].includes(voucherType) ? 'Inventory' : voucherType);
+            const key = ledger + '|' + type;
+            itemAgg[key] = (itemAgg[key] || 0) + amt;
+        });
+        Object.keys(itemAgg).forEach(k => {
+            const [name, type] = k.split('|');
+            rows.push({ name: name, amount: itemAgg[k], type: type, derived: true });
+        });
+        if (vatTotal > 0.005) {
+            let vatLedger = '', vatType = '';
+            if (voucherType === 'Sales') { vatLedger = 'Output VAT 5%'; vatType = 'Credit'; }
+            else if (voucherType === 'Sales Return') { vatLedger = 'Output VAT 5%'; vatType = 'Debit'; }
+            else if (voucherType === 'Purchase') { vatLedger = 'Input VAT 5%'; vatType = 'Debit'; }
+            else if (voucherType === 'Purchase Return') { vatLedger = 'Input VAT 5%'; vatType = 'Credit'; }
+            if (vatLedger) rows.push({ name: vatLedger, amount: Math.round(vatTotal * 100) / 100, type: vatType, derived: true });
+        }
+        return rows;
+    }
+
+    function previewJournal() {
+        const rows = collectJournalPreviewRows();
+        if (!rows.length) { alert('Nothing to preview yet — enter some entries first.'); return; }
+        let totD = 0, totC = 0;
+        let html = `<div style="position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:9999;" onclick="this.remove()">
+            <div style="background:#fff; max-width:640px; margin:60px auto; padding:24px; border-radius:8px; max-height:75vh; overflow:auto;" onclick="event.stopPropagation()">
+            <h3 style="margin-top:0;">Journal Preview — ${voucherType}</h3>
+            <table style="width:100%; border-collapse:collapse;">
+            <thead><tr style="background:#2563AB; color:#fff;"><th style="padding:6px; text-align:left;">Ledger</th><th style="padding:6px; text-align:right;">Debit</th><th style="padding:6px; text-align:right;">Credit</th></tr></thead><tbody>`;
+        rows.forEach(r => {
+            const d = r.type === 'Debit' ? r.amount : 0;
+            const c = r.type === 'Credit' ? r.amount : 0;
+            totD += d; totC += c;
+            html += `<tr style="border-bottom:1px solid #eee;${r.derived ? ' color:#666; font-style:italic;' : ''}">
+                <td style="padding:5px;">${r.name}${r.derived ? ' (auto)' : ''}</td>
+                <td style="padding:5px; text-align:right;">${d ? d.toFixed(2) : ''}</td>
+                <td style="padding:5px; text-align:right;">${c ? c.toFixed(2) : ''}</td></tr>`;
+        });
+        const balanced = Math.abs(totD - totC) <= 0.01;
+        html += `</tbody><tfoot><tr style="font-weight:bold; border-top:2px solid #444;">
+            <td style="padding:6px;">Total</td>
+            <td style="padding:6px; text-align:right;">${totD.toFixed(2)}</td>
+            <td style="padding:6px; text-align:right;">${totC.toFixed(2)}</td></tr></tfoot></table>
+            <p style="color:${balanced ? 'green' : '#c0392b'}; font-weight:600;">${balanced ? 'Balanced ✓' : 'Not balanced — Debit and Credit differ by ' + Math.abs(totD - totC).toFixed(2)}</p>
+            <p style="color:#888; font-size:.85em;">Note: system entries (COGS, WAP valuations) are added automatically on save and may not appear here.</p>
+            <button class="btn" onclick="this.closest('div[style*=fixed]').remove()">Close</button>
+            </div></div>`;
+        const wrap = document.createElement('div');
+        wrap.innerHTML = html;
+        document.body.appendChild(wrap.firstElementChild);
+    }
+
+    function submitAndPrint() {
+        window.__printAfterSubmit = true;
+        const form = document.getElementById('voucherForm');
+        if (form.requestSubmit) form.requestSubmit(); else form.submit();
+    }
+
+    // Vouchers store the cost center CODE; the selects use the NAME as value
+    const ccNameByCode = {};
+    costCentersData.forEach(c => { ccNameByCode[c.center_code] = c.center_name; });
+    function ccToName(v) {
+        if (!v) return '';
+        return ccNameByCode[v] || v; // fallback: already a name
+    }
+
+    function clampReturnQty(input) {
+        const max = parseFloat(input.max);
+        const val = parseFloat(input.value);
+        if (!isNaN(max) && !isNaN(val) && val > max) {
+            alert(`Return quantity cannot exceed the sold quantity (${max}).`);
+            input.value = max;
+        }
+        if (!isNaN(val) && val < 0) input.value = 0;
+    }
+
     function loadReturnItems() {
         const src = document.getElementById('source_voucher_number');
         const dateInput = document.getElementById('date');
@@ -2962,20 +3227,21 @@ Charges on Purchase Voucher
                                 </select>
                             </td>
                             <td>
-                                <input type="number" name="quantity[]" class="quantity-input" value="${ie.quantity}" step="0.01" oninput="onItemInputChange(this)" required>
+                                <input type="number" name="quantity[]" class="quantity-input" value="${ie.quantity}" step="0.01" min="0" max="${ie.max_quantity ?? ie.quantity}" title="Sold: ${ie.sold_quantity ?? ie.quantity}; returnable: ${ie.max_quantity ?? ie.quantity}" oninput="clampReturnQty(this); onItemInputChange(this)" required>
                                 <input type="hidden" name="ref_voucher_number[]" value="${vno}">
                             </td>
                             <td>
-                                <input type="number" name="unit_price[]" class="unit-price-input" value="${ie.unit_price}" step="0.01" oninput="onItemInputChange(this)" required>
+                                <input type="number" name="unit_price[]" class="unit-price-input" value="${ie.unit_price}" step="0.01" readonly required>
                             </td>
                             <td>
                                 <input type="number" name="item_amount[]" class="item-amount-input" value="${ie.amount}" step="0.01" readonly>
                             </td>
                             ${(targetType !== 'Purchase' && targetType !== 'Purchase Return') ? `
                             <td>
-                                <select name="item_ledger_name[]" class="item-ledger-select" required>
+                                <select class="item-ledger-select" disabled title="Ledger comes from the source voucher">
                                     <option value="${ie.ledger_name}" selected>${ie.ledger_name}</option>
                                 </select>
+                                <input type="hidden" name="item_ledger_name[]" value="${ie.ledger_name}">
                             </td>
                             ` : `<input type="hidden" name="item_ledger_name[]" value="">`}
                             ${costCenterApplicable ? `
@@ -2993,7 +3259,7 @@ Charges on Purchase Voucher
                             </td>
                             ${vatApplicable ? `
                             <td>
-                                <input type="number" name="vat_percent[]" class="vat-percent-input-item vat-input" value="${defaultRate}" step="0.01" min="0" max="100" oninput="onVatPercentChange(this)">
+                                <input type="number" name="vat_percent[]" class="vat-percent-input-item vat-input" value="${defaultRate}" step="0.01" min="0" max="100" readonly>
                             </td>
                             <td>
                                 <input type="number" name="vat_amount[]" class="vat-amount-input-item vat-input" value="0" step="0.01" readonly>
@@ -3011,9 +3277,20 @@ Charges on Purchase Voucher
                             </td>
                         `;
                         tbody.appendChild(row);
+                        // Cost center comes from the source voucher line (code -> name)
+                        if (costCenterApplicable && ie.cost_center) {
+                            const ccSel = row.querySelector('.item-cost-center-select');
+                            if (ccSel) $(ccSel).val(ccToName(ie.cost_center)).trigger('change');
+                        }
                         calculateItemAmount(row);
                         calculateItemVAT(row);
                     });
+                }
+
+                // Header cost center from the source voucher (code -> name)
+                const headerCCEl = document.getElementById('cost_center_name');
+                if (headerCCEl && data.cost_center) {
+                    $(headerCCEl).val(ccToName(data.cost_center)).trigger('change');
                 }
 
                 // Handle Ledger Table
@@ -3085,9 +3362,11 @@ Charges on Purchase Voucher
                         const ledgerSelect = newRow.querySelector('.ledger-name-select');
                         if (ledgerSelect) ledgerSelect.value = le.ledger_name;
 
-                        if (costCenterApplicable && headerCC) {
+                        // Cost center comes from the source voucher entry (fallback: header)
+                        const srcCC = ccToName(le.cost_center) || headerCC;
+                        if (costCenterApplicable && srcCC) {
                             const selects = newRow.querySelectorAll('.ledger-cost-center-select');
-                            selects.forEach(s => s.value = headerCC);
+                            selects.forEach(s => { $(s).val(srcCC).trigger('change'); });
                         }
                         updateVatVisibilityForRow(newRow);
                         calculateLedgerVAT(newRow);
@@ -3113,6 +3392,207 @@ Charges on Purchase Voucher
             grandTotalEl.textContent = (totalAmount + totalVat).toFixed(2);
         }
     }
+
+    // ===== Dynamics 365 / Excel-style keyboard grid navigation =====
+    (function () {
+
+        function gridAddRow(table) {
+            if (table.id === 'itemTable' && typeof addItemRow === 'function') { addItemRow(); return true; }
+            if (table.id === 'ledgerTable' && typeof addLedgerRow === 'function') { addLedgerRow(); return true; }
+            return false;
+        }
+
+        // The focusable control of a cell: the Select2 selection span for
+        // enhanced selects, otherwise the first editable input/select.
+        function cellTarget(td) {
+            const s2 = td.querySelector('.select2-container .select2-selection');
+            if (s2) return s2;
+            return td.querySelector(
+                'input:not([type=hidden]):not([readonly]):not([disabled]), ' +
+                'select:not([disabled]):not(.select2-hidden-accessible)'
+            );
+        }
+
+        function rowTargets(tr) {
+            const out = [];
+            tr.querySelectorAll(':scope > td').forEach(td => {
+                const t = cellTarget(td);
+                if (t) out.push(t);
+            });
+            return out;
+        }
+
+        function gridRows(table) {
+            return Array.from(table.querySelectorAll('tbody > tr'));
+        }
+
+        function locate(table, el) {
+            const td = el.closest('td');
+            const tr = el.closest('tr');
+            if (!td || !tr || !table.contains(td)) return null;
+            const rows = gridRows(table);
+            const targets = rowTargets(tr);
+            const c = targets.findIndex(t => t.closest('td') === td);
+            if (c === -1) return null;
+            return { rows, r: rows.indexOf(tr), c, targets };
+        }
+
+        function focusTarget(t) {
+            if (!t) return;
+            t.focus({ preventScroll: true });
+            if (t.tagName === 'INPUT') {
+                try { t.select(); } catch (err) { }
+            }
+            const td = t.closest('td');
+            if (td) td.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
+
+        // A row is "empty" when its primary fields hold no value. Type/ledger
+        // selects are ignored because they always carry a default selection.
+        function rowIsEmpty(tr) {
+            const primary = tr.querySelectorAll(
+                'select[name="item_name[]"], input[name="quantity[]"], ' +
+                'select[name="ledger_name[]"], input[name="ledger_amount[]"]'
+            );
+            for (const el of primary) {
+                if (el.value) return false;
+            }
+            return true;
+        }
+
+        // Move one cell left/right, flowing onto the previous/next row.
+        // Returns false when at the very end and no row was created (lets Tab exit the grid).
+        function moveHorizontal(table, el, dir, allowCreate) {
+            const pos = locate(table, el);
+            if (!pos) return false;
+            const nc = pos.c + dir;
+            if (nc >= 0 && nc < pos.targets.length) {
+                focusTarget(pos.targets[nc]);
+                return true;
+            }
+            const nr = pos.r + dir;
+            if (nr >= 0 && nr < pos.rows.length) {
+                const t = rowTargets(pos.rows[nr]);
+                focusTarget(dir > 0 ? t[0] : t[t.length - 1]);
+                return true;
+            }
+            if (dir > 0 && allowCreate) {
+                if (rowIsEmpty(pos.rows[pos.rows.length - 1])) return false; // empty last row: let focus leave the grid
+                if (gridAddRow(table)) {
+                    const rows = gridRows(table);
+                    focusTarget(rowTargets(rows[rows.length - 1])[0]);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Move one row up/down staying in the same column.
+        function moveVertical(table, el, dir, allowCreate) {
+            const pos = locate(table, el);
+            if (!pos) return false;
+            let nr = pos.r + dir;
+            if (nr >= pos.rows.length && allowCreate) {
+                if (rowIsEmpty(pos.rows[pos.rows.length - 1])) return true; // stay put on an empty last row
+                if (!gridAddRow(table)) return true;
+                pos.rows = gridRows(table);
+                nr = pos.rows.length - 1;
+            }
+            if (nr < 0 || nr >= pos.rows.length) return true;
+            const t = rowTargets(pos.rows[nr]);
+            focusTarget(t[Math.min(pos.c, t.length - 1)] || t[0]);
+            return true;
+        }
+
+        function initGrid(wrapId) {
+            const wrap = document.getElementById(wrapId);
+            if (!wrap) return;
+            const table = wrap.querySelector('table');
+            if (!table) return;
+
+            // Excel-like: focusing a cell selects its content; the first arrow
+            // press then navigates. Once the user starts editing, Left/Right
+            // move the caret inside the cell again.
+            wrap.addEventListener('focusin', function (e) {
+                const el = e.target;
+                if (el.tagName === 'INPUT' && !el.readOnly) {
+                    el.dataset.gridNav = '1';
+                    try { el.select(); } catch (err) { }
+                }
+            });
+            wrap.addEventListener('input', function (e) {
+                if (e.target && e.target.dataset) e.target.dataset.gridNav = '';
+            });
+
+            wrap.addEventListener('keydown', function (e) {
+                // While a Select2 dropdown is open its own keyboard handling applies.
+                if (document.querySelector('.select2-container--open')) return;
+                const el = e.target;
+                if (!el.closest || !el.closest('td')) return;
+
+                switch (e.key) {
+                    case 'Tab': {
+                        if (moveHorizontal(table, el, e.shiftKey ? -1 : 1, !e.shiftKey)) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                        break;
+                    }
+                    case 'Enter': {
+                        e.preventDefault(); // never submit the form from inside the grid
+                        e.stopPropagation();
+                        moveVertical(table, el, 1, true);
+                        break;
+                    }
+                    case 'ArrowDown': {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        moveVertical(table, el, 1, true);
+                        break;
+                    }
+                    case 'ArrowUp': {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        moveVertical(table, el, -1, false);
+                        break;
+                    }
+                    case 'ArrowLeft':
+                    case 'ArrowRight': {
+                        // Inside a partially edited input the arrows keep moving the caret.
+                        if (el.tagName === 'INPUT' && el.dataset.gridNav !== '1') return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        moveHorizontal(table, el, e.key === 'ArrowLeft' ? -1 : 1, false);
+                        break;
+                    }
+                }
+            }, true);
+
+            // Keep row-action buttons out of the tab flow.
+            const untabButtons = () => wrap.querySelectorAll('td .btn').forEach(b => b.tabIndex = -1);
+            untabButtons();
+            new MutationObserver(untabButtons).observe(table, { childList: true, subtree: true });
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            initGrid('itemGridWrap');
+            initGrid('ledgerGridWrap');
+
+            // After picking a value in a Select2 cell, advance to the next cell.
+            if (window.jQuery) {
+                $('#itemTable, #ledgerTable').on('select2:select', 'select', function () {
+                    const sel = this;
+                    setTimeout(function () {
+                        const td = sel.closest('td');
+                        const table = sel.closest('table');
+                        if (!td || !table) return;
+                        const target = td.querySelector('.select2-selection') || sel;
+                        moveHorizontal(table, target, 1, false);
+                    }, 0);
+                });
+            }
+        });
+    })();
 </script>
 <script>
     function reverseVoucher(voucherNumber) {

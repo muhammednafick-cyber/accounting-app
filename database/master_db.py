@@ -89,6 +89,17 @@ def set_user_principal(user_id, is_principal):
     finally:
         conn.close()
 
+def set_user_hide_dashboard(user_id, hide_dashboard):
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE users SET hide_dashboard = %s WHERE id = %s",
+            (1 if hide_dashboard else 0, user_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
 def update_user(user_id, email, password_hash=None):
     conn = get_connection()
     try:
