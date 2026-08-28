@@ -40,6 +40,7 @@ MENU_TREE = [
         ("reports.inventory_reports", "Inventory Reports"),
         ("reports.vat_reports", "VAT Reports"),
         ("reports.other", "Other (Ageing)"),
+        ("reports.report_builder", "Custom Report Builder"),
     ]},
     {"key": "print", "label": "Print", "children": [
         ("print.jv_print", "JV Print"),
@@ -275,9 +276,79 @@ def get_ledger_group_name_map(company_id=None):
         return {}
 
 
+# Rules the application always applies, whatever the per-company configuration
+# says. Money received has to land in cash or a bank; money paid has to leave
+# one. These were enforced only by filtering the dropdown in voucher.html, so
+# an Excel import - or any POST that did not come from that page - bypassed
+# them entirely.
+#   G005 = Cash Accounts, G006 = Bank Accounts
+CASH_BANK_GROUPS = ("G005", "G006")
+
+BUILT_IN_SIDE_RULES = {
+    ("Receipt", "Debit"): (CASH_BANK_GROUPS,
+                           "money received must be debited to a Cash or Bank ledger"),
+    ("Payment", "Credit"): (CASH_BANK_GROUPS,
+                            "money paid must be credited from a Cash or Bank ledger"),
+    ("Contra", "Debit"): (CASH_BANK_GROUPS,
+                          "a contra entry moves money between Cash and Bank"),
+    ("Contra", "Credit"): (CASH_BANK_GROUPS,
+                           "a contra entry moves money between Cash and Bank"),
+}
+
+
+def _ledger_group_codes(ledger_names, company_id):
+    """{ledger_name: group_code} for the named ledgers."""
+    names = [n for n in {str(n or "").strip() for n in ledger_names} if n]
+    if not names:
+        return {}
+    from database.config import get_connection
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        placeholders = ",".join(["%s"] * len(names))
+        cursor.execute(
+            f"SELECT ledger_name, group_code FROM ledgers "
+            f"WHERE company_id = %s AND ledger_name IN ({placeholders})",
+            tuple([company_id] + names))
+        return {r[0]: r[1] for r in cursor.fetchall()}
+    except Exception as exc:
+        print(f"[voucher-rules] could not read ledger groups: {exc}")
+        return {}
+    finally:
+        conn.close()
+
+
+def check_built_in_side_rules(voucher_type, ledger_entries, company_id):
+    """The always-on rules above. Returns (ok, message)."""
+    vt = (voucher_type or "").strip()
+    sides = {side for (typ, side) in BUILT_IN_SIDE_RULES if typ == vt}
+    if not sides:
+        return True, ""
+
+    relevant = [e for e in ledger_entries
+                if (e.get("type") or "").strip() in sides]
+    if not relevant:
+        return True, ""
+
+    group_of = _ledger_group_codes([e.get("ledger_name") for e in relevant],
+                                   company_id)
+    for entry in relevant:
+        side = (entry.get("type") or "").strip()
+        allowed, reason = BUILT_IN_SIDE_RULES[(vt, side)]
+        name = str(entry.get("ledger_name") or "").strip()
+        group_code = group_of.get(name)
+        if group_code is None:
+            continue        # unknown ledger - reported by the other checks
+        if group_code not in allowed:
+            return False, (f"{vt} ({side}): '{name}' is not a Cash or Bank "
+                           f"ledger - {reason}.")
+    return True, ""
+
+
 def validate_voucher_ledger_groups(voucher_type, ledger_entries, company_id=None):
     """
-    Enforce group rules per voucher type using dynamic database configuration.
+    Enforce group rules per voucher type using dynamic database configuration,
+    plus the built-in rules above that apply to every company.
 
     voucher_type: string like 'Receipt', 'Payment', etc.
     ledger_entries: list of dicts:
@@ -297,7 +368,14 @@ def validate_voucher_ledger_groups(voucher_type, ledger_entries, company_id=None
         company_id = get_current_company_id()
 
     vt = voucher_type.strip()
-    
+
+    # Built-in rules first: these hold regardless of how a company has
+    # configured its voucher types, and they are what the voucher screen has
+    # always shown users.
+    ok, err = check_built_in_side_rules(vt, ledger_entries, company_id)
+    if not ok:
+        return False, err
+
     # Lazy import to avoid circular dependency issues at top-level
     try:
         from database.voucher_config_db import get_allowed_ledgers, get_voucher_config

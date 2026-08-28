@@ -1230,7 +1230,7 @@ Charges on Purchase Voucher
             if (typeof c.amount !== 'number') throw new Error('Amount is required');
 
             const costCenterName = normalizeText(c.costCenterName || getHeaderCostCenterName());
-            if (costCenterApplicable && costCenterMandatory && !costCenterName && voucherType === 'Expense') {
+            if (costCenterApplicable && costCenterMandatory && !costCenterName) {
                 throw new Error('Cost Center is required');
             }
 
@@ -1633,7 +1633,7 @@ Charges on Purchase Voucher
 
                 const ok = setLedgerFieldFromText('accountLedgerName', 'pick_account', 'Choose account ledger:', hinted, side);
                 if (ok) {
-                    if (voucherType === 'Expense' && costCenterApplicable && costCenterMandatory) {
+                    if (costCenterApplicable && costCenterMandatory) {
                         const cc = normalizeText(getHeaderCostCenterName());
                         if (!cc) {
                             state.step = 'ask_cost_center';
@@ -1720,7 +1720,7 @@ Charges on Purchase Voucher
 
                 const ok = setLedgerFieldFromText('accountLedgerName', 'pick_account', 'Choose account ledger:', hinted, side);
                 if (ok) {
-                    if (voucherType === 'Expense' && costCenterApplicable && costCenterMandatory) {
+                    if (costCenterApplicable && costCenterMandatory) {
                         const cc = normalizeText(getHeaderCostCenterName());
                         if (!cc) {
                             state.step = 'ask_cost_center';
@@ -2322,7 +2322,12 @@ Charges on Purchase Voucher
             }
         }
 
-        // Set default date to today if empty
+        // Set default date to today if empty.
+        // The field is DD-MM-YYYY (see its pattern and placeholder) and
+        // flatpickr is initialised on it with dateFormat "d-m-Y". Writing
+        // YYYY-MM-DD here meant flatpickr re-read "2026-08-28" as day 2026,
+        // month 08, year 28 and rewrote the box as 20-06-2026 - so every new
+        // voucher opened on a nonsense date instead of today.
         const dateInput = document.getElementById('date');
         if (dateInput) {
             if (!dateInput.value) {
@@ -2330,7 +2335,7 @@ Charges on Purchase Voucher
                 const year = now.getFullYear();
                 const month = String(now.getMonth() + 1).padStart(2, '0');
                 const day = String(now.getDate()).padStart(2, '0');
-                dateInput.value = `${year}-${month}-${day}`;
+                dateInput.value = `${day}-${month}-${year}`;
             }
             // Recalculate due date on date change
             dateInput.addEventListener('change', calculateDueDate);

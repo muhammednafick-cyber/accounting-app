@@ -237,11 +237,19 @@ def download_sub_group_template():
     headers = ["Sub Group Name", "Parent Group Name"]
     for col, header in enumerate(headers):
         worksheet.write(0, col, header)
+    worksheet.set_column(0, 1, 28)
 
     # Add sample data
     worksheet.write(1, 0, "Software Assets")
     worksheet.write(1, 1, "Fixed Assets")
-    
+
+    # Parent Group must be one that already exists; Sub Group Name is the new
+    # record being created, so it stays free text.
+    from accounting_app.import_routes.template_lookups import apply_lookups
+    from database import get_current_company_id
+    apply_lookups(workbook, worksheet, headers, get_current_company_id(),
+                  overrides={"Sub Group Name": None}, first_row=2)
+
     workbook.close()
     output.seek(0)
 

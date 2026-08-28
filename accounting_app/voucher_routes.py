@@ -133,6 +133,11 @@ def voucher_assistant_bootstrap():
                 "vat_applicable": bool(company.get("vat_applicable") == 1),
                 "cost_center_applicable": bool(company.get("cost_center_applicable")),
                 "cost_center_mandatory": bool(company.get("cost_center_mandatory")),
+                # Cost centres only attach to income/expense postings - never to
+                # Receipt, Payment or Contra, which just move money. The chat
+                # assistant reads this rather than keeping its own copy, so the
+                # two can't drift apart.
+                "cost_center_types": sorted(COST_CENTER_ALLOWED_TYPES),
             }
         )
     except Exception as e:

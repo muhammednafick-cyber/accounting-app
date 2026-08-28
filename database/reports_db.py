@@ -53,6 +53,86 @@ def _get_location_ledger_balances(cursor, company_id, location_name, as_of_date=
         balances[name] = balances.get(name, 0.0) + float(net or 0)
     return balances
 
+def ledger_balances_from_entries(cursor, company_id):
+    """Every ledger's balance derived from openings + posted entries.
+
+    This is the authoritative figure: it is what the vouchers actually say.
+    Statements are built from this rather than from `ledgers.closing_balance`,
+    which is a cache that can - and did - fall behind the entries and make a
+    trial balance quietly wrong.
+    """
+    cursor.execute("""
+        SELECT l.ledger_name,
+               CASE WHEN COALESCE(l.opening_balance_type, '') = 'Credit'
+                    THEN -COALESCE(l.opening_balance, 0)
+                    ELSE COALESCE(l.opening_balance, 0) END
+               + COALESCE(e.movement, 0) AS balance
+        FROM ledgers l
+        LEFT JOIN (
+            SELECT ledger_name,
+                   SUM(CASE WHEN type = 'Debit' THEN amount ELSE -amount END)
+                   AS movement
+            FROM ledger_entries WHERE company_id = %s GROUP BY ledger_name
+        ) e ON e.ledger_name = l.ledger_name
+        WHERE l.company_id = %s
+    """, (company_id, company_id))
+    return {r[0]: float(r[1] or 0) for r in cursor.fetchall()}
+
+
+def verify_closing_balances(cursor, conn, company_id):
+    """Check the cached ledger closing balances against the entries, and heal.
+
+    `ledgers.closing_balance` is maintained incrementally when a voucher is
+    saved. Anything that writes ledger_entries by another route - a repair, an
+    import, a partly-failed save - leaves the cache behind, and every statement
+    that trusts it is then wrong by that amount without saying so.
+
+    Returns the number of ledgers corrected.
+    """
+    try:
+        cursor.execute("""
+            SELECT l.ledger_name,
+                   COALESCE(l.closing_balance, 0) AS cached,
+                   CASE WHEN COALESCE(l.opening_balance_type, '') = 'Credit'
+                        THEN -COALESCE(l.opening_balance, 0)
+                        ELSE COALESCE(l.opening_balance, 0) END
+                   + COALESCE(e.movement, 0) AS actual
+            FROM ledgers l
+            LEFT JOIN (
+                SELECT ledger_name,
+                       SUM(CASE WHEN type = 'Debit' THEN amount ELSE -amount END)
+                       AS movement
+                FROM ledger_entries WHERE company_id = %s GROUP BY ledger_name
+            ) e ON e.ledger_name = l.ledger_name
+            WHERE l.company_id = %s
+        """, (company_id, company_id))
+
+        drifted = [(r[0], float(r[1] or 0), float(r[2] or 0))
+                   for r in cursor.fetchall()
+                   if abs(float(r[1] or 0) - float(r[2] or 0)) > 0.005]
+        if not drifted:
+            return 0
+
+        for name, cached, actual in drifted:
+            print(f"[balances] '{name}' cached {cached:.2f} but entries give "
+                  f"{actual:.2f} - correcting")
+            cursor.execute(
+                "UPDATE ledgers SET closing_balance = %s "
+                "WHERE company_id = %s AND ledger_name = %s",
+                (round(actual, 2), company_id, name))
+        conn.commit()
+        print(f"[balances] corrected {len(drifted)} stale ledger balance(s)")
+        return len(drifted)
+    except Exception as exc:
+        # Never let the check itself break a report.
+        print(f"[balances] verification skipped: {exc}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+
+
 def get_trial_balance_data(as_of_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -95,13 +175,25 @@ def get_trial_balance_data(as_of_date=None, company_id=None, location_name=None)
         # Optimization: If querying for the latest date, use stored closing balances
         if is_latest_date(cursor, as_of_date_str, company_id):
             print(f"get_trial_balance_data({as_of_date_str}): Using optimized stored balances.")
+            # ...but verify the cache first. ledgers.closing_balance is kept up
+            # to date incrementally as vouchers are saved, and any path that
+            # writes entries without that increment leaves it silently short -
+            # which shows up as a trial balance that is simply wrong. Checking
+            # is one grouped query, and a wrong statement costs far more.
+            verify_closing_balances(cursor, conn, company_id)
+            # Build the statement from the entries, not from the cache. The
+            # verification above keeps the cache usable for other screens; the
+            # trial balance itself no longer depends on it being right.
+            balances = ledger_balances_from_entries(cursor, company_id)
             cursor.execute("""
-                SELECT l.ledger_name, g.group_name, l.closing_balance
+                SELECT l.ledger_name, g.group_name
                 FROM ledgers l
                 JOIN groups g ON l.group_code = g.group_code AND l.company_id = g.company_id
-                WHERE l.company_id = %s AND l.closing_balance != 0
+                WHERE l.company_id = %s
             """, (company_id,))
-            rows = cursor.fetchall()
+            rows = [(name, group, balances.get(name, 0.0))
+                    for name, group in cursor.fetchall()
+                    if abs(balances.get(name, 0.0)) > 0.005]
             trial_balance = []
             total_debit = 0.0
             total_credit = 0.0
@@ -1154,15 +1246,21 @@ def get_cash_flow_data(from_date, to_date, company_id=None):
             res = cursor.fetchone()
             opening_bal = res[0] if res and res[0] else 0.0
             
-            query_move = """
+            # No cut-off means "everything to date". `v.date <= NULL` is NULL
+            # in SQL, so leaving the placeholder in would quietly match no rows
+            # and report the opening balance as the closing one.
+            date_str = to_date_str(date_str) if date_str else None
+            cutoff = " AND v.date <= %s" if date_str else ""
+            query_move = f"""
                 SELECT SUM(CASE WHEN le.type='Debit' THEN le.amount ELSE -le.amount END)
                 FROM ledger_entries le
                 JOIN vouchers v ON le.voucher_number = v.voucher_number AND le.company_id = v.company_id
                 JOIN ledgers l ON le.ledger_name = l.ledger_name AND le.company_id = l.company_id AND l.company_id = v.company_id
                 WHERE v.company_id = %s AND l.group_code IN ('G005', 'G006')
-                AND v.date <= %s
+                {cutoff}
             """
-            cursor.execute(query_move, (company_id, date_str))
+            cursor.execute(query_move,
+                           (company_id, date_str) if date_str else (company_id,))
             res_move = cursor.fetchone()
             movements = res_move[0] if res_move and res_move[0] else 0.0
             
@@ -1171,10 +1269,15 @@ def get_cash_flow_data(from_date, to_date, company_id=None):
         # Calculate Opening Balance (as of from_date - 1 day)
         # However, "Opening Cash" for the period usually means Balance at Start of Day of from_date.
         # So we want Balance at (from_date - 1 day).
-        from_date_obj = datetime.strptime(from_date, '%Y-%m-%d')
-        prev_date = (from_date_obj - timedelta(days=1)).strftime('%Y-%m-%d')
-        
-        opening_cash_balance = get_balance_at(prev_date)
+        # With no start date the period runs from inception, so the opening
+        # cash is nil. Passing None straight to strptime threw, and the whole
+        # report came back empty with only a line in the server log.
+        if from_date:
+            from_date_obj = datetime.strptime(to_date_str(from_date), '%Y-%m-%d')
+            prev_date = (from_date_obj - timedelta(days=1)).strftime('%Y-%m-%d')
+            opening_cash_balance = get_balance_at(prev_date)
+        else:
+            opening_cash_balance = 0.0
         closing_cash_balance = get_balance_at(to_date)
         
         return {
@@ -2036,6 +2139,7 @@ def get_balance_sheet_data(as_of_date=None, company_id=None, location_name=None)
         # Optimization: Use stored balances if date is current
         if is_latest_date(cursor, as_of_date, company_id):
             print(f"get_balance_sheet_data({as_of_date}): Using optimized stored balances.")
+            verify_closing_balances(cursor, conn, company_id)
             cursor.execute("""
                 SELECT l.ledger_name, g.group_name, g.nature, l.closing_balance
                 FROM ledgers l
@@ -2258,6 +2362,7 @@ def get_profit_and_loss_data(from_date=None, to_date=None, company_id=None, loca
             ledger_balances = {}
             if is_latest_date(cursor, to_date, company_id):
                 print(f"get_profit_and_loss_data(None, {to_date}): Using optimized stored balances.")
+                verify_closing_balances(cursor, conn, company_id)
                 cursor.execute("""
                     SELECT l.ledger_name, g.group_name, g.nature, l.closing_balance
                     FROM ledgers l
@@ -2533,13 +2638,30 @@ def get_closing_inventory_data(as_of_date=None, company_id=None):
             """, (company_id,))
             inventory_items = cursor.fetchall()
 
+            # Replaying an item's whole movement history is the expensive part,
+            # so don't do it for items that have never moved and have no
+            # opening - they can only produce the zero row below.
+            cursor.execute(
+                "SELECT DISTINCT item_name FROM item_entries WHERE company_id = %s",
+                (company_id,))
+            moved = {r[0] for r in cursor.fetchall()}
+            try:
+                cursor.execute(
+                    "SELECT DISTINCT i.name FROM item_opening_balances o "
+                    "JOIN inventory i ON i.item_code = o.item_code "
+                    "AND i.company_id = o.company_id WHERE o.company_id = %s",
+                    (company_id,))
+                moved |= {r[0] for r in cursor.fetchall()}
+            except Exception:
+                pass   # no openings table content - the movement set is enough
+
             closing_inventory = []
             total_cost_amount = 0.0
             for item_code, item_name, group_name in inventory_items:
                 per_loc = replay_movements_by_location(
                     item_name, end_date=as_of_date_str, company_id=company_id,
                     allow_negative=True  # must reconcile with Balance Sheet, incl. negative stock
-                )
+                ) if item_name in moved else []
                 non_zero = [(loc, q, v, wap) for (loc, q, v, wap) in (per_loc or []) if round(q, 2) != 0]
                 if not non_zero:
                     # Item with no stock at any location — single zero row
@@ -2609,26 +2731,23 @@ def get_closing_inventory_data(as_of_date=None, company_id=None):
         inventory_items = cursor.fetchall()
         closing_inventory = []
         total_cost_amount = 0.0
+        # One query for every item's latest snapshot, instead of one query per
+        # item. DISTINCT ON keeps the first row of each item_name group, and
+        # the ORDER BY makes that the most recent entry on or before the date.
+        cursor.execute("""
+            SELECT DISTINCT ON (ie.item_name)
+                   ie.item_name, ie.running_qty, ie.running_value
+            FROM item_entries ie
+            JOIN vouchers v ON ie.voucher_number = v.voucher_number
+                           AND ie.company_id = v.company_id
+            WHERE v.company_id = %s AND v.date <= %s
+            ORDER BY ie.item_name, v.date DESC, v.voucher_id DESC, ie.id DESC
+        """, (company_id, as_of_date_str))
+        snapshots = {r[0]: (r[1] or 0.0, r[2] or 0.0) for r in cursor.fetchall()}
+
         for item_code, item_name, group_name in inventory_items:
-            # Find the last entry on or before as_of_date
-            # We need running_qty and running_value
-            cursor.execute("""
-                SELECT ie.running_qty, ie.running_value
-                FROM item_entries ie
-                JOIN vouchers v ON ie.voucher_number = v.voucher_number AND ie.company_id = v.company_id
-                WHERE v.company_id = %s AND ie.item_name = %s AND v.date <= %s
-                ORDER BY v.date DESC, v.voucher_id DESC, ie.id DESC
-                LIMIT 1
-            """, (company_id, item_name, as_of_date_str))
-            
-            row = cursor.fetchone()
-            if row:
-                q = row[0] or 0.0
-                v = row[1] or 0.0
-            else:
-                # No entries before this date -> 0
-                q = 0.0
-                v = 0.0
+            # No entries before this date -> 0
+            q, v = snapshots.get(item_name, (0.0, 0.0))
             
             wap = (v / q) if q != 0 else 0
             

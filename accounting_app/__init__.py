@@ -10,6 +10,18 @@ from database import initialize_db, get_user_by_id, get_company_settings
 login_manager = LoginManager()
 csrf = CSRFProtect()
 
+
+def _idle_timeout_seconds():
+    """How long a session may sit idle. 0 disables the timeout."""
+    try:
+        minutes = float(os.environ.get('IDLE_TIMEOUT_MINUTES', '30'))
+    except (TypeError, ValueError):
+        minutes = 30.0
+    return max(0.0, minutes) * 60
+
+
+IDLE_TIMEOUT_SECONDS = _idle_timeout_seconds()
+
 def create_app():
     # Base path (handles PyInstaller and normal run)
     if getattr(sys, "frozen", False):
@@ -45,8 +57,10 @@ def create_app():
             import secrets as _secrets
             secret = _secrets.token_hex(32)
     app.secret_key = secret
-    # Set session lifetime to 10 minutes (though we check manually too)
-    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)
+    # Keep the cookie lifetime in step with the idle timeout above, so the two
+    # cannot disagree about when a session has expired.
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
+        seconds=IDLE_TIMEOUT_SECONDS or 3600)
     
     app.config["BASE_PATH"] = resource_path
     
@@ -85,12 +99,13 @@ def create_app():
         if not current_user.is_authenticated:
             return redirect(url_for('auth_bp.signin'))
 
-        # Check Inactivity Timeout (10 minutes)
+        # Inactivity timeout. Ten minutes is short for data entry - a long
+        # voucher can take longer than that to key in - so it is configurable
+        # via IDLE_TIMEOUT_MINUTES (0 disables it entirely).
         last_active = session.get('last_active')
-        if last_active:
+        if last_active and IDLE_TIMEOUT_SECONDS > 0:
             now_ts = datetime.now().timestamp()
-            # 10 minutes = 600 seconds
-            if (now_ts - last_active) > 600:
+            if (now_ts - last_active) > IDLE_TIMEOUT_SECONDS:
                 logout_user()
                 session.clear()
                 return redirect(url_for('auth_bp.signin'))
@@ -122,6 +137,7 @@ def create_app():
         BP_PERMS = {
             'voucher_bp': 'vouchers',
             'report_bp': 'reports',
+            'report_builder_bp': 'reports.report_builder',
             'export_bp': 'reports',
             'print_bp': 'print',
             'import_bp': 'import_queue',
@@ -231,6 +247,7 @@ def create_app():
     from .master_routes import master_bp
     from .voucher_routes import voucher_bp
     from .report_routes import report_bp
+    from .report_builder_routes import report_builder_bp
     from .export_routes import export_bp
     from .import_routes import import_bp
     from .print_routes import print_bp
@@ -253,6 +270,7 @@ def create_app():
     app.register_blueprint(master_bp)
     app.register_blueprint(voucher_bp)
     app.register_blueprint(report_bp)
+    app.register_blueprint(report_builder_bp)
     app.register_blueprint(export_bp)
     app.register_blueprint(import_bp)
     app.register_blueprint(print_bp)

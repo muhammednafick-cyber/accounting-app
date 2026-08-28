@@ -1086,3 +1086,251 @@ table td button {
 .global-chat-window.va-enabled .rv-drafts-meta {
     display: block;
 }
+/* ==========================================================
+   Chat assistant: data tables, source badges and choice chips
+   The assistant now answers with real result sets, so a bubble
+   has to be able to hold a table, its totals and a download.
+   ========================================================== */
+
+.global-chat-window .rv-bubble:has(.rv-table-wrap) {
+    max-width: 100%;
+}
+
+.global-chat-window .rv-table-wrap {
+    white-space: normal;
+    overflow-x: auto;
+    margin: 8px 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.global-chat-window .rv-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.85em;
+    /* The global `table` rule adds a 20px margin and a drop shadow, which look
+       wrong inside a chat bubble that already has its own border. */
+    margin: 0;
+    box-shadow: none;
+}
+
+.global-chat-window .rv-table th,
+.global-chat-window .rv-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border: none;
+    border-bottom: 1px solid #edf2f7;
+    white-space: nowrap;
+}
+
+/* Figures read far better right-aligned and lined up on the decimal point. */
+.global-chat-window .rv-table td.rv-num,
+.global-chat-window .rv-table th.rv-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.global-chat-window .rv-table td.rv-neg {
+    color: #b91c1c;
+}
+
+.global-chat-window .rv-table th {
+    /* The global `table th` rule paints headers white on dark slate. In a chat
+       bubble the table is light, so the colour has to be set back explicitly
+       or the headings vanish against their own background. */
+    background-color: #eef2f7;
+    color: #1a202c;
+    font-weight: 600;
+    border-bottom: 1px solid #cbd5e1;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.global-chat-window .rv-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* `table td` sets a hard white background, so the zebra and hover shading has
+   to be applied to the cells rather than the row. */
+.global-chat-window .rv-table tbody td {
+    background-color: transparent;
+}
+
+.global-chat-window .rv-table tbody tr:nth-child(even) td {
+    background-color: #fafbfc;
+}
+
+.global-chat-window .rv-table tbody tr:hover td {
+    background-color: #eef2ff;
+}
+
+.global-chat-window .rv-table-more {
+    padding: 6px 10px;
+    font-size: 0.78em;
+    color: #64748b;
+    background: #f8fafc;
+    border-top: 1px solid #edf2f7;
+}
+
+.global-chat-window .rv-totals {
+    font-size: 0.85em;
+    color: #334155;
+    background: #f1f5f9;
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin: 4px 0;
+    white-space: normal;
+}
+
+.global-chat-window .rv-note {
+    display: block;
+    color: #64748b;
+    margin-top: 4px;
+    white-space: normal;
+}
+
+.global-chat-window .rv-src {
+    display: inline-block;
+    margin-top: 6px;
+    font-size: 0.72em;
+    color: #64748b;
+    background: #f1f5f9;
+    border-radius: 10px;
+    padding: 2px 8px;
+}
+
+.global-chat-window .rv-src-ai {
+    color: #92400e;
+    background: #fef3c7;
+}
+
+.global-chat-window .rv-dl {
+    display: inline-block;
+    margin-top: 6px;
+}
+
+.global-chat-window .rv-pick {
+    display: inline-block;
+    margin: 4px 6px 0 0;
+    padding: 5px 12px;
+    font-size: 0.85em;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    background: #fff;
+    color: #1a202c;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.global-chat-window .rv-pick:hover {
+    border-color: #667eea;
+    background: #eef2ff;
+    color: #4c51bf;
+}
+
+.global-chat-window .rv-alt {
+    color: #64748b;
+    margin-left: 6px;
+}
+
+.global-chat-window .rv-alt-dl {
+    color: #667eea;
+    text-decoration: none;
+    border-bottom: 1px dotted #667eea;
+}
+
+.global-chat-window .rv-alt-dl:hover {
+    color: #4c51bf;
+}
+
+/* ==========================================================
+   Chat voucher review card
+   Everything the parser understood, shown at once and editable,
+   instead of a chain of one-question-at-a-time prompts.
+   ========================================================== */
+
+.global-chat-window .vrc-card { max-width: 100%; white-space: normal; }
+
+.global-chat-window .vrc-title {
+    font-weight: 700;
+    color: #1a202c;
+    margin-bottom: 2px;
+}
+
+.global-chat-window .vrc-sub {
+    font-size: 0.8em;
+    color: #64748b;
+    margin-bottom: 10px;
+}
+
+.global-chat-window .vrc-fields {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+
+.global-chat-window .vrc-row {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    align-items: center;
+    gap: 8px;
+}
+
+.global-chat-window .vrc-row label {
+    font-size: 0.8em;
+    color: #475569;
+    font-weight: 600;
+    margin: 0;
+}
+
+.global-chat-window .vrc-req { color: #b91c1c; }
+
+.global-chat-window .vrc-input {
+    width: 100%;
+    padding: 6px 9px;
+    font-size: 0.86em;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background: #fff;
+    color: #1a202c;
+}
+
+.global-chat-window .vrc-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
+}
+
+/* A required field the parser could not fill */
+.global-chat-window .vrc-input.vrc-missing {
+    border-color: #f59e0b;
+    background: #fffbeb;
+}
+
+.global-chat-window .vrc-error {
+    margin-top: 9px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+    font-size: 0.82em;
+}
+
+.global-chat-window .vrc-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.global-chat-window .vrc-actions .btn {
+    padding: 6px 14px;
+    font-size: 0.84em;
+}
+
+@media (max-width: 520px) {
+    .global-chat-window .vrc-row { grid-template-columns: 1fr; gap: 3px; }
+}

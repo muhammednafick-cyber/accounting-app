@@ -102,6 +102,36 @@
 flatpickr("#from_date", { dateFormat: "d-m-Y", allowInput: true });
 flatpickr("#to_date",   { dateFormat: "d-m-Y", allowInput: true });
 
+// The GL dump is capped at one month per pull - a full year costs 13.7s and
+// 240MB on the server and holds a worker thread for the duration. Opening on
+// the current month means the common case needs no date picking at all.
+const GL_MAX_DAYS = 31;
+
+function glPad(n) { return String(n).padStart(2, '0'); }
+
+(function defaultToThisMonth() {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const last  = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const shown = d => glPad(d.getDate()) + '-' + glPad(d.getMonth() + 1) + '-' + d.getFullYear();
+    document.getElementById('from_date').value = shown(first);
+    document.getElementById('to_date').value   = shown(last);
+})();
+
+// Mirrors _gl_dump_range_error() on the server, so the user gets told before
+// a pointless round trip. The server still enforces it.
+function glRangeError(fromISO, toISO) {
+    if (!fromISO || !toISO) return 'Please select From and To dates.';
+    const a = new Date(fromISO), b = new Date(toISO);
+    if (b < a) return 'The To date is before the From date.';
+    const days = Math.round((b - a) / 86400000) + 1;
+    if (days > GL_MAX_DAYS) {
+        return 'The GL dump is limited to one month at a time (' + days +
+               ' days selected). Please narrow the date range.';
+    }
+    return null;
+}
+
 function glToISO(ddmmyyyy) {
     if (!ddmmyyyy) return '';
     const p = ddmmyyyy.split('-');
@@ -120,7 +150,8 @@ function escHtml(s) {
 function fetchGlDump() {
     const from = glToISO(document.getElementById('from_date').value);
     const to   = glToISO(document.getElementById('to_date').value);
-    if (!from || !to) { alert('Please select From and To dates.'); return; }
+    const rangeError = glRangeError(from, to);
+    if (rangeError) { alert(rangeError); return; }
 
     fetch(`/api/gl_dump?from_date=${from}&to_date=${to}`)
         .then(r => r.json())
@@ -171,7 +202,8 @@ function fetchGlDump() {
 function exportGlDump() {
     const from = glToISO(document.getElementById('from_date').value);
     const to   = glToISO(document.getElementById('to_date').value);
-    if (!from || !to) { alert('Please select From and To dates.'); return; }
+    const rangeError = glRangeError(from, to);
+    if (rangeError) { alert(rangeError); return; }
     window.location.href = `/export_report/gl_dump?from_date=${from}&to_date=${to}`;
 }
 </script>

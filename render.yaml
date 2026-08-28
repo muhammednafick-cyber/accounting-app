@@ -5,6 +5,10 @@ services:
     buildCommand: |
       pip install -r requirements.txt
       cd frontend && npm install && npm run build && cd ..
+    # Chat context, export tokens, rate limits and jobs now live in
+    # PostgreSQL, so more than one worker is safe. Kept at 1 because a
+    # worker measures ~111MB and the free instance has 512MB total -
+    # raise to --workers 4 on any plan with 1GB or more.
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 300 --max-requests 200 --max-requests-jitter 20
     envVars:
       - key: FLASK_DEBUG

@@ -1104,18 +1104,21 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
                         (entry['quantity'], company_id, entry['item_name'])
                     )
         
+        # Recalculate stock running balances and ledger closing balances INSIDE
+        # the same transaction. This used to run after the commit, with its
+        # errors printed and swallowed - so a failure here left a committed
+        # voucher whose stock values and ledger balances were never updated,
+        # and the books were quietly wrong until someone ran a repair.
+        if not skip_recalc:
+            unique_items = set(entry['item_name'] for entry in item_entries)
+            for item in unique_items:
+                recalculate_running_balance_for_item(
+                    item, date, company_id=company_id, db_connection=conn)
+
         if should_close:
             conn.commit()
         print(f"add_voucher: {voucher_number}, company={company_id}")
-        
-        if not skip_recalc:
-            try:
-                unique_items = set(entry['item_name'] for entry in item_entries)
-                for item in unique_items:
-                    recalculate_running_balance_for_item(item, date, company_id=company_id)
-            except Exception as e:
-                print(f"Error triggering running balance calc: {e}")
-        
+
         return voucher_number
     except Exception as e:
         if should_close:
@@ -1276,11 +1279,18 @@ def update_ledger_closing_balance(ledger_names, company_id=None, db_connection=N
             # Update closing_balance
             cursor.execute("UPDATE ledgers SET closing_balance = %s WHERE company_id = %s AND ledger_name = %s", 
                          (closing, company_id, lname))
-        
-        conn.commit()
+
+        # Only commit what we own. On a borrowed connection the caller decides
+        # when the work is final - committing here would break its transaction
+        # into pieces that cannot be rolled back together.
+        if should_close:
+            conn.commit()
     except Exception as e:
-        conn.rollback()
+        if should_close:
+            conn.rollback()
         print(f"Error in update_ledger_closing_balance: {e}")
+        if not should_close:
+            raise
     finally:
         if should_close:
             conn.close()
@@ -1613,9 +1623,14 @@ def recalculate_running_balance_for_item(item_name, start_date=None, company_id=
         if affected_ledgers:
             update_ledger_closing_balance(list(affected_ledgers), company_id=company_id, db_connection=conn)
 
-        conn.commit()
+        # As above: a borrowed connection belongs to the caller's transaction.
+        if should_close:
+            conn.commit()
     except Exception as e:
-        conn.rollback()
+        if should_close:
+            conn.rollback()
+        else:
+            raise
         print(f"Error in recalculate_running_balance_for_item: {e}")
     finally:
         if should_close:

@@ -1,5 +1,9 @@
 import os
+import atexit
+import threading
+
 import psycopg2
+from psycopg2 import pool as pg_pool
 from psycopg2.extras import DictCursor
 from dotenv import load_dotenv
 
@@ -96,7 +100,14 @@ class PGConnectionWrapper:
         self.conn.rollback()
 
     def close(self):
-        self.conn.close()
+        """Hand the connection back to the pool instead of dropping it.
+
+        Every caller already does try/finally conn.close(), so this is the
+        natural release point. The rollback matters: a connection returned
+        mid-transaction would carry that transaction into whoever borrows it
+        next.
+        """
+        release_connection(self.conn)
 
     def execute(self, query, vars=None):
         # Helper for direct connection execution (shorthand)
@@ -108,23 +119,118 @@ class PGConnectionWrapper:
         return getattr(self.conn, name)
 
 
-def get_connection():
-    """Get a PostgreSQL connection."""
+# ============================================================
+# Connection pooling
+# ============================================================
+#
+# Every call used to open a brand new PostgreSQL connection - a TCP connect,
+# TLS handshake and authentication for each query batch. On a single small
+# instance that is the dominant cost of most requests, and a burst of them can
+# exhaust the server's connection limit. A pool reuses a handful instead.
+
+def _pool_size(name, default):
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            cursor_factory=DictCursor
-        )
+        return max(1, int(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+DB_POOL_MIN = _pool_size("DB_POOL_MIN", 1)
+DB_POOL_MAX = _pool_size("DB_POOL_MAX", 10)
+
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def _connect_kwargs():
+    return dict(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER,
+                password=DB_PASSWORD, cursor_factory=DictCursor)
+
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = pg_pool.ThreadedConnectionPool(
+                    DB_POOL_MIN, DB_POOL_MAX, **_connect_kwargs())
+                print(f"[DB CONFIG] connection pool ready "
+                      f"({DB_POOL_MIN}-{DB_POOL_MAX} connections)")
+    return _pool
+
+
+def release_connection(conn):
+    """Return a borrowed connection to the pool, or close it if it is unusable."""
+    if conn is None:
+        return
+    pool = _pool
+    if pool is None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+    broken = getattr(conn, "closed", 0)
+    if not broken:
+        try:
+            # Never hand a half-finished transaction to the next borrower.
+            conn.rollback()
+        except Exception:
+            broken = True
+    try:
+        pool.putconn(conn, close=bool(broken))
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def close_pool():
+    global _pool
+    with _pool_lock:
+        if _pool is not None:
+            try:
+                _pool.closeall()
+            except Exception:
+                pass
+            _pool = None
+
+
+atexit.register(close_pool)
+
+
+def get_connection():
+    """Get a PostgreSQL connection from the pool."""
+    try:
+        conn = _get_pool().getconn()
+        # A pooled connection can have died since it was last used (idle
+        # timeout, server restart). Swap it for a fresh one rather than
+        # handing back something that will fail on first use.
+        if getattr(conn, "closed", 0):
+            try:
+                _get_pool().putconn(conn, close=True)
+            except Exception:
+                pass
+            conn = psycopg2.connect(**_connect_kwargs())
         return PGConnectionWrapper(conn)
+    except pg_pool.PoolError as e:
+        # Pool exhausted: fall back to a direct connection so a burst of
+        # traffic degrades in speed rather than failing outright.
+        print(f"[DB CONFIG] pool exhausted ({e}) - opening a direct connection")
+        try:
+            return PGConnectionWrapper(psycopg2.connect(**_connect_kwargs()))
+        except psycopg2.Error as exc:
+            raise RuntimeError(_connect_error(exc)) from exc
     except psycopg2.Error as e:
-        raise RuntimeError(
-            f"Could not connect to PostgreSQL ({DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}): {e}. "
-            "Check your .env / DATABASE_URL settings and that the database server is running."
-        ) from e
+        raise RuntimeError(_connect_error(e)) from e
+
+
+def _connect_error(e):
+    return (f"Could not connect to PostgreSQL "
+            f"({DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}): {e}. "
+            "Check your .env / DATABASE_URL settings and that the database "
+            "server is running.")
 
 
 def execute_insert_returning_id(cursor, sql, params):

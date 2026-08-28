@@ -521,7 +521,8 @@ CAPABILITIES_TEXT = (
     "&bull; <b>Vouchers:</b> 'show voucher SAL-00001', 'sales vouchers this month'<br>"
     "&bull; <b>Stock:</b> 'stock of ItemName', 'closing stock value', 'slow moving items', 'negative stock'<br>"
     "&bull; <b>Analysis:</b> 'top 5 customers', 'top suppliers', 'pending invoices', 'compare monthly sales'<br>"
-    "&bull; <b>Exports:</b> 'export sales register', 'download trial balance'"
+    "&bull; <b>Exports:</b> 'export sales register', 'download trial balance', "
+    "'sales by customer for 2024 in excel with a pie chart'"
 )
 
 GREETING_TEXT = (
@@ -535,15 +536,264 @@ NO_AI_HELP_TEXT = (
     "<br>Enable AI for free-form questions."
 )
 
-def process_chat_query(user_query, company_id, ai_enabled=True):
-    # 1. Always try the fast rule-based ERP parser first - no AI, no data leaves the app.
-    parsed = rule_based_parse(user_query)
-    if parsed:
-        parsed['raw_query'] = user_query
-        return execute_intent(parsed, company_id)
+INTENT_SYSTEM_PROMPT_HEADER = """You are an intelligent accounting assistant.
+Your goal is to understand the user's question and map it to a specific intent
+and parameters."""
 
-    # 2. If AI is disabled, stop here - never send data to OpenRouter.
+
+# Phrases mapped to the chart names export_routes.CHART_SPECS understands.
+# Checked in order, so the more specific phrase must come first ("stacked bar"
+# before "bar", "3d pie" before "pie").
+#
+# Split in two because most of these words have an everyday accounting meaning:
+# "stock summary", "line item" and "bar code" must not be read as chart
+# requests, so the ambiguous ones only count when the user also said chart,
+# graph or plot. The distinctive ones stand on their own - "give me that as a
+# pie" needs no further qualification.
+CHART_WORDS_STANDALONE = (
+    ("percent stacked", "percent_stacked_bar"),
+    ("100% stacked", "percent_stacked_bar"),
+    ("pie of pie", "pie_of_pie"),
+    ("bar of pie", "bar_of_pie"),
+    ("3d pie", "pie3d"),
+    ("pie 3d", "pie3d"),
+    ("candle stick", "stock"),
+    ("candlestick", "stock"),
+    ("ohlc", "stock"),
+    ("doughnut", "doughnut"),
+    ("donut", "doughnut"),
+    ("pie", "pie"),
+    ("scatter", "scatter"),
+    ("bubble", "bubble"),
+    ("filled radar", "filled_radar"),
+    ("radar", "radar"),
+    ("spider", "radar"),
+    ("histogram", "bar"),
+)
+
+CHART_WORDS_QUALIFIED = (
+    ("3d bar", "bar3d"),
+    ("3d column", "bar3d"),
+    ("3d line", "line3d"),
+    ("3d area", "area3d"),
+    ("3d surface", "surface3d"),
+    ("stacked bar", "stacked_bar"),
+    ("stacked column", "stacked_bar"),
+    ("stacked line", "stacked_line"),
+    ("stacked area", "stacked_area"),
+    ("horizontal bar", "hbar"),
+    ("filled radar", "filled_radar"),
+    ("xy", "scatter"),
+    ("surface", "surface"),
+    ("stock", "stock"),
+    ("area", "area"),
+    ("line", "line"),
+    ("trend", "line"),
+    ("column", "bar"),
+    ("bar", "bar"),
+)
+
+
+def _requested_chart(question):
+    """The chart type the user asked for in their question, or None."""
+    q = (question or "").lower()
+    qualified = "chart" in q or "graph" in q or "plot" in q
+
+    # Distinctive words win outright - "bar of pie chart" is a pie variant,
+    # not the generic "bar" further down the qualified list.
+    for word, kind in CHART_WORDS_STANDALONE:
+        if word in q:
+            return kind
+    if qualified:
+        for word, kind in CHART_WORDS_QUALIFIED:
+            if word in q:
+                return kind
+        return "bar"  # "with a chart" and nothing more specific
+    return None
+
+
+# What each chart needs before it can be drawn, and what it degrades to.
+# Keep in step with _MIN_NUMERIC / the fallbacks in export_routes._add_chart.
+CHART_REQUIREMENTS = {
+    "stock": (3, "line", "a high, low and close column"),
+    "bubble": (3, "bar", "three number columns (x, y and size)"),
+    "scatter": (2, "bar", "two number columns to plot against each other"),
+    "surface": (2, "bar", "several number columns forming a grid"),
+    "surface3d": (2, "bar", "several number columns forming a grid"),
+}
+
+
+def _numeric_column_count(result):
+    """How many columns of the cached result hold numbers."""
+    if not result or not result.get("rows"):
+        return 0
+    count = 0
+    for idx in range(len(result["columns"])):
+        values = [r[idx] for r in result["rows"] if idx < len(r) and r[idx] is not None]
+        if values and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+            count += 1
+    return count
+
+
+def _chart_note(chart):
+    """Warn when the data cannot carry the chart the user asked for.
+
+    export_routes falls back to something drawable rather than shipping a
+    broken file, but a silent swap looks like the request was ignored - so say
+    what happened and why.
+    """
+    need = CHART_REQUIREMENTS.get(chart)
+    if not need:
+        return ""
+    minimum, fallback, wording = need
+    from .chat_export_store import current
+
+    available = _numeric_column_count(current())
+    if available >= minimum:
+        return ""
+    return (
+        "<br><small>Note: a " + chart.replace("3d", " 3-D") + " chart needs "
+        + wording + ", and this result has "
+        + (str(available) + " number column" + ("s" if available != 1 else ""))
+        + ". I've used a " + fallback + " chart instead.</small>"
+    )
+
+
+FILE_WORDS = ("excel", "xlsx", "xls", "spreadsheet", "workbook", "csv",
+              "download", "export", "sheet")
+
+
+def _wants_file(question, parsed=None):
+    """True when the user asked for the answer as a file.
+
+    The classifier is meant to set parameters.export, but it is a language
+    model and sometimes doesn't - and asking for a chart is itself a request
+    for a file, since a chart has nowhere to live in a chat bubble. Reading
+    the question directly makes the export survive a sloppy classification.
+    """
+    if parsed and (parsed.get("parameters") or {}).get("export"):
+        return True
+    q = (question or "").lower()
+    if any(word in q for word in FILE_WORDS):
+        return True
+    return _requested_chart(question) is not None
+
+
+def _download_link(label="Download Excel", chart=None):
+    """Link to the cached result for this session, or None if there isn't one."""
+    from .chat_export_store import current, SESSION_KEY
+    from flask import session
+
+    if not current():
+        return None
+    try:
+        token = session.get(SESSION_KEY)
+    except RuntimeError:
+        return None
+    if not token:
+        return None
+    href = "/export_chat_result?token=" + token
+    if chart:
+        href += "&chart=" + chart
+        if label == "Download Excel":
+            label = "Download Excel (" + chart + " chart)"
+    return (
+        "<a href='" + href + "' target='_blank' "
+        "class='btn btn-sm btn-primary'>" + label + "</a>"
+    )
+
+
+def _export_last_result_response(question=None):
+    """Answer an "in excel" follow-up using the last tabular result."""
+    from .chat_export_store import current, SESSION_KEY
+    from flask import session
+
+    result = current()
+    if not result:
+        return {
+            "intent": "export_chat_result",
+            "response": (
+                "I don't have a previous result to export. Ask the question "
+                "first, then say \"give it in excel\"."
+            ),
+            "data": None,
+            "explanation": "No cached chat result for this session.",
+        }
+
+    chart = _requested_chart(question)
+    link = (_download_link(chart=chart) or "") + _chart_note(chart)
+    return {
+        "intent": "export_chat_result",
+        "response": (
+            "Here is the previous result ("
+            + str(len(result["rows"])) + " row(s)) as an Excel file.<br>" + link
+        ),
+        "data": {"rows": len(result["rows"]), "columns": result["columns"]},
+        "explanation": "Exported the last tabular chat result.",
+    }
+
+
+def _remember_if_tabular(data, question):
+    """Cache a list-of-rows answer for a later Excel export. Best effort."""
+    if not isinstance(data, list) or not data:
+        return
+    if not all(isinstance(row, dict) for row in data):
+        return
+
+    columns = list(data[0].keys())
+    rows = [[row.get(c) for c in columns] for row in data]
+    try:
+        from .chat_export_store import remember
+        from .ai_sql import _export_title
+
+        remember(columns, rows, title=_export_title(question))
+    except Exception as exc:
+        print("[chat-export] could not cache result: " + str(exc))
+
+
+def _intent_result_empty(result):
+    """True when a built-in intent produced a header but no actual rows."""
+    if result.get("error"):
+        return False
+    data = result.get("data")
+    if data not in (None, [], {}, ()):
+        return False
+    # No data payload at all - only treat it as empty if the sentence itself
+    # trails off (e.g. "Top 5 Customers: "), not for prose answers.
+    text = (result.get("response") or "").strip()
+    return text.endswith(":") or text.endswith(": ")
+
+
+def process_chat_query(user_query, company_id, ai_enabled=True, history=None,
+                       ai_only=False):
+    """Answer one chat message.
+
+    Everything is answered by coded tools (accounting_app/chat_toolkit.py)
+    against this company's data. With AI on, the model's only job is choosing
+    which tool to run and filling in its arguments - it never supplies a
+    figure. When no tool fits, the router asks the user's permission before
+    falling back to a generated SQL answer.
+    """
+    from . import chat_router
+
+    try:
+        return chat_router.route(user_query, company_id, ai_enabled=ai_enabled,
+                                 ai_only=ai_only)
+    except Exception as exc:
+        print(f"[chat] router failed, falling back to the legacy path: {exc}")
+        return _legacy_process_chat_query(user_query, company_id, ai_enabled, history)
+
+
+def _legacy_process_chat_query(user_query, company_id, ai_enabled=True, history=None):
+    """The previous intent-classifier path, kept as a safety net."""
+    # 1. AI off: the rule-based ERP parser is the only path. Nothing is sent
+    #    to OpenRouter, so the app answers only what it can match locally.
     if not ai_enabled:
+        parsed = rule_based_parse(user_query)
+        if parsed:
+            parsed['raw_query'] = user_query
+            return execute_intent(parsed, company_id)
+
         return {
             "intent": "help",
             "response": NO_AI_HELP_TEXT,
@@ -551,11 +801,11 @@ def process_chat_query(user_query, company_id, ai_enabled=True):
             "explanation": "AI disabled - rule-based parser could not match the query."
         }
 
-    # 3. AI path (OpenRouter only)
+    # 2. AI on: every question goes to the model. It decides the intent,
+    #    including whether to answer with a direct database query.
     api_key = get_openrouter_api_key()
     if not api_key:
         return {"error": "OpenRouter API Key not configured."}
-    api_url = OPENROUTER_URL
     model_name = get_openrouter_model()
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -563,10 +813,243 @@ def process_chat_query(user_query, company_id, ai_enabled=True):
         "HTTP-Referer": "http://localhost:5000",
     }
 
+    system_prompt = build_intent_system_prompt()
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_query}
+        ],
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+    }
+
+    try:
+        result, err = openrouter_request(payload, headers)
+        if err:
+            return {"error": err}
+
+        content = result['choices'][0]['message']['content']
+        print(f"AI Response: {content}") # Log raw response
+
+        # Parse JSON with regex fallback
+        parsed = None
+        try:
+            parsed = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            # Try to extract JSON from markdown or text
+            match = re.search(r'\{.*\}', content or "", re.DOTALL)
+            if match:
+                try:
+                    parsed = json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    parsed = None
+
+        # The classifier occasionally returns prose, or nothing at all when a
+        # reasoning model spends its budget thinking. Answering the question
+        # directly beats handing the user a parse error.
+        if not isinstance(parsed, dict):
+            print("[chat] classifier returned unusable JSON - querying instead")
+            from . import ai_sql
+            return narrate(
+                user_query,
+                ai_sql.answer_from_database(user_query, company_id),
+                history,
+            )
+
+        print(f"Parsed AI Response: {parsed}")
+
+        # The classifier invented an intent execute_intent can't run - answer
+        # with a direct database query instead of showing "unhandled intent".
+        intent = str(parsed.get("intent") or "").strip()
+
+        if intent == "export_last_result":
+            return _export_last_result_response(user_query)  # wording is fixed
+
+        if intent == "database_query" or intent not in KNOWN_INTENTS:
+            from . import ai_sql
+            result = ai_sql.answer_from_database(user_query, company_id)
+
+            # Narrate before the link is attached, so the model never sees the
+            # export token and cannot mangle the URL.
+            result = narrate(user_query, result, history)
+
+            # "... in excel" - answer the question, then offer the very rows
+            # that answered it as a file, rather than a canned register.
+            wants_file = _wants_file(user_query, parsed)
+            if wants_file and (result.get("data") or {}).get("rows"):
+                chart = _requested_chart(user_query)
+                link = _download_link(chart=chart)
+                if link:
+                    result["response"] = (
+                        result["response"] + "<br><br>" + link + _chart_note(chart)
+                    )
+            return result
+
+        parsed['raw_query'] = user_query
+        intent_result = execute_intent(parsed, company_id)
+
+        # Some built-in reports are narrower than the question - e.g.
+        # get_top_customers only looks at the Sundry Debtors group, so a
+        # cash-sales company gets an empty list. Rather than answering
+        # "Top 5 Customers:" with nothing, ask the database directly.
+        if _intent_result_empty(intent_result):
+            from . import ai_sql
+            sql_result = ai_sql.answer_from_database(user_query, company_id)
+            if sql_result.get("data"):
+                return narrate(user_query, sql_result, history)
+
+        return narrate(user_query, intent_result, history)
+
+    except requests.exceptions.ConnectionError:
+        return {"error": "Connection Error: Could not reach OpenRouter. Please check your internet connection."}
+    except Exception as e:
+        print(f"Processing Error: {str(e)}")
+        return {"error": str(e)}
+
+
+
+# ==================== AI narration ====================
+#
+# With AI enabled the model writes every reply, instead of the fixed sentences
+# built by execute_intent. What it must NOT do is supply the figures: the
+# numbers still come from the database, and the model only rewords the answer
+# already computed for it. _narration_is_faithful enforces that - any figure in
+# the reply that is not in the source is treated as invented and the
+# deterministic sentence is used instead.
+
+NARRATION_SYSTEM_PROMPT = """You are the voice of an accounting assistant.
+
+You are given the user's question and the ANSWER the accounting system has
+already computed from its database. Rewrite that answer as a natural, helpful
+reply to the user.
+
+ABSOLUTE RULES:
+1. Never invent, adjust, round or recalculate any number, name, date or code.
+   Use only the figures present in the ANSWER. If a total is not given, do not
+   work one out yourself.
+2. Never add facts the ANSWER does not contain. No advice, no speculation about
+   causes, no commentary on business performance.
+3. If the ANSWER says nothing was found, say so plainly. Do not apologise at
+   length and do not guess why.
+4. Keep it short - a sentence or two, plus a simple list when the ANSWER lists
+   things. Use <br> for line breaks and <b> for emphasis. No markdown, no code
+   blocks, no tables.
+5. Reply in the language the user used.
+
+Return only the reply text."""
+
+_ANCHOR_RE = re.compile(r"<a\s[^>]*>.*?</a>", re.IGNORECASE | re.DOTALL)
+_NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+# Control-flow answers whose exact wording the front end depends on.
+NEVER_NARRATE = {"ask_date", "help", "export_chat_result"}
+
+MAX_NARRATION_INPUT = 6000
+
+
+def _numbers_in(text):
+    """The set of numeric tokens in a string, normalised for comparison."""
+    found = set()
+    for raw in _NUMBER_RE.findall(text or ""):
+        try:
+            value = float(raw.replace(",", ""))
+        except ValueError:
+            continue
+        found.add(round(value, 2))
+    return found
+
+
+def _narration_is_faithful(narrated, source):
+    """False when the model introduced a figure the source never contained."""
+    invented = _numbers_in(narrated) - _numbers_in(source)
+    if invented:
+        print("[chat-narrate] rejected - invented numbers: " + str(sorted(invented)))
+        return False
+    return True
+
+
+def narrate(user_query, result, history=None):
+    """Let the model write `result["response"]`, keeping the computed figures.
+
+    Falls back to the original sentence on any failure - a chat that answers
+    plainly is better than one that errors, so nothing here may raise.
+    """
+    if not isinstance(result, dict) or result.get("error"):
+        return result
+    if result.get("intent") in NEVER_NARRATE:
+        return result
+
+    original = result.get("response") or ""
+    if not original.strip():
+        return result
+
+    # Links carry tokens and query strings - hold them out of the model's
+    # reach entirely and put them back afterwards.
+    anchors = _ANCHOR_RE.findall(original)
+    stripped = _ANCHOR_RE.sub("", original).strip()
+    if not stripped:
+        return result
+
+    source = stripped + " " + json.dumps(result.get("data"), default=str)
+    if len(source) > MAX_NARRATION_INPUT:
+        return result  # Too big to be worth the round trip.
+
+    api_key = get_openrouter_api_key()
+    if not api_key:
+        return result
+
+    messages = [{"role": "system", "content": NARRATION_SYSTEM_PROMPT}]
+    for turn in (history or [])[-4:]:
+        role = turn.get("role")
+        content = turn.get("content")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": str(content)[:1000]})
+    messages.append({
+        "role": "user",
+        "content": ("QUESTION: " + user_query + "\n\nANSWER: " + stripped
+                    + "\n\nSUPPORTING DATA: "
+                    + json.dumps(result.get("data"), default=str)[:2000]),
+    })
+
+    payload = {
+        "model": get_openrouter_model(),
+        "messages": messages,
+        "temperature": 0.3,
+    }
+    headers = {
+        "Authorization": "Bearer " + api_key,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:5000",
+    }
+
+    try:
+        response, err = openrouter_request(payload, headers)
+        if err:
+            print("[chat-narrate] " + str(err))
+            return result
+        text = (response["choices"][0]["message"]["content"] or "").strip()
+    except Exception as exc:
+        print("[chat-narrate] failed: " + str(exc))
+        return result
+
+    if not text or not _narration_is_faithful(text, source):
+        return result
+
+    if anchors:
+        text = text + "<br><br>" + " ".join(anchors)
+    result["response"] = text
+    result["narrated"] = True
+    return result
+
+
+def build_intent_system_prompt():
+    """The intent-classification prompt, shared by the local and cloud paths."""
     current_date = datetime.date.today().strftime("%Y-%m-%d")
-    
-    system_prompt = f"""
-    You are an intelligent accounting assistant. 
+
+    return f"""
+    You are an intelligent accounting assistant.
     Your goal is to understand the user's question and map it to a specific intent and parameters.
     The current date is {current_date}.
 
@@ -596,7 +1079,9 @@ def process_chat_query(user_query, company_id, ai_enabled=True):
     - compare_monthly_sales: For requests to compare sales of this month with last month.
     - get_expense_total: For questions about specific expenses, taxes, or ledger accounts (e.g., "Fuel", "Rent", "Input VAT", "Salary").
     - get_ledger_balance: For questions about the balance of a specific account, customer, or supplier at a certain date (e.g., "Balance of Customer X", "What is the balance of Supplier Y").
-    - export_report: For requests to download reports in Excel/CSV (e.g., "Give purchase report", "Export sales register", "Download balance sheet").
+    - export_report: For requests to DOWNLOAD or EXPORT a report as a file (e.g., "Export sales register", "Download balance sheet as Excel"). Only use this when the user explicitly asks for a file, an export, or a named register.
+    - export_last_result: For a follow-up asking for the answer already on screen as a file, when no report is named (e.g. "give it in excel", "download that as xlsx", "send me this as a spreadsheet").
+    - database_query: For any analytical question the intents above do not answer exactly - especially breakdowns across a dimension ("sales by customer", "purchases by vendor for 2023", "top items by quantity", "monthly expenses by category"). Asking for one of these "in excel" does NOT make it an export_report - keep the intent as database_query and set parameters.export to true, so the user gets the figures they actually asked for as a file. Only use export_report when the user names one of the fixed reports above (sales register, trial balance, balance sheet, ...). Asking for a chart or graph ("sales by customer for 2024 as an excel with a pie chart") works the same way: keep database_query, set parameters.export to true, and the chart is added to the workbook automatically.
 
     Output strict JSON in this format:
     {{
@@ -607,53 +1092,32 @@ def process_chat_query(user_query, company_id, ai_enabled=True):
         "item_name": "extracted item name" | null,
         "expense_type": "extracted expense name (e.g. Fuel, Rent)" | null,
         "report_type": "Sales" | "Purchase" | "Ledger" | "Trial Balance" | "Balance Sheet" | "P&L" | null,
-        "limit": number | null
+        "limit": number | null,
+        "export": true | false
       }},
       "explanation": "Brief explanation of what you understood"
     }}
     """
 
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_query}
-        ],
-        "temperature": 0.1,
-        "response_format": {"type": "json_object"},
-    }
 
-    try:
-        result, err = openrouter_request(payload, headers)
-        if err:
-            return {"error": err}
+# Intents that execute_intent knows how to run. Anything outside this set means
+# the classifier guessed, and the question is better served by a direct query.
+KNOWN_INTENTS = {
+    "get_cash_balance", "get_bank_balance", "get_total_sales", "get_total_purchase",
+    "get_net_profit", "get_trial_balance", "get_balance_sheet",
+    "get_profit_and_loss", "get_outstanding_customer", "get_outstanding_supplier",
+    "get_customer_statement", "get_supplier_statement", "get_customer_sales_total",
+    "get_supplier_purchase_total", "get_top_customers", "get_top_suppliers",
+    "get_stock_status", "get_low_stock", "get_slow_moving", "get_no_sales_items",
+    "get_closing_stock_value", "get_pending_invoices", "compare_monthly_sales",
+    "get_expense_total", "get_ledger_balance", "export_report",
+    "get_voucher_details", "list_vouchers",
+    # aliases normalised inside execute_intent
+    "get_purchase_total", "get_total_purchases", "get_expenses_total",
+    "get_total_expense", "get_sales_total", "get_total_sale", "get_revenue_total",
+    "get_profit_total", "get_net_income",
+}
 
-        content = result['choices'][0]['message']['content']
-        print(f"AI Response: {content}") # Log raw response
-        
-        # Parse JSON with regex fallback
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            # Try to extract JSON from markdown or text
-            match = re.search(r'\{.*\}', content, re.DOTALL)
-            if match:
-                try:
-                    parsed = json.loads(match.group(0))
-                except json.JSONDecodeError:
-                    return {"error": "Failed to parse AI response (invalid JSON)"}
-            else:
-                return {"error": "Failed to parse AI response (no JSON found)"}
-            
-        print(f"Parsed AI Response: {parsed}")
-        parsed['raw_query'] = user_query
-        return execute_intent(parsed, company_id)
-        
-    except requests.exceptions.ConnectionError:
-        return {"error": "Connection Error: Could not reach OpenRouter. Please check your internet connection."}
-    except Exception as e:
-        print(f"Processing Error: {str(e)}")
-        return {"error": str(e)}
 
 def serialize_data(data):
     """Recursively convert date/datetime objects to ISO format strings."""
@@ -1361,9 +1825,14 @@ def execute_intent(parsed_data, company_id):
     except Exception as e:
         result_text = f"Error executing query: {str(e)}"
 
+    payload = serialize_data(data)
+
+    # Park row-shaped answers so "give it in excel" can export them too.
+    _remember_if_tabular(payload, parsed_data.get("raw_query") or intent)
+
     return {
         "intent": intent,
         "response": result_text,
-        "data": serialize_data(data),
+        "data": payload,
         "explanation": explanation
     }

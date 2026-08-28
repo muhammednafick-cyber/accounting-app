@@ -9,12 +9,51 @@ def validate_import_data(import_type, data, company_id=None):
             data = [data]
 
         if import_type == "Group":
-            for entry in data:
-                if not all(key in entry for key in ["group_name", "nature"]) \
-                   or entry["nature"] not in ["Assets", "Liabilities", "Income", "Expenses"]:
-                    msg = f"Invalid group entry: {entry}"
+            # Master Group is mandatory: without it the group has no heading to
+            # sit under in the Balance Sheet or P&L. Resolved here by name (as
+            # the template offers it) to the code the database stores.
+            from database import get_master_groups, get_current_company_id
+            masters = get_master_groups(company_id or get_current_company_id()) or []
+            master_by_name = {
+                (m["master_group_name"] or "").strip().lower(): m
+                for m in masters
+            }
+
+            for row, entry in enumerate(data, start=2):
+                name = str(entry.get("group_name") or "").strip()
+                nature = str(entry.get("nature") or "").strip()
+                master_name = str(entry.get("master_group_name") or "").strip()
+
+                if not name:
+                    msg = f"Row {row}: Group Name is required."
                     print(msg)
                     return False, msg
+                if nature not in ["Assets", "Liabilities", "Income", "Expenses"]:
+                    msg = (f"Row {row} ('{name}'): Nature must be Assets, "
+                           f"Liabilities, Income or Expenses - got '{nature}'.")
+                    print(msg)
+                    return False, msg
+                if not master_name:
+                    msg = (f"Row {row} ('{name}'): Master Group is required. "
+                           "Download the template again if your file has no "
+                           "Master Group column.")
+                    print(msg)
+                    return False, msg
+
+                master = master_by_name.get(master_name.lower())
+                if not master:
+                    available = ", ".join(sorted(
+                        m["master_group_name"] for m in masters)) or "none defined"
+                    msg = (f"Row {row} ('{name}'): Master Group "
+                           f"'{master_name}' does not exist. Available: {available}.")
+                    print(msg)
+                    return False, msg
+
+                # Carry the resolved code through so the upload step does not
+                # have to look it up again.
+                entry["master_group_code"] = master["master_group_code"]
+                entry["group_name"] = name
+                entry["nature"] = nature
 
         elif import_type == "Ledger":
             from datetime import datetime
@@ -200,19 +239,11 @@ def validate_single_voucher(import_type, data, company_id=None):
     # Cost Center Mandatory Check
     from database import get_company_settings
     
-    COST_CENTER_ALLOWED_TYPES_IMPORT = {
-        "Journal",
-        "Expense",
-        "Sales",
-        "Sales Return",
-        "Service Income",
-        "Purchase",
-        "Purchase Return",
-        "Stock Adjustment",
-        "Payment",
-        "Receipt",
-        "Contra",
-    }
+    # Kept identical to voucher_routes.COST_CENTER_ALLOWED_TYPES so an import
+    # and a manual entry of the same voucher accept the same data. Receipt,
+    # Payment and Contra are excluded: they only move money between accounts,
+    # so there is no income or expense for a cost centre to carry.
+    from accounting_app.voucher_routes import COST_CENTER_ALLOWED_TYPES as COST_CENTER_ALLOWED_TYPES_IMPORT
     
     company = get_company_settings(company_id=company_id)
     if company and company.get("cost_center_applicable") and company.get("cost_center_mandatory") and import_type in COST_CENTER_ALLOWED_TYPES_IMPORT:

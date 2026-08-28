@@ -291,15 +291,31 @@ document.addEventListener('DOMContentLoaded', function () {
                     method: 'POST',
                     body: formData
                 });
-                const data = await res.json();
+                let data = await res.json();
 
                 if (!data.success) {
                     globalChatAppendMessage('bot', `❌ Error: ${data.message}`);
                     return;
                 }
 
+                // A long scan is read in the background so the app stays
+                // responsive; poll until it finishes.
+                if (data.async && data.job_id) {
+                    globalChatAppendMessage('bot', `⏳ ${data.message}`);
+                    data = await pollInvoiceJob(data.job_id);
+                    if (!data) return;
+                }
+
                 if (data.type === 'Purchase') {
-                    globalChatAppendMessage('bot', '✅ Invoice processed successfully!');
+                    const lineCount = ((data.data || {}).items || []).length;
+                    globalChatAppendMessage('bot',
+                        `✅ Invoice processed &mdash; <b>${lineCount}</b> line item(s) read.`);
+
+                    // A long invoice may not have been read in full. Say so
+                    // before the user imports a partial voucher.
+                    if (data.data && data.data.warning) {
+                        globalChatAppendMessage('bot', `⚠️ ${data.data.warning}`);
+                    }
 
                     // Show download link
                     const linkRow = document.createElement('div');
@@ -333,6 +349,10 @@ document.addEventListener('DOMContentLoaded', function () {
                     const hasVat = parseFloat(ed.vat_amount) > 0;
 
                     ledgerContainer.innerHTML = `
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; font-weight: bold; margin-bottom: 5px;">Date:</label>
+                            <input type="text" id="aiExpenseDate" class="form-control" placeholder="DD-MM-YYYY" value="${aiExpenseShownDate(ed.invoice_date)}">
+                        </div>
                         <div style="margin-bottom: 10px;">
                             <label style="display: block; font-weight: bold; margin-bottom: 5px;">What type of expense is this?</label>
                             <input type="text" id="aiExpenseDebitLedger" class="form-control" list="aiDebitLedgerList" placeholder="e.g., Office Expenses, Fuel, Repairs">
@@ -439,6 +459,22 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // The extractor is told to return DD-MM-YYYY, but falls back to an empty
+    // string when it cannot read a date off the invoice - in which case the
+    // field opens on today rather than blank.
+    function aiExpenseShownDate(v) {
+        const raw = String(v || '').trim();
+        if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) return raw;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            const p = raw.split('-');
+            return p[2] + '-' + p[1] + '-' + p[0];
+        }
+        const d = new Date();
+        return String(d.getDate()).padStart(2, '0') + '-'
+             + String(d.getMonth() + 1).padStart(2, '0') + '-'
+             + d.getFullYear();
+    }
+
     // Helper to post expense from AI extracted data
     async function postExpenseFromAI() {
         const ed = window._pendingExpenseData;
@@ -470,8 +506,20 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const params = new URLSearchParams();
         params.append('voucher_type', 'Expense');
-        params.append('date', ed.invoice_date || new Date().toISOString().slice(0, 10));
+        // Whatever is in the Date box wins - the extracted date is only its
+        // starting value, and the user may have corrected it. The server
+        // accepts DD-MM-YYYY and normalises it.
+        const chosenDate = (document.getElementById('aiExpenseDate')?.value || '').trim()
+            || aiExpenseShownDate(ed.invoice_date);
+        params.append('date', chosenDate);
         params.append('narration', ed.narration || `Invoice ${ed.invoice_number || ''}`);
+
+        // Expense (like Purchase) vouchers require the supplier's own invoice
+        // date - the backend rejects the entry outright without it.
+        params.append('original_invoice_date', chosenDate);
+        if (ed.invoice_number) {
+            params.append('original_invoice_ref', ed.invoice_number);
+        }
         
         // Header Cost Center (optional but good to have if backend supports it)
         if (costCenter) {
@@ -636,7 +684,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const t = safeLower(text);
         if (t.includes('today')) {
             const d = new Date();
-            const yy = String(d.getFullYear()).slice(-2);
+            const yy = String(d.getFullYear());
             const mm = String(d.getMonth() + 1).padStart(2, '0');
             const dd = String(d.getDate()).padStart(2, '0');
             return `${dd}-${mm}-${yy}`;
@@ -644,14 +692,14 @@ document.addEventListener('DOMContentLoaded', function () {
         if (t.includes('yesterday')) {
             const d = new Date();
             d.setDate(d.getDate() - 1);
-            const yy = String(d.getFullYear()).slice(-2);
+            const yy = String(d.getFullYear());
             const mm = String(d.getMonth() + 1).padStart(2, '0');
             const dd = String(d.getDate()).padStart(2, '0');
             return `${dd}-${mm}-${yy}`;
         }
         const iso = (text || '').match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
         if (iso) {
-            const yy = String(iso[1]).slice(-2);
+            const yy = String(iso[1]);
             return `${iso[3]}-${iso[2]}-${yy}`;
         }
         const dmy = (text || '').match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
@@ -659,7 +707,6 @@ document.addEventListener('DOMContentLoaded', function () {
             const dd = String(dmy[1]).padStart(2, '0');
             const mm = String(dmy[2]).padStart(2, '0');
             let yy = dmy[3];
-            if (yy.length === 4) yy = yy.slice(-2);
             return `${dd}-${mm}-${yy}`;
         }
 
@@ -669,7 +716,6 @@ document.addEventListener('DOMContentLoaded', function () {
             const dd = String(verbose[1]).padStart(2, '0');
             const monStr = verbose[2].toLowerCase();
             let yy = verbose[3];
-            if (yy.length === 4) yy = yy.slice(-2);
 
             const monthMap = {
                 jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
@@ -760,8 +806,22 @@ document.addEventListener('DOMContentLoaded', function () {
             vatApplicable: !!data.vat_applicable,
             costCenterApplicable: !!data.cost_center_applicable,
             costCenterMandatory: !!data.cost_center_mandatory,
+            costCenterTypes: Array.isArray(data.cost_center_types) ? data.cost_center_types : [],
         };
         return vaBootstrap;
+    }
+
+    // Cost centres belong on income/expense postings only. Receipt, Payment and
+    // Contra just move money between accounts, so the server never asks for one
+    // on those - the list comes from the server so this can't drift.
+    function costCentreApplies(vt) {
+        if (!vaBootstrap || !vaBootstrap.costCenterApplicable) return false;
+        const types = vaBootstrap.costCenterTypes || [];
+        return types.indexOf(vt) !== -1;
+    }
+
+    function costCentreRequired(vt) {
+        return costCentreApplies(vt) && !!vaBootstrap.costCenterMandatory;
     }
 
     function ledgerNamesList() {
@@ -885,6 +945,16 @@ document.addEventListener('DOMContentLoaded', function () {
                 params.append('ledger_vat_applicable[]', '0');
                 params.append('ledger_vat_amount[]', '0');
             });
+        }
+
+        // Purchase and Expense are rejected without an invoice date. A typed
+        // one-liner ("expense 300 for Fuel by cash today") has no separate
+        // supplier invoice, so the voucher date is the invoice date.
+        if (['Expense', 'Purchase', 'Purchase Return'].includes(draft.voucherType)) {
+            params.append('original_invoice_date', draft.originalInvoiceDate || draft.date);
+            if (draft.originalInvoiceRef) {
+                params.append('original_invoice_ref', draft.originalInvoiceRef);
+            }
         }
 
         const res = await fetch('/add_voucher', {
@@ -1197,7 +1267,7 @@ document.addEventListener('DOMContentLoaded', function () {
         clearQuick();
 
         const vt = assistantState.voucherType;
-        const needCC = vaBootstrap && vaBootstrap.costCenterApplicable && vaBootstrap.costCenterMandatory && vt === 'Expense';
+        const needCC = costCentreRequired(vt);
 
         if (assistantState.autoNext && assistantState.autoNext.afterField === field) {
             const next = assistantState.autoNext;
@@ -1253,6 +1323,264 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    // ============================================================
+    // Voucher review card
+    // ============================================================
+    //
+    // Rather than interrogating the user field by field, everything the parser
+    // (rule-based or AI) understood is shown at once in an editable card. The
+    // user corrects whatever is wrong and saves. Missing fields are simply
+    // blank and highlighted, which is clearer than a question that hides how
+    // much is still to come.
+
+    const CASH_BANK_GROUPS = ['G005', 'G006'];
+
+    // Per voucher type: which fields to show, in order.
+    //   key   - property on assistantState.current
+    //   kind  - 'date' | 'amount' | 'text' | 'ledger' | 'costcenter'
+    //   only  - restrict a ledger list to these group codes
+    function reviewFields(vt) {
+        const date = { key: 'date', label: 'Date', kind: 'date', required: true };
+        const amount = { key: 'amount', label: 'Amount', kind: 'amount', required: true };
+        const narration = { key: 'narration', label: 'Narration', kind: 'text' };
+
+        const map = {
+            Receipt: [
+                date,
+                { key: 'partyLedgerName', label: 'Received From', kind: 'ledger', required: true },
+                { key: 'accountLedgerName', label: 'Into (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                amount, narration
+            ],
+            Payment: [
+                date,
+                { key: 'partyLedgerName', label: 'Paid To', kind: 'ledger', required: true },
+                { key: 'accountLedgerName', label: 'From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                amount, narration
+            ],
+            Contra: [
+                date,
+                { key: 'fromLedgerName', label: 'From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                { key: 'toLedgerName', label: 'To (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                amount, narration
+            ],
+            Expense: [
+                date,
+                { key: 'expenseLedgerName', label: 'Expense Account', kind: 'ledger', required: true },
+                { key: 'accountLedgerName', label: 'Paid From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                amount, narration
+            ],
+            'Service Income': [
+                date,
+                { key: 'incomeLedgerName', label: 'Income Account', kind: 'ledger', required: true },
+                { key: 'accountLedgerName', label: 'Received Into (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                amount, narration
+            ]
+        };
+        const fields = (map[vt] || []).slice();
+        if (costCentreApplies(vt)) {
+            fields.push({
+                key: 'costCenterName', label: 'Cost Centre', kind: 'costcenter',
+                required: costCentreRequired(vt)
+            });
+        }
+        return fields;
+    }
+
+    function vrcEscape(v) {
+        return String(v === null || v === undefined ? '' : v)
+            .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function vrcLedgerOptions(field) {
+        const all = (vaBootstrap && vaBootstrap.ledgers) ? vaBootstrap.ledgers : [];
+        const usable = field.only ? all.filter(l => field.only.indexOf(l.group_code) !== -1) : all;
+        return usable.map(l => '<option value="' + vrcEscape(l.name) + '"></option>').join('');
+    }
+
+    // Stored as YYYY-MM-DD, shown as DD-MM-YYYY - the format the rest of the
+    // app uses in its date boxes.
+    function vrcIsoToShown(v) {
+        if (!v) return '';
+        const p = String(v).split('-');
+        return (p.length === 3 && p[0].length === 4) ? p[2] + '-' + p[1] + '-' + p[0] : String(v);
+    }
+
+    function vrcShownToIso(v) {
+        if (!v) return '';
+        const p = String(v).trim().split('-');
+        return (p.length === 3 && p[2].length === 4) ? p[2] + '-' + p[1] + '-' + p[0] : String(v).trim();
+    }
+
+    let reviewCardEl = null;
+
+    function removeReviewCard() {
+        if (reviewCardEl && reviewCardEl.parentNode) reviewCardEl.parentNode.removeChild(reviewCardEl);
+        reviewCardEl = null;
+    }
+
+    function vrcValueOf(field, current) {
+        let value = current[field.key];
+        if (field.kind === 'date') return vrcIsoToShown(value);
+        if (field.kind === 'amount') return (typeof value === 'number') ? value.toFixed(2) : '';
+        return value === undefined || value === null ? '' : value;
+    }
+
+    function showVoucherReviewCard() {
+        const vt = assistantState.voucherType;
+        const current = assistantState.current;
+        if (!vt || !current) return;
+        removeReviewCard();
+
+        const fields = reviewFields(vt);
+        let missing = 0;
+
+        const rows = fields.map(function (f) {
+            const value = vrcValueOf(f, current);
+            const blank = !String(value).trim();
+            if (blank && f.required) missing++;
+            const flag = (blank && f.required) ? ' vrc-missing' : '';
+            const listId = 'vrc_list_' + f.key;
+            let control;
+
+            if (f.kind === 'ledger') {
+                control = '<input type="text" class="vrc-input' + flag + '" data-key="' + f.key +
+                    '" data-kind="ledger" list="' + listId + '" value="' + vrcEscape(value) +
+                    '" placeholder="type to search..."><datalist id="' + listId + '">' +
+                    vrcLedgerOptions(f) + '</datalist>';
+            } else if (f.kind === 'costcenter') {
+                const ccs = (vaBootstrap && vaBootstrap.costCenters) ? vaBootstrap.costCenters : [];
+                control = '<input type="text" class="vrc-input' + flag + '" data-key="' + f.key +
+                    '" data-kind="text" list="' + listId + '" value="' + vrcEscape(value) +
+                    '" placeholder="' + (f.required ? 'required' : 'optional') +
+                    '"><datalist id="' + listId + '">' +
+                    ccs.map(function (x) {
+                        return '<option value="' + vrcEscape(x.name || x) + '"></option>';
+                    }).join('') + '</datalist>';
+            } else if (f.kind === 'amount') {
+                control = '<input type="number" step="0.01" min="0" class="vrc-input' + flag +
+                    '" data-key="amount" data-kind="amount" value="' + vrcEscape(value) +
+                    '" placeholder="0.00">';
+            } else if (f.kind === 'date') {
+                control = '<input type="text" class="vrc-input' + flag +
+                    '" data-key="date" data-kind="date" value="' + vrcEscape(value) +
+                    '" placeholder="DD-MM-YYYY">';
+            } else {
+                control = '<input type="text" class="vrc-input" data-key="' + f.key +
+                    '" data-kind="text" value="' + vrcEscape(value) + '" placeholder="optional">';
+            }
+
+            return '<div class="vrc-row"><label>' + f.label +
+                (f.required ? ' <span class="vrc-req">*</span>' : '') + '</label>' + control + '</div>';
+        }).join('');
+
+        const row = document.createElement('div');
+        row.className = 'rv-msg bot';
+        row.innerHTML =
+            '<div class="rv-bubble vrc-card">' +
+            '<div class="vrc-title">' + vt + ' &mdash; check the details</div>' +
+            '<div class="vrc-sub">' + (missing
+                ? missing + ' field(s) still needed - highlighted below.'
+                : 'All details understood. Correct anything wrong, then save.') + '</div>' +
+            '<div class="vrc-fields">' + rows + '</div>' +
+            '<div class="vrc-error" style="display:none;"></div>' +
+            '<div class="vrc-actions">' +
+            '<button type="button" class="btn btn-primary vrc-save">Save ' + vt + '</button>' +
+            '<button type="button" class="btn vrc-draft">Save as Draft</button>' +
+            '<button type="button" class="btn vrc-cancel">Cancel</button>' +
+            '</div></div>';
+
+        if (messagesEl) {
+            messagesEl.appendChild(row);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        reviewCardEl = row;
+
+        const card = row.querySelector('.vrc-card');
+        const errorEl = card.querySelector('.vrc-error');
+
+        function fail(message) {
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+        }
+
+        // Every keystroke writes back to the voucher being built, so saving
+        // always uses exactly what is on screen.
+        card.querySelectorAll('.vrc-input').forEach(function (input) {
+            input.addEventListener('input', function () {
+                const key = input.getAttribute('data-key');
+                const kind = input.getAttribute('data-kind');
+                if (kind === 'amount') {
+                    const n = parseFloat(input.value);
+                    assistantState.current.amount = isFinite(n) ? n : null;
+                } else if (kind === 'date') {
+                    assistantState.current.date = vrcShownToIso(input.value);
+                } else {
+                    assistantState.current[key] = input.value;
+                }
+                input.classList.remove('vrc-missing');
+                errorEl.style.display = 'none';
+            });
+        });
+
+        card.querySelector('.vrc-save').addEventListener('click', async function () {
+            let draft;
+            try {
+                draft = buildDraftFromCurrent();
+            } catch (e) {
+                fail(e.message || String(e));
+                return;
+            }
+            const btn = card.querySelector('.vrc-save');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            try {
+                const result = await postVoucher(draft);
+                removeReviewCard();
+                // The card disappears on save, so without this the chat goes
+                // silent and there is no way to tell the voucher was posted.
+                const number = (result && result.voucher_number) ? result.voucher_number : '';
+                globalChatAppendMessage('bot', number
+                    ? `✅ ${vt} voucher created: ${number}`
+                    : `✅ ${vt} voucher created.`);
+                assistantState.current = null;
+                assistantState.step = 'idle';
+                ensureCurrent();
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'Save ' + vt;
+                fail(e.message || String(e));
+            }
+        });
+
+        card.querySelector('.vrc-draft').addEventListener('click', function () {
+            let draft;
+            try {
+                draft = buildDraftFromCurrent();
+            } catch (e) {
+                fail(e.message || String(e));
+                return;
+            }
+            const drafts = getDrafts(vt);
+            drafts.push(draft);
+            setDrafts(vt, drafts);
+            updateDraftCount(vt);
+            removeReviewCard();
+            globalChatAppendMessage('bot', 'Saved as draft (' + drafts.length +
+                ' waiting). Type "add all" to post them.');
+            assistantState.current = null;
+            ensureCurrent();
+        });
+
+        card.querySelector('.vrc-cancel').addEventListener('click', function () {
+            removeReviewCard();
+            globalChatAppendMessage('bot', 'Cancelled - nothing was saved.');
+            assistantState.current = null;
+            assistantState.step = 'idle';
+            ensureCurrent();
+        });
+    }
+
     function buildDraftFromCurrent() {
         const c = assistantState.current;
         const vt = assistantState.voucherType;
@@ -1260,7 +1588,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!c.date) throw new Error('Date is required');
         if (typeof c.amount !== 'number') throw new Error('Amount is required');
 
-        const needCC = vaBootstrap && vaBootstrap.costCenterApplicable && vaBootstrap.costCenterMandatory && vt === 'Expense';
+        const needCC = costCentreRequired(vt);
         if (needCC && !normalizeText(c.costCenterName)) throw new Error('Cost Center is required');
 
         let ledgerEntries = [];
@@ -1330,29 +1658,13 @@ document.addEventListener('DOMContentLoaded', function () {
         clearQuick();
         hideLedgerPicker();
         updateDraftCount(vt);
-        if (vt === 'Receipt') {
-            assistantState.step = 'ask_party';
-            showLedgerPicker('partyLedgerName', 'Select party ledger (Credit):');
-            return;
-        }
-        if (vt === 'Payment') {
-            assistantState.step = 'ask_party';
-            showLedgerPicker('partyLedgerName', 'Select party ledger (Debit):');
-            return;
-        }
-        if (vt === 'Contra') {
-            assistantState.step = 'ask_amount';
-            globalChatAppendMessage('bot', 'Enter the amount to transfer (example: 1500).');
-            return;
-        }
-        if (vt === 'Expense') {
-            assistantState.step = 'ask_expense';
-            showLedgerPicker('expenseLedgerName', 'Select expense ledger (Debit):');
-            return;
-        }
-        if (vt === 'Service Income') {
-            assistantState.step = 'ask_income';
-            showLedgerPicker('incomeLedgerName', 'Select income ledger (Credit):');
+        // A blank card, ready to fill in - the same form a parsed message
+        // produces, so both routes look and behave identically.
+        if (['Receipt', 'Payment', 'Contra', 'Expense', 'Service Income'].includes(vt)) {
+            globalChatAppendMessage('bot',
+                'Fill in the ' + vt + ' below, or just type it in one line '
+                + '(for example: ' + (voucherExamples[vt] || 'received 5000 from ABC by cash today') + ').');
+            showVoucherReviewCard();
             return;
         }
     }
@@ -1524,13 +1836,78 @@ document.addEventListener('DOMContentLoaded', function () {
         return localStorage.getItem('vaChatAiEnabled') === '1';
     }
 
+    function isAiOnly() {
+        const toggle = document.getElementById('vaChatAiOnlyToggle');
+        if (toggle) return toggle.checked && isAiEnabled();
+        return localStorage.getItem('vaChatAiOnly') === '1'
+            && localStorage.getItem('vaChatAiEnabled') === '1';
+    }
+
     function initAiToggle() {
         const toggle = document.getElementById('vaChatAiToggle');
+        const onlyToggle = document.getElementById('vaChatAiOnlyToggle');
+        const onlyLabel = document.getElementById('vaChatAiOnlyLabel');
         if (!toggle) return;
         toggle.checked = localStorage.getItem('vaChatAiEnabled') === '1';
+        if (onlyToggle) onlyToggle.checked = localStorage.getItem('vaChatAiOnly') === '1';
+
+        // "AI only" is meaningless without AI, so it follows the AI switch:
+        // greyed out and inert whenever AI is off.
+        function syncAiOnly() {
+            if (!onlyToggle) return;
+            const aiOn = toggle.checked;
+            onlyToggle.disabled = !aiOn;
+            if (onlyLabel) {
+                onlyLabel.style.opacity = aiOn ? '1' : '0.45';
+                onlyLabel.style.cursor = aiOn ? 'pointer' : 'not-allowed';
+            }
+        }
+
         toggle.addEventListener('change', function () {
             localStorage.setItem('vaChatAiEnabled', toggle.checked ? '1' : '0');
+            syncAiOnly();
         });
+
+        if (onlyToggle) {
+            onlyToggle.addEventListener('change', function () {
+                localStorage.setItem('vaChatAiOnly', onlyToggle.checked ? '1' : '0');
+            });
+        }
+        syncAiOnly();
+    }
+
+    async function pollInvoiceJob(jobId) {
+        // Up to ~10 minutes: a 12-page scan is several model calls.
+        const deadline = Date.now() + 10 * 60 * 1000;
+        let lastProgress = '';
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 2500));
+            let res, body;
+            try {
+                res = await fetch(`/api/invoice_job/${jobId}`);
+                body = await res.json();
+            } catch (e) {
+                continue;   // transient - keep polling
+            }
+            if (!body.success) {
+                globalChatAppendMessage('bot', `❌ Error: ${body.message}`);
+                return null;
+            }
+            const d = body.data || {};
+            if (d.progress && d.progress !== lastProgress) {
+                lastProgress = d.progress;
+                setStatus(d.progress, false);
+            }
+            if (d.status === 'done') {
+                setStatus('', false);
+                return d;
+            }
+        }
+        setStatus('', false);
+        globalChatAppendMessage('bot',
+            '❌ The invoice is taking longer than expected. It may still finish - '
+            + 'try again in a moment, or upload fewer pages.');
+        return null;
     }
 
     async function analyzeMessageWithAI(text) {
@@ -1610,7 +1987,11 @@ document.addEventListener('DOMContentLoaded', function () {
             const res = await fetch('/api/chat_query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: query, ai_enabled: isAiEnabled() })
+                body: JSON.stringify({
+                    query: query,
+                    ai_enabled: isAiEnabled(),
+                    ai_only: isAiOnly()
+                })
             });
             const data = await res.json();
             setStatus('', false);
@@ -1670,127 +2051,56 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (assistantState.step === 'idle') {
-            // AI INTEGRATION
+            // Parse the message, then show everything understood in one
+            // editable card. Anything the parser missed is left blank and
+            // highlighted for the user to fill in - no question chain.
             const aiData = await analyzeMessageWithAI(text);
-            if (!aiData) return; // Error shown in status
+            if (!aiData) return; // Error already shown in the status line
             const parsed = convertAiDataToParsed(aiData, vt);
 
-            // const parsed = tryParseOneLineVoucher(text); // OLD REGEX LOGIC REPLACED
             if (parsed.amount != null) assistantState.current.amount = parsed.amount;
             if (parsed.date) assistantState.current.date = parsed.date;
             if (parsed.narration) assistantState.current.narration = parsed.narration;
 
-            if (vt === 'Receipt' && parsed.fromParty && parsed.amount != null) {
-                const hinted = parsed.cashBankHint || 'cash';
-                const accHint = setAccountFromHint(hinted) || hinted;
-                assistantState.step = 'ask_party';
-                assistantState.autoFinalize = true;
-                assistantState.autoNext = {
-                    afterField: 'partyLedgerName',
-                    nextField: 'accountLedgerName',
-                    nextStep: 'ask_account',
-                    promptText: 'Select cash/bank ledger (Debit):',
-                    preselectText: accHint,
-                };
-                showLedgerPicker('partyLedgerName', 'Select party ledger (Credit):', parsed.fromParty);
-                return;
+            // Turn the parser's loose hints into real ledger names where we
+            // can. Anything unresolved stays blank in the card.
+            const cashHint = setAccountFromHint(parsed.cashBankHint || 'cash')
+                             || parsed.cashBankHint || '';
+            const resolve = (textValue, restrictToCashBank) => {
+                if (!textValue) return '';
+                const matches = findLedgerCandidates(textValue, 4);
+                const all = (vaBootstrap && vaBootstrap.ledgers) ? vaBootstrap.ledgers : [];
+                const usable = restrictToCashBank
+                    ? matches.filter(n => {
+                          const l = all.find(x => x.name === n);
+                          return l && (l.group_code === 'G005' || l.group_code === 'G006');
+                      })
+                    : matches;
+                return usable.length === 1 ? usable[0] : '';
+            };
+
+            if (vt === 'Receipt' || vt === 'Payment') {
+                const party = vt === 'Receipt' ? parsed.fromParty : parsed.toParty;
+                assistantState.current.partyLedgerName =
+                    resolve(party, false) || party || '';
+                assistantState.current.accountLedgerName =
+                    resolve(cashHint, true) || '';
+            } else if (vt === 'Contra') {
+                assistantState.current.fromLedgerName = resolve(parsed.fromParty, true) || '';
+                assistantState.current.toLedgerName = resolve(parsed.toParty, true) || '';
+            } else if (vt === 'Expense') {
+                assistantState.current.expenseLedgerName =
+                    resolve(parsed.narration, false) || '';
+                assistantState.current.accountLedgerName = resolve(cashHint, true) || '';
+            } else if (vt === 'Service Income') {
+                assistantState.current.incomeLedgerName =
+                    resolve(parsed.narration, false) || '';
+                assistantState.current.accountLedgerName = resolve(cashHint, true) || '';
             }
 
-            if (vt === 'Payment' && parsed.toParty && parsed.amount != null) {
-                const hinted = parsed.cashBankHint || 'cash';
-                const accHint = setAccountFromHint(hinted) || hinted;
-                assistantState.step = 'ask_party';
-                assistantState.autoFinalize = true;
-                assistantState.autoNext = {
-                    afterField: 'partyLedgerName',
-                    nextField: 'accountLedgerName',
-                    nextStep: 'ask_account',
-                    promptText: 'Select cash/bank ledger (Credit):',
-                    preselectText: accHint,
-                };
-                showLedgerPicker('partyLedgerName', 'Select party ledger (Debit):', parsed.toParty);
-                return;
-            }
-
-            if (vt === 'Contra' && parsed.amount != null && parsed.fromParty && parsed.toParty) {
-                assistantState.current.amount = parsed.amount;
-                assistantState.step = 'ask_from';
-                assistantState.autoFinalize = true;
-                assistantState.autoNext = {
-                    afterField: 'fromLedgerName',
-                    nextField: 'toLedgerName',
-                    nextStep: 'ask_to',
-                    promptText: 'Select TO account (Debit):',
-                    preselectText: parsed.toParty,
-                };
-                showLedgerPicker('fromLedgerName', 'Select FROM account (Credit):', parsed.fromParty);
-                return;
-            }
-
-            if (vt === 'Expense' && parsed.amount != null) {
-                assistantState.current.amount = parsed.amount;
-                const expenseHint = parsed.narration || '';
-                if (expenseHint) {
-                    const hinted = parsed.cashBankHint || 'cash';
-                    const accHint = setAccountFromHint(hinted) || hinted;
-                    assistantState.step = 'ask_expense';
-                    assistantState.autoFinalize = true;
-                    assistantState.autoNext = {
-                        afterField: 'expenseLedgerName',
-                        nextField: 'accountLedgerName',
-                        nextStep: 'ask_account',
-                        promptText: 'Select paid-from ledger (Credit):',
-                        preselectText: accHint,
-                    };
-                    showLedgerPicker('expenseLedgerName', 'Select expense ledger (Debit):', expenseHint);
-                    return;
-                }
-            }
-
-
-            if (vt === 'Service Income' && parsed.amount != null) {
-                assistantState.current.amount = parsed.amount;
-                const incomeHint = parsed.narration || '';
-
-                assistantState.step = 'ask_income';
-                assistantState.autoFinalize = true;
-                assistantState.autoNext = {
-                    afterField: 'incomeLedgerName',
-                    nextField: 'accountLedgerName',
-                    nextStep: 'ask_account',
-                    promptText: 'Select received-into ledger (Debit):',
-                    preselectText: parsed.fromParty || 'cash',
-                };
-                showLedgerPicker('incomeLedgerName', 'Select income ledger (Credit):', incomeHint);
-                return;
-            }
-
-
-            // If we got here, the AI parsed something but it didn't match our patterns
-            // Let's show what we got and guide the user
-            console.log('AI parsed data:', aiData);
-            console.log('Converted parsed:', parsed);
-
-            if (parsed.amount != null) {
-                // We have an amount, so let's help the user complete the voucher
-                globalChatAppendMessage('bot', `I detected amount: ${parsed.amount}. Let me help you complete this ${vt} voucher.`);
-
-                if (vt === 'Receipt') {
-                    assistantState.step = 'ask_party';
-                    showLedgerPicker('partyLedgerName', 'Select party ledger (Credit):', parsed.fromParty || '');
-                    return;
-                } else if (vt === 'Payment') {
-                    assistantState.step = 'ask_party';
-                    showLedgerPicker('partyLedgerName', 'Select party ledger (Debit):', parsed.toParty || '');
-                    return;
-                } else if (vt === 'Expense') {
-                    assistantState.step = 'ask_expense';
-                    showLedgerPicker('expenseLedgerName', 'Select expense ledger (Debit):', parsed.narration || '');
-                    return;
-                }
-            }
-
-            globalChatAppendMessage('bot', 'Type "new" to start, or type one-line voucher like: received 5000 from ABC by cash today');
+            clearQuick();
+            hideLedgerPicker();
+            showVoucherReviewCard();
             return;
         }
 
@@ -1918,6 +2228,24 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         if (chatClose) chatClose.addEventListener('click', closeGlobalChat);
+
+        // The assistant answers with choice chips - "did you mean ABC Trading?",
+        // "shall I use AI? yes / no". Clicking one is the same as typing it, so
+        // the server picks the answer up as the reply to what it just asked.
+        if (messagesEl) {
+            messagesEl.addEventListener('click', (e) => {
+                const pick = e.target.closest('.rv-pick');
+                if (!pick || !messagesEl.contains(pick)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const value = pick.getAttribute('data-value') || pick.textContent.trim();
+                if (!value) return;
+                pick.closest('.rv-bubble')?.querySelectorAll('.rv-pick')
+                    .forEach((b) => { b.disabled = true; });
+                globalChatAppendMessage('user', value);
+                handleGeneralChatQuery(value);
+            });
+        }
 
         if (voucherSelect) {
             console.log('Chatbot: voucherSelect found, attaching listener');
@@ -2090,289 +2418,15 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ============================
-    // GROUP MANAGEMENT
+    // MASTER FORM HANDLERS - REMOVED
     // ============================
-    // Handle Add Group Form
-    const addGroupForm = document.getElementById('addGroupForm');
-    if (addGroupForm) {
-        addGroupForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/add_group', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('groupMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('groupMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // Handle Delete Group Form
-    const deleteGroupForm = document.getElementById('deleteGroupForm');
-    if (deleteGroupForm) {
-        deleteGroupForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/delete_group', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('deleteGroupMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('deleteGroupMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // ============================
-    // INVENTORY GROUP MANAGEMENT
-    // ============================
-    // Handle Add Inventory Group Form
-    const addInventoryGroupForm = document.getElementById('addInventoryGroupForm');
-    if (addInventoryGroupForm) {
-        addInventoryGroupForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/add_inventory_group', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('inventoryGroupMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('inventoryGroupMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // Handle Delete Inventory Group Form
-    const deleteInventoryGroupForm = document.getElementById('deleteInventoryGroupForm');
-    if (deleteInventoryGroupForm) {
-        deleteInventoryGroupForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/delete_inventory_group', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('deleteInventoryGroupMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('deleteInventoryGroupMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // ============================
-    // COST CENTER MANAGEMENT
-    // ============================
-    // Handle Add Cost Center Form
-    const addCostCenterForm = document.getElementById('addCostCenterForm');
-    if (addCostCenterForm) {
-        addCostCenterForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/add_cost_center', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('costCenterMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('costCenterMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // Handle Delete Cost Center Form
-    const deleteCostCenterForm = document.getElementById('deleteCostCenterForm');
-    if (deleteCostCenterForm) {
-        deleteCostCenterForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/delete_cost_center', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('deleteCostCenterMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('deleteCostCenterMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // ============================
-    // LEDGER MANAGEMENT
-    // ============================
-    // Handle Add Ledger Form
-    const addLedgerForm = document.getElementById('addLedgerForm');
-    if (addLedgerForm) {
-        addLedgerForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/add_ledger', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('ledgerMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('ledgerMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // Handle Delete Ledger Form
-    const deleteLedgerForm = document.getElementById('deleteLedgerForm');
-    if (deleteLedgerForm) {
-        deleteLedgerForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/delete_ledger', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('deleteLedgerMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('deleteLedgerMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // ============================
-    // INVENTORY ITEM MANAGEMENT
-    // ============================
-    // Handle Add Inventory Form (Add Item)
-    const addInventoryForm = document.getElementById('addInventoryForm');
-    if (addInventoryForm) {
-        addInventoryForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/add_inventory', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('inventoryMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('inventoryMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
-
-    // Handle Delete Inventory Form (Delete Item)
-    const deleteInventoryForm = document.getElementById('deleteInventoryForm');
-    if (deleteInventoryForm) {
-        deleteInventoryForm.addEventListener('submit', function (e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            fetch('/delete_inventory', {
-                method: 'POST',
-                body: formData,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    const messageDiv = document.getElementById('deleteInventoryMessage');
-                    messageDiv.style.color = data.success ? 'green' : 'red';
-                    messageDiv.textContent = data.message;
-                    if (data.success) {
-                        setTimeout(() => location.reload(), 1000);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('deleteInventoryMessage').textContent = `Error: ${error.message || 'Unknown error occurred'}`;
-                });
-        });
-    }
+    // Add/Delete handlers for Group, Inventory Group, Cost Centre, Ledger and
+    // Item used to live here as well as in their own templates. Both were bound
+    // to the same form, and preventDefault() does not stop a sibling handler on
+    // the same element - only stopImmediatePropagation() would. So every click
+    // sent the request twice: the first succeeded, the second hit the unique
+    // constraint and flashed an error over the success message before the page
+    // reloaded. Each page now owns its handler.
 
     // ============================
     // VOUCHER MANAGEMENT

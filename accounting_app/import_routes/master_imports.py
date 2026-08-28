@@ -11,6 +11,48 @@ from accounting_app.models import parse_date
 from database import add_inventory, get_inventory_groups, get_company_settings, get_default_location, add_voucher, get_current_company_id, get_groups, get_sub_groups
 
 
+def _resolve_ledger_sub_groups(ledger_data, group_code_by_name, company_id):
+    """Check each row's Sub Group and attach its id. Returns (ok, reason).
+
+    A sub group belongs to one group, so naming a sub group from a different
+    group is rejected rather than quietly ignored.
+    """
+    from database import get_sub_groups
+
+    if not any(str(r.get("sub_group_name") or "").strip() for r in ledger_data):
+        return True, None       # nothing to check
+
+    # sub group name -> {group_code: id}, so the same name can exist under
+    # more than one group without becoming ambiguous. One query for all of
+    # them - asking per group would open a connection per group.
+    by_name = {}
+    for sub in (get_sub_groups(company_id=company_id) or []):
+        key = (sub['sub_group_name'] or "").strip().lower()
+        by_name.setdefault(key, {})[sub['group_code']] = sub['id']
+
+    for row_no, row in enumerate(ledger_data, start=2):
+        name = str(row.get("sub_group_name") or "").strip()
+        if not name:
+            row["sub_group_id"] = None
+            continue
+
+        group_code = group_code_by_name.get(
+            str(row.get("group_name") or "").strip().lower())
+        candidates = by_name.get(name.lower())
+
+        if not candidates:
+            known = ", ".join(sorted(by_name)) or "none defined"
+            return False, (f"Row {row_no} ('{row.get('ledger_name')}'): Sub Group "
+                           f"'{name}' does not exist. Available: {known}.")
+        if group_code not in candidates:
+            return False, (f"Row {row_no} ('{row.get('ledger_name')}'): Sub Group "
+                           f"'{name}' does not belong to group "
+                           f"'{row.get('group_name')}'.")
+        row["sub_group_id"] = candidates[group_code]
+
+    return True, None
+
+
 @import_bp.route("/queue_group_import", methods=["POST"])
 @login_required
 def queue_group_import():
@@ -32,6 +74,11 @@ def queue_group_import():
         validation_status = "Success" if is_valid else "Failed"
         if not is_valid:
             failure_reason = vmsg
+        else:
+            # Validation resolves each Master Group name to its code. Store the
+            # enriched rows, otherwise that work is thrown away and the upload
+            # step has to guess again.
+            json_data = json.dumps(groups_data)
         print(f"Group validation: {validation_status} - {failure_reason}")
     except json.JSONDecodeError as e:
         print(f"Group JSON decode error: {e}")
@@ -200,7 +247,10 @@ def queue_ledger_import():
         else:
             # Check parent Groups exist so upload from the queue always succeeds
             company_id_chk = get_current_company_id()
-            groups = {(g['group_name'] or "").strip().lower() for g in get_groups(company_id=company_id_chk)}
+            group_rows = get_groups(company_id=company_id_chk)
+            groups = {(g['group_name'] or "").strip().lower() for g in group_rows}
+            group_code_by_name = {(g['group_name'] or "").strip().lower():
+                                  g['group_code'] for g in group_rows}
             missing_groups = set()
             for row in ledger_data:
                 gname = str(row.get("group_name") or "").strip()
@@ -209,7 +259,16 @@ def queue_ledger_import():
             if missing_groups:
                 is_valid = False
                 failure_reason = "Missing Groups: " + ", ".join(sorted(missing_groups))
+            else:
+                # Sub Group is optional, but if one is named it has to exist and
+                # belong to the ledger's own group. Previously it was accepted
+                # and then thrown away, so a wrong value looked like a success.
+                is_valid, failure_reason = _resolve_ledger_sub_groups(
+                    ledger_data, group_code_by_name, company_id_chk)
         validation_status = "Success" if is_valid else "Failed"
+        if is_valid:
+            # Keep the sub group ids resolved above; the queue stores this JSON.
+            json_data = json.dumps(ledger_data)
         print(f"Ledger validation: {validation_status} - {failure_reason}")
     except json.JSONDecodeError as e:
         print(f"Ledger JSON decode error: {e}")

@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}Verify Books{% endblock %}
+
+{% block extra_head %}
+<style>
+    .vb-summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+    .vb-tile {
+        flex: 1; min-width: 150px; padding: 14px 18px; border-radius: 8px;
+        border: 1px solid #e2e8f0; background: #fff;
+    }
+    .vb-tile .n { font-size: 1.9rem; font-weight: 700; line-height: 1; }
+    .vb-tile .l { font-size: 0.82rem; color: #64748b; margin-top: 4px; }
+    .vb-tile.ok   .n { color: #166534; }
+    .vb-tile.warn .n { color: #92400e; }
+    .vb-tile.fail .n { color: #991b1b; }
+
+    .vb-check {
+        border: 1px solid #e2e8f0; border-radius: 8px; background: #fff;
+        margin-bottom: 12px; overflow: hidden;
+    }
+    .vb-head {
+        display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+        cursor: default;
+    }
+    .vb-check.has-rows .vb-head { cursor: pointer; }
+    .vb-badge {
+        flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 0.78rem; font-weight: 700; color: #fff;
+    }
+    .vb-ok   .vb-badge { background: #16a34a; }
+    .vb-warn .vb-badge { background: #d97706; }
+    .vb-fail .vb-badge { background: #dc2626; }
+    .vb-ok   { border-left: 4px solid #16a34a; }
+    .vb-warn { border-left: 4px solid #d97706; }
+    .vb-fail { border-left: 4px solid #dc2626; }
+
+    .vb-title { font-weight: 600; color: #1a202c; }
+    .vb-sub { font-size: 0.85rem; color: #475569; margin-top: 2px; }
+    .vb-toggle { margin-left: auto; font-size: 0.8rem; color: #2563ab; }
+
+    .vb-body { display: none; border-top: 1px solid #edf2f7; padding: 0; }
+    .vb-check.open .vb-body { display: block; }
+    .vb-body-inner { overflow-x: auto; max-height: 340px; }
+    .vb-table { width: 100%; border-collapse: collapse; font-size: 0.83rem;
+                margin: 0; box-shadow: none; }
+    .vb-table th, .vb-table td {
+        padding: 6px 12px; border: none; border-bottom: 1px solid #edf2f7;
+        text-align: left; white-space: nowrap; background: transparent;
+    }
+    .vb-table thead th {
+        background-color: #f1f5f9; color: #1a202c; font-weight: 600;
+        position: sticky; top: 0;
+    }
+    .vb-table td.num, .vb-table th.num { text-align: right;
+        font-variant-numeric: tabular-nums; }
+    .vb-fixbar { padding: 10px 16px; background: #fffbeb;
+        border-top: 1px solid #fde68a; font-size: 0.85rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom:4px;">🩺 Verify Books</h2>
+<p style="color:#64748b;font-size:0.88rem;margin-top:0;">
+    Consistency checks for <b>{{ company.company_name if company else 'this company' }}</b>.
+    Worth running before you close a period.
+</p>
+
+<div class="vb-summary">
+    <div class="vb-tile ok"><div class="n">{{ passed }}</div><div class="l">Passed</div></div>
+    <div class="vb-tile warn"><div class="n">{{ warned }}</div><div class="l">Warnings</div></div>
+    <div class="vb-tile fail"><div class="n">{{ failed }}</div><div class="l">Problems</div></div>
+    <div class="vb-tile">
+        <div class="n" style="font-size:1rem;padding-top:8px;">
+            {% if failed %}Needs attention{% elif warned %}Mostly clean{% else %}All clear{% endif %}
+        </div>
+        <div class="l">
+            <a href="{{ url_for('report_bp.verify_books') }}">Re-run checks</a>
+        </div>
+    </div>
+</div>
+
+<div id="vbMessage"></div>
+
+{% for check in checks %}
+<div class="vb-check {{ 'vb-ok' if check.status == 'ok' else ('vb-warn' if check.status == 'warning' else 'vb-fail') }}
+            {{ 'has-rows' if check.rows else '' }}">
+    <div class="vb-head">
+        <span class="vb-badge">{{ '✓' if check.status == 'ok' else ('!' if check.status == 'warning' else '×') }}</span>
+        <div>
+            <div class="vb-title">{{ check.title }}</div>
+            <div class="vb-sub">{{ check.summary }}</div>
+        </div>
+        {% if check.rows %}
+        <span class="vb-toggle">Show {{ check.rows|length }} row(s)</span>
+        {% endif %}
+    </div>
+    {% if check.rows %}
+    <div class="vb-body">
+        {% if check.fix == 'repair_cached_balances' %}
+        <div class="vb-fixbar">
+            Reports already correct this on the fly. To rewrite the stored values:
+            <button type="button" class="btn btn-sm" id="vbRepairBalances"
+                    style="margin-left:8px;">Rebuild stored balances</button>
+        </div>
+        {% endif %}
+        <div class="vb-body-inner">
+            <table class="vb-table">
+                <thead><tr>
+                    {% for col in check.columns %}<th>{{ col }}</th>{% endfor %}
+                </tr></thead>
+                <tbody>
+                    {% for row in check.rows %}
+                    <tr>{% for cell in row %}
+                        <td class="{{ 'num' if cell is number else '' }}">
+                            {%- if cell is number -%}
+                                {{ "{:,.2f}".format(cell) if cell % 1 else "{:,}".format(cell|int) }}
+                            {%- else -%}{{ cell if cell is not none else '' }}{%- endif -%}
+                        </td>
+                    {% endfor %}</tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+<script>
+(function () {
+    "use strict";
+    document.querySelectorAll('.vb-check.has-rows .vb-head').forEach(function (head) {
+        head.addEventListener('click', function () {
+            var card = head.closest('.vb-check');
+            card.classList.toggle('open');
+            var toggle = head.querySelector('.vb-toggle');
+            if (toggle) {
+                var n = card.querySelectorAll('.vb-table tbody tr').length;
+                toggle.textContent = card.classList.contains('open')
+                    ? 'Hide' : 'Show ' + n + ' row(s)';
+            }
+        });
+    });
+
+    var repair = document.getElementById('vbRepairBalances');
+    if (repair) {
+        repair.addEventListener('click', function (e) {
+            e.stopPropagation();
+            repair.disabled = true;
+            repair.textContent = 'Rebuilding…';
+            fetch('/api/verify_books/repair_balances', { method: 'POST' })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    var msg = document.getElementById('vbMessage');
+                    if (d.success) {
+                        msg.innerHTML = '<div style="padding:10px 14px;border-radius:5px;' +
+                            'background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;' +
+                            'margin-bottom:12px;">Rebuilt ' + d.data.corrected +
+                            ' ledger balance(s). Re-run the checks to confirm.</div>';
+                    } else {
+                        msg.innerHTML = '<div style="padding:10px 14px;border-radius:5px;' +
+                            'background:#fef2f2;color:#991b1b;border:1px solid #fecaca;' +
+                            'margin-bottom:12px;">' + (d.message || 'Repair failed') + '</div>';
+                    }
+                    repair.disabled = false;
+                    repair.textContent = 'Rebuild stored balances';
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                })
+                .catch(function (err) {
+                    repair.disabled = false;
+                    repair.textContent = 'Rebuild stored balances';
+                    alert('Repair failed: ' + err.message);
+                });
+        });
+    }
+})();
+</script>
+{% endblock %}

@@ -230,9 +230,31 @@
 
                 const groupData = jsonData.map(row => ({
                     // group_code: row['Group Code'], // Removed
-                    group_name: row['Group Name'],
-                    nature: row['Nature']
+                    group_name: (row['Group Name'] || '').toString().trim(),
+                    nature: (row['Nature'] || '').toString().trim(),
+                    master_group_name: (row['Master Group'] || '').toString().trim()
                 }));
+
+                // Master Group is required. Catching it here names the exact
+                // spreadsheet row, which the queue's error message cannot do.
+                const missing = [];
+                groupData.forEach((g, i) => {
+                    const rowNo = i + 2;   // +1 for the header, +1 for 1-based
+                    if (!g.group_name) missing.push('Row ' + rowNo + ': Group Name is blank');
+                    else if (!g.nature) missing.push('Row ' + rowNo + ' (' + g.group_name + '): Nature is blank');
+                    else if (!g.master_group_name) missing.push('Row ' + rowNo + ' (' + g.group_name + '): Master Group is blank');
+                });
+                if (missing.length) {
+                    msgDiv.innerHTML = '<b>Nothing was imported.</b> '
+                        + missing.length + ' row(s) are incomplete:<br>'
+                        + missing.slice(0, 12).join('<br>')
+                        + (missing.length > 12 ? '<br>…and ' + (missing.length - 12) + ' more' : '')
+                        + '<br><br>Download the template again if it has no <b>Master Group</b> column.';
+                    msgDiv.className = "status-message error";
+                    progressContainer.style.display = 'none';
+                    if (typeof unblockUI === 'function') unblockUI();
+                    return;
+                }
 
                 const payload = JSON.stringify({
                     file_name: file.name,

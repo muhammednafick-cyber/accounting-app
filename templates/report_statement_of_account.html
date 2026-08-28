@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+
+{% block title %}Statement of Account{% endblock %}
+
+{% block extra_head %}
+<!-- select2 is loaded per page in this app, not globally -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    /* The party list runs to hundreds of names, so it has to be searchable. */
+    .select2-container { min-width: 340px; }
+    .select2-container--default .select2-selection--single {
+        height: 34px; border: 1px solid #cbd5e1; border-radius: 4px;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        line-height: 32px; font-size: 0.88rem;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__arrow {
+        height: 32px;
+    }
+    .select2-results__option { font-size: 0.88rem; }
+    .soa-bar {
+        display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+        padding: 14px 16px; background: #fff; border: 1px solid #dee2e6;
+        border-radius: 6px; margin-bottom: 16px;
+    }
+    .soa-bar label { display: block; font-size: 0.78rem; color: #64748b;
+        margin-bottom: 4px; font-weight: 600; }
+    .soa-bar select, .soa-bar input[type="date"] {
+        padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 4px;
+        font-size: 0.88rem; background: #fff; width: auto;
+    }
+    .soa-bar select.party { min-width: 340px; }
+    .soa-bar .chk { display: flex; align-items: center; gap: 6px;
+        font-size: 0.85rem; color: #334155; padding-bottom: 7px; }
+
+    .soa-head {
+        display: flex; flex-wrap: wrap; gap: 20px; align-items: baseline;
+        background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
+        padding: 14px 18px; margin-bottom: 14px;
+    }
+    .soa-head h3 { margin: 0; font-size: 1.05rem; color: #1a202c; }
+    .soa-head .meta { font-size: 0.82rem; color: #64748b; }
+    .soa-kind {
+        display: inline-block; padding: 2px 10px; border-radius: 10px;
+        font-size: 0.75rem; font-weight: 600;
+    }
+    .soa-kind.Customer { background: #dbeafe; color: #1e40af; }
+    .soa-kind.Supplier { background: #fef3c7; color: #92400e; }
+
+    .soa-tiles { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .soa-tile { flex: 1; min-width: 165px; background: #fff; border: 1px solid #e2e8f0;
+        border-radius: 8px; padding: 12px 16px; }
+    .soa-tile .n { font-size: 1.35rem; font-weight: 700; color: #1a202c;
+        font-variant-numeric: tabular-nums; }
+    .soa-tile .l { font-size: 0.76rem; color: #64748b; margin-top: 3px; }
+    .soa-tile.due .n { color: #b91c1c; }
+    .soa-tile.matched .n { color: #166534; }
+
+    .soa-table-wrap { overflow-x: auto; background: #fff; border: 1px solid #e2e8f0;
+        border-radius: 6px; }
+    .soa-table { width: 100%; border-collapse: collapse; font-size: 0.85rem;
+        margin: 0; box-shadow: none; }
+    .soa-table th, .soa-table td {
+        padding: 7px 11px; border: none; border-bottom: 1px solid #edf2f7;
+        text-align: left; white-space: nowrap; background: transparent;
+    }
+    .soa-table thead th {
+        background-color: #2563ab; color: #fff; font-weight: 600;
+        position: sticky; top: 0; z-index: 2;
+    }
+    .soa-table th.num, .soa-table td.num {
+        text-align: right; font-variant-numeric: tabular-nums;
+    }
+    .soa-table tbody tr:nth-child(even) td { background-color: #fafbfc; }
+    .soa-table tbody tr:hover td { background-color: #eef2ff; }
+    .soa-table tfoot td {
+        background: #f1f5f9; font-weight: 700; border-top: 2px solid #cbd5e1;
+        font-variant-numeric: tabular-nums;
+    }
+    .soa-table td.desc { white-space: normal; max-width: 260px; color: #475569; }
+    .soa-table td.bal { font-weight: 600; background: #f8fafc; }
+    .soa-table td.credit { color: #166534; }
+    .soa-table tbody tr.credit-row td { background: #f4fcf7; }
+    .overdue { color: #b91c1c; font-weight: 600; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 9px;
+        font-size: 0.72rem; }
+    .pill.Open { background: #f1f5f9; color: #475569; }
+    .pill.Part { background: #fef3c7; color: #92400e; }
+    .pill.Settled { background: #dcfce7; color: #166534; }
+
+    .soa-note { padding: 11px 15px; border-radius: 6px; font-size: 0.85rem;
+        margin-bottom: 14px; }
+    .soa-note.warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+    .soa-note.info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+    .soa-empty { padding: 40px; text-align: center; color: #64748b; }
+    .soa-section { font-weight: 600; color: #1a202c; margin: 20px 0 8px; }
+    @media print {
+        .soa-bar, .nav-menu, .global-chat-fab, .no-print { display: none !important; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom:4px;">📄 Statement of Account</h2>
+<p style="color:#64748b;font-size:0.88rem;margin-top:0;">
+    Outstanding invoices for a customer or supplier, showing what each was
+    raised for, how much has been settled against it, and what remains.
+</p>
+
+<form method="get" class="soa-bar no-print">
+    <div>
+        <label for="kind">Party type</label>
+        <select name="kind" id="kind" onchange="this.form.submit()">
+            <option value="" {% if not kind %}selected{% endif %}>Customers &amp; Suppliers</option>
+            <option value="Customer" {% if kind == 'Customer' %}selected{% endif %}>Customers only</option>
+            <option value="Supplier" {% if kind == 'Supplier' %}selected{% endif %}>Suppliers only</option>
+        </select>
+    </div>
+    <div>
+        <label for="ledger">Party</label>
+        <select name="ledger" id="ledger" class="party select2" required>
+            <option value="">-- Select a customer or supplier --</option>
+            {% for p in parties %}
+            <option value="{{ p.ledger_name }}" {% if p.ledger_name == selected_ledger %}selected{% endif %}>
+                {{ p.ledger_name }} ({{ p.kind }}{% if p.balance %} &middot; {{ '%.2f'|format(p.balance|abs) }}{% endif %})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label for="as_of">As of</label>
+        <input type="date" name="as_of" id="as_of" value="{{ as_of }}">
+    </div>
+    <div class="chk">
+        <input type="checkbox" name="include_settled" id="include_settled" value="1"
+               {% if include_settled %}checked{% endif %}>
+        <label for="include_settled" style="margin:0;font-weight:400;color:#334155;">Include fully settled</label>
+    </div>
+    <button type="submit" class="btn btn-primary">Show</button>
+    {% if statement %}
+    <a class="btn btn-primary" href="{{ url_for('export_bp.export_statement_of_account_pdf') }}?ledger={{ selected_ledger|urlencode }}&as_of={{ as_of }}&include_settled={{ '1' if include_settled else '' }}">📄 PDF Statement</a>
+    <a class="btn" href="{{ url_for('export_bp.export_statement_of_account') }}?ledger={{ selected_ledger|urlencode }}&as_of={{ as_of }}&include_settled={{ '1' if include_settled else '' }}">⬇ Excel</a>
+    {% endif %}
+</form>
+
+{% if not statement %}
+<div class="soa-empty">Choose a customer or supplier to see their statement.</div>
+{% else %}
+
+<div class="soa-head">
+    <div>
+        <h3>{{ statement.ledger_name }}
+            <span class="soa-kind {{ statement.party_kind }}">{{ statement.party_kind }}</span>
+        </h3>
+        <div class="meta">
+            {{ statement.group_name }}
+            {% if statement.trn %} &middot; TRN {{ statement.trn }}{% endif %}
+            {% if statement.credit_days %} &middot; {{ statement.credit_days }} days credit{% endif %}
+        </div>
+    </div>
+    <div style="margin-left:auto;" class="meta">
+        As of <b>{{ statement.as_of_date }}</b>
+        {% if statement.phone %}<br>{{ statement.phone }}{% endif %}
+    </div>
+</div>
+
+<div class="soa-tiles">
+    <div class="soa-tile">
+        <div class="n">{{ '{:,.2f}'.format(statement.totals.original) }}</div>
+        <div class="l">Original invoiced</div>
+    </div>
+    <div class="soa-tile matched">
+        <div class="n">{{ '{:,.2f}'.format(statement.totals.matched) }}</div>
+        <div class="l">Matched / settled</div>
+    </div>
+    <div class="soa-tile due">
+        <div class="n">{{ '{:,.2f}'.format(statement.totals.remaining) }}</div>
+        <div class="l">Remaining on invoices</div>
+    </div>
+    {% if statement.totals.unallocated %}
+    <div class="soa-tile">
+        <div class="n">{{ '{:,.2f}'.format(statement.totals.unallocated) }}</div>
+        <div class="l">Credits not yet matched</div>
+    </div>
+    {% endif %}
+    <div class="soa-tile due">
+        <div class="n">{{ '{:,.2f}'.format(statement.totals.net_outstanding) }}</div>
+        <div class="l">Net {{ 'receivable' if statement.party_kind == 'Customer' else 'payable' }}</div>
+    </div>
+</div>
+
+{% if not statement.reconciles %}
+<div class="soa-note warn">
+    <b>This statement does not tie to the ledger.</b>
+    Invoices less unmatched payments come to
+    <b>{{ '{:,.2f}'.format(statement.totals.net_outstanding) }}</b>, but the
+    ledger balance is <b>{{ '{:,.2f}'.format(statement.ledger_balance) }}</b>
+    &mdash; a difference of <b>{{ '{:,.2f}'.format(statement.difference) }}</b>.
+    Usually this means an opening balance was entered directly on the ledger
+    rather than as an invoice.
+</div>
+{% endif %}
+
+{% if statement.totals.unallocated %}
+<div class="soa-note info">
+    <b>{{ '{:,.2f}'.format(statement.totals.unallocated) }}</b> of credits
+    reduce this balance but are not matched to any invoice, so the items below
+    still show as open.
+    Match them under <b>Modules &rarr; Settlement</b> to clear them.
+</div>
+{% endif %}
+
+<div class="soa-table-wrap">
+    <table class="soa-table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Invoice / Voucher</th>
+                <th>Type</th>
+                <th>Reference</th>
+                <th>Due Date</th>
+                <th class="num">Days Overdue</th>
+                <th class="num">Original Amount</th>
+                <th class="num">Matched Amount</th>
+                <th class="num">Remaining Amount</th>
+                <th class="num">Balance</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in statement.rows %}
+            {# Credits are shaded so the listing reads as one running account #}
+            <tr class="{{ '' if r.is_invoice else 'credit-row' }}">
+                <td>{{ r.date }}</td>
+                <td>{{ r.voucher_number }}</td>
+                <td>{{ r.voucher_type }}</td>
+                <td>{{ r.reference }}</td>
+                <td>{{ r.due_date }}</td>
+                <td class="num {% if r.days_overdue > 0 %}overdue{% endif %}">
+                    {{ r.days_overdue if r.days_overdue else '' }}
+                </td>
+                <td class="num">{{ '{:,.2f}'.format(r.original_amount) }}</td>
+                <td class="num">{{ '{:,.2f}'.format(r.matched_amount) if r.matched_amount else '' }}</td>
+                <td class="num {% if not r.is_invoice %}credit{% endif %}">{{ '{:,.2f}'.format(r.remaining_amount) }}</td>
+                <td class="num bal">{{ '{:,.2f}'.format(r.balance) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="10" class="soa-empty">
+                Nothing outstanding &mdash; every invoice is settled.
+            </td></tr>
+            {% endfor %}
+        </tbody>
+        {% if statement.rows %}
+        <tfoot>
+            <tr>
+                <td colspan="6">
+                    {{ statement.rows|length }} open item(s) &mdash; closing balance
+                    {{ 'receivable' if statement.party_kind == 'Customer' else 'payable' }}
+                </td>
+                <td class="num">{{ '{:,.2f}'.format(statement.totals.original) }}</td>
+                <td class="num">{{ '{:,.2f}'.format(statement.totals.matched) }}</td>
+                <td></td>
+                <td class="num bal">{{ '{:,.2f}'.format(statement.totals.net_outstanding) }}</td>
+            </tr>
+        </tfoot>
+        {% endif %}
+    </table>
+</div>
+
+{% if statement.rows %}
+<div class="soa-section">Ageing of the remaining balance</div>
+<div class="soa-table-wrap">
+    <table class="soa-table">
+        <thead><tr>
+            {% for b in statement.ageing.keys() %}<th class="num">{{ b }}</th>{% endfor %}
+            <th class="num">Total</th>
+        </tr></thead>
+        <tbody><tr>
+            {% for b, v in statement.ageing.items() %}
+            <td class="num {% if v and b != 'Not due' %}overdue{% endif %}">{{ '{:,.2f}'.format(v) }}</td>
+            {% endfor %}
+            <td class="num"><b>{{ '{:,.2f}'.format(statement.totals.remaining) }}</b></td>
+        </tr></tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endif %}
+
+<script>
+    $(function () {
+        $('#ledger').select2({
+            width: 'resolve',
+            placeholder: 'Type to search a customer or supplier...',
+            allowClear: true
+        });
+        // Submitting on change saves a click; select2 fires its own event.
+        $('#ledger').on('select2:select', function () { this.form.submit(); });
+    });
+</script>
+{% endblock %}

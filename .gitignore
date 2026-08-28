@@ -42,3 +42,18 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Local RAG vector store (rebuildable with `ingest`)
+data/.chroma/
+
+# Secrets - never commit these
+*.env
+APi key.txt
+*api*key*.txt
+*.pem
+
+# Generated exports and scratch output
+sales_by_customer_*.xlsx
+parsed_invoice_*.xlsx
+static/generated/
+data/

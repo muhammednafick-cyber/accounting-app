@@ -941,11 +941,30 @@ def upload_import(id):
 
         # ---------- MASTER IMPORTS ----------
         if import_type == "Group":
+            # Master Group is mandatory. The queued rows normally carry the
+            # resolved code from validation; an older queued file may only have
+            # the name, so resolve that here rather than silently filing the
+            # group under nothing.
+            from database import get_master_groups
+            masters = get_master_groups(company_id=company_id) or []
+            master_by_name = {(m["master_group_name"] or "").strip().lower():
+                              m["master_group_code"] for m in masters}
+
             for group in import_data:
+                master_code = group.get("master_group_code")
+                if not master_code:
+                    master_name = str(group.get("master_group_name") or "").strip()
+                    master_code = master_by_name.get(master_name.lower())
+                if not master_code:
+                    raise Exception(
+                        f"Group '{group.get('group_name')}' has no valid Master "
+                        f"Group. Re-download the group template and fill in the "
+                        f"Master Group column.")
                 add_group(
                     group.get("group_code"),
                     group["group_name"],
                     group["nature"],
+                    master_group_code=master_code,
                     db_connection=conn,
                     company_id=company_id
                 )
@@ -967,7 +986,8 @@ def upload_import(id):
                 gname_raw = ledger.get("group_name")
                 gname_key = (gname_raw or "").strip().lower()
                 group_code = group_map.get(gname_key)
-                # Validation check removed as per user request (done in queue_import)
+                # Group existence is checked when the file is queued; a Failed
+                # entry cannot reach this point.
 
                 add_ledger(
                     ledger["ledger_code"],
@@ -975,6 +995,7 @@ def upload_import(id):
                     group_code,
                     round(float(ledger["opening_balance"]), 2),
                     ledger["opening_balance_type"],
+                    sub_group_id=ledger.get("sub_group_id"),
                     db_connection=conn,
                     company_id=company_id,
                     opening_balance_date=parse_date(str(ledger.get("opening_balance_date", "") or "").strip()),
@@ -1401,12 +1422,16 @@ def upload_import(id):
         return jsonify({"success": False, "message": str(e)}), 400
 
 
-@import_bp.route("/repair_stock_gl", methods=["GET"])
+@import_bp.route("/repair_stock_gl", methods=["POST"])
 @login_required
 def repair_stock_gl():
     """
     Manual trigger to repair Stock GL entries and Closing Balances.
     Useful if data is out of sync (e.g. missing COGS entries).
+
+    POST only: this rewrites GL entries and every ledger's closing balance.
+    As a GET it ran on any visit, prefetch or crawl of the URL - a link
+    preview was enough to rewrite the books.
     """
     try:
         from database import get_items, recalculate_running_balance_for_item, recompute_ledger_closing_balances

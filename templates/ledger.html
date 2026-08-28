@@ -302,7 +302,11 @@
                     group_name: row['Group Name'] || row['group_name'],
                     opening_balance: parseFloat(row['Opening Balance'] || 0),
                     opening_balance_type: String(row['Opening Balance Type'] || row['opening_balance_type'] || 'Debit').trim(),
-                    opening_balance_date: excelDateToISO(row['Opening Balance Date'] || row['opening_balance_date'])
+                    opening_balance_date: excelDateToISO(row['Opening Balance Date'] || row['opening_balance_date']),
+                    // The template has had a Sub Group Name column all along, but
+                    // it was never read here - so a sub group was silently
+                    // discarded whether it existed or not.
+                    sub_group_name: String(row['Sub Group Name'] || row['sub_group_name'] || '').trim()
                 }));
 
                 const payload = JSON.stringify({

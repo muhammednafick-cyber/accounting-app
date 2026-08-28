@@ -677,6 +677,24 @@ def init_unified_db():
         )
     """)
 
+    # Custom Report Builder: user-defined report definitions (never SQL -
+    # the builder recompiles the JSON on every run).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS custom_reports (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            dataset TEXT NOT NULL,
+            definition_json TEXT NOT NULL,
+            created_by TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(company_id, name)
+        )
+    """)
+
     # Performance indexes for the most-queried columns
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_le_company_voucher ON ledger_entries(company_id, voucher_number)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_le_company_ledger ON ledger_entries(company_id, ledger_name)")

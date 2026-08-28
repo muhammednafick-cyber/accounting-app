@@ -1,0 +1,661 @@
+{% extends "base.html" %}
+
+{% block title %}Custom Report Builder{% endblock %}
+
+{% block extra_head %}
+<style>
+    .rb-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
+    @media (max-width: 1100px) { .rb-wrap { grid-template-columns: 1fr; } }
+
+    .rb-card {
+        background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
+        padding: 14px 16px; margin-bottom: 14px;
+    }
+    .rb-card h3 {
+        margin: 0 0 10px; font-size: 0.95rem; font-weight: 600; color: #2c3e50;
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .rb-card h3 .rb-hint { font-weight: 400; font-size: 0.78rem; color: #7b8794; }
+
+    .rb-field-search { width: 100%; padding: 6px 10px; font-size: 0.85rem;
+        border: 1px solid #cbd5e1; border-radius: 4px; margin-bottom: 8px; }
+
+    .rb-tree { max-height: 460px; overflow-y: auto; }
+    .rb-group-label {
+        font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em;
+        color: #64748b; font-weight: 700; margin: 10px 0 4px; padding-bottom: 3px;
+        border-bottom: 1px solid #eef2f7;
+    }
+    .rb-field {
+        display: flex; align-items: center; gap: 7px; padding: 3px 4px;
+        font-size: 0.84rem; border-radius: 4px; cursor: pointer;
+    }
+    .rb-field:hover { background: #eef2ff; }
+    .rb-field input { margin: 0; }
+    .rb-field .rb-type { margin-left: auto; font-size: 0.68rem; color: #94a3b8; }
+
+    .rb-table { width: 100%; border-collapse: collapse; font-size: 0.85rem;
+        margin: 0; box-shadow: none; }
+    .rb-table th, .rb-table td {
+        padding: 6px 8px; border: none; border-bottom: 1px solid #edf2f7;
+        text-align: left; background: transparent;
+    }
+    .rb-table thead th {
+        background-color: #eef2f7; color: #1a202c; font-weight: 600;
+        white-space: nowrap; position: sticky; top: 0; z-index: 2;
+    }
+    .rb-table select, .rb-table input {
+        width: 100%; padding: 4px 6px; font-size: 0.82rem;
+        border: 1px solid #cbd5e1; border-radius: 4px; background: #fff;
+    }
+    .rb-x {
+        border: none; background: transparent; color: #b91c1c; cursor: pointer;
+        font-size: 1rem; line-height: 1; padding: 2px 6px;
+    }
+    .rb-x:hover { color: #7f1d1d; }
+
+    .rb-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .rb-toolbar .btn { padding: 6px 16px; font-size: 0.85rem; }
+    .rb-toolbar label { font-size: 0.85rem; margin: 0; font-weight: 500; }
+    .rb-toolbar input[type="number"] { width: 90px; padding: 5px 8px;
+        border: 1px solid #cbd5e1; border-radius: 4px; }
+
+    .rb-results-wrap { overflow: auto; max-height: 60vh; border: 1px solid #e2e8f0;
+        border-radius: 6px; }
+    .rb-results { width: 100%; border-collapse: collapse; font-size: 0.82rem;
+        margin: 0; box-shadow: none; }
+    .rb-results th, .rb-results td {
+        padding: 5px 10px; border: none; border-bottom: 1px solid #edf2f7;
+        white-space: nowrap; text-align: left; background: transparent;
+    }
+    .rb-results thead th {
+        background-color: #2563ab; color: #fff; font-weight: 600;
+        position: sticky; top: 0; z-index: 2;
+    }
+    .rb-results thead th.num, .rb-results td.num {
+        text-align: right; font-variant-numeric: tabular-nums;
+    }
+    .rb-results tbody tr:nth-child(even) td { background-color: #fafbfc; }
+    .rb-results tbody tr:hover td { background-color: #eef2ff; }
+    .rb-results td.neg { color: #b91c1c; }
+    .rb-results tfoot td {
+        background: #f1f5f9; font-weight: 600; border-top: 2px solid #cbd5e1;
+    }
+
+    .rb-msg { padding: 10px 14px; border-radius: 5px; font-size: 0.87rem; margin-bottom: 12px; }
+    .rb-msg.err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .rb-msg.ok { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    .rb-msg.info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+
+    .rb-empty { padding: 34px; text-align: center; color: #64748b; font-size: 0.9rem; }
+    .rb-chip {
+        display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0;
+        background: #eef2ff; color: #4338ca; border-radius: 10px; font-size: 0.75rem;
+    }
+    .rb-saved-item {
+        display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+        font-size: 0.84rem; border-radius: 4px;
+    }
+    .rb-saved-item:hover { background: #f8fafc; }
+    .rb-saved-item a { flex: 1; cursor: pointer; color: #2563ab; text-decoration: none; }
+    .rb-saved-item a:hover { text-decoration: underline; }
+    .rb-saved-item small { display: block; color: #94a3b8; font-size: 0.72rem; }
+
+    #rbSql { background: #0f172a; color: #cbd5e1; padding: 12px; border-radius: 6px;
+        font-family: ui-monospace, Consolas, monospace; font-size: 0.78rem;
+        white-space: pre; overflow-x: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom:4px;">🛠️ Custom Report Builder</h2>
+<p style="color:#64748b;font-size:0.88rem;margin-top:0;">
+    Pick a dataset, tick the columns you want, add filters, and run it.
+    Everything is limited to <b>{{ company.company_name if company else 'this company' }}</b>.
+</p>
+
+<div id="rbMessage"></div>
+
+<div class="rb-wrap">
+    <!-- ---------------- Left: dataset + fields ---------------- -->
+    <div>
+        <div class="rb-card">
+            <h3>1. Dataset</h3>
+            <select id="rbDataset" style="width:100%;padding:7px 9px;border:1px solid #cbd5e1;border-radius:4px;">
+                {% for ds in schema.datasets %}
+                <option value="{{ ds.key }}">{{ ds.label }}</option>
+                {% endfor %}
+            </select>
+            <p id="rbDatasetDesc" style="font-size:0.78rem;color:#64748b;margin:8px 0 0;"></p>
+        </div>
+
+        <div class="rb-card">
+            <h3>2. Columns <span class="rb-hint" id="rbFieldCount"></span></h3>
+            <input type="text" id="rbFieldSearch" class="rb-field-search"
+                   placeholder="Search columns...">
+            <div class="rb-tree" id="rbFieldTree"></div>
+        </div>
+
+        <div class="rb-card">
+            <h3>Saved reports</h3>
+            <div id="rbSavedList"></div>
+        </div>
+    </div>
+
+    <!-- ---------------- Right: layout, filters, results ---------------- -->
+    <div>
+        <div class="rb-card">
+            <h3>3. Selected columns <span class="rb-hint">drag order is the tick order</span></h3>
+            <div style="overflow-x:auto;">
+                <table class="rb-table">
+                    <thead>
+                        <tr>
+                            <th style="width:34%;">Column</th>
+                            <th style="width:22%;">Summarise</th>
+                            <th style="width:30%;">Heading</th>
+                            <th style="width:14%;">Sort</th>
+                            <th style="width:32px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="rbColumnRows">
+                        <tr><td colspan="5" class="rb-empty">Tick columns on the left to start.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <label style="font-size:0.83rem;display:inline-flex;gap:6px;align-items:center;margin-top:10px;">
+                <input type="checkbox" id="rbCountRows"> Add a <b>row count</b> column
+            </label>
+            <label style="font-size:0.83rem;display:inline-flex;gap:6px;align-items:center;margin-left:16px;">
+                <input type="checkbox" id="rbDistinct"> Remove duplicate rows
+            </label>
+            <p style="font-size:0.78rem;color:#64748b;margin:8px 0 0;">
+                Leave <i>Summarise</i> blank to list detail. Set it on one column
+                (e.g. Sum of Amount) and the rest become the grouping.
+            </p>
+        </div>
+
+        <div class="rb-card">
+            <h3>4. Filters
+                <button type="button" class="btn btn-sm" id="rbAddFilter"
+                        style="font-size:0.78rem;padding:3px 12px;">+ Add filter</button>
+            </h3>
+            <div style="overflow-x:auto;">
+                <table class="rb-table">
+                    <thead>
+                        <tr>
+                            <th style="width:32%;">Column</th>
+                            <th style="width:20%;">Condition</th>
+                            <th>Value</th>
+                            <th style="width:32px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="rbFilterRows">
+                        <tr><td colspan="4" class="rb-empty">No filters - the report returns everything.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="rb-card">
+            <div class="rb-toolbar">
+                <button type="button" class="btn btn-primary" id="rbRun">▶ Run report</button>
+                <label>Max rows
+                    <input type="number" id="rbLimit" value="{{ default_rows }}"
+                           min="1" max="{{ max_rows }}">
+                </label>
+                <span style="flex:1;"></span>
+                <button type="button" class="btn" id="rbExportXlsx">⬇ Excel</button>
+                <button type="button" class="btn" id="rbExportCsv">⬇ CSV</button>
+                <button type="button" class="btn" id="rbExportPdf">⬇ PDF</button>
+                <button type="button" class="btn" id="rbShowSql">SQL</button>
+            </div>
+            <div class="rb-toolbar" style="margin-top:10px;">
+                <input type="text" id="rbName" placeholder="Report name"
+                       style="flex:1;min-width:180px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:4px;">
+                <input type="text" id="rbDescription" placeholder="Description (optional)"
+                       style="flex:2;min-width:200px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:4px;">
+                <button type="button" class="btn" id="rbSave">💾 Save</button>
+                <button type="button" class="btn" id="rbNew">✚ New</button>
+            </div>
+            <pre id="rbSql" style="display:none;margin-top:12px;"></pre>
+        </div>
+
+        <div class="rb-card">
+            <h3>Results <span class="rb-hint" id="rbResultInfo"></span></h3>
+            <div class="rb-results-wrap">
+                <table class="rb-results" id="rbResults">
+                    <thead></thead><tbody></tbody><tfoot></tfoot>
+                </table>
+            </div>
+            <div class="rb-empty" id="rbNoResults">Run the report to see results here.</div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    "use strict";
+
+    const SCHEMA = {{ schema | tojson }};
+    // Ordered lists from the server, plus a lookup by key for convenience.
+    const OPERATORS = {};
+    SCHEMA.operators.forEach(o => { OPERATORS[o.key] = o; });
+    let SAVED = {{ saved | tojson }};
+    const MAX_ROWS = {{ max_rows }};
+
+    const el = (id) => document.getElementById(id);
+    const datasetSel = el('rbDataset');
+    let currentId = null;      // id of the saved report being edited
+    let selected = [];         // [{ref, aggregate, label, sort}]
+    let filters = [];          // [{ref, operator, value, value2}]
+    let lastResult = null;
+
+    const dataset = () => SCHEMA.datasets.find(d => d.key === datasetSel.value);
+
+    function fieldByRef(ref) {
+        const ds = dataset();
+        if (!ds) return null;
+        for (const t of ds.tables) {
+            const f = t.fields.find(f => f.ref === ref);
+            if (f) return { field: f, table: t };
+        }
+        return null;
+    }
+
+    function message(text, kind) {
+        el('rbMessage').innerHTML = text
+            ? `<div class="rb-msg ${kind || 'info'}">${text}</div>` : '';
+        if (text) window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ---------- field tree ----------
+    function renderTree() {
+        const ds = dataset();
+        el('rbDatasetDesc').textContent = ds ? ds.description : '';
+        const term = (el('rbFieldSearch').value || '').toLowerCase();
+        const chosen = new Set(selected.map(c => c.ref));
+        let html = '', shown = 0;
+
+        for (const t of ds.tables) {
+            const fields = t.fields.filter(f =>
+                !term || f.label.toLowerCase().includes(term) ||
+                f.name.toLowerCase().includes(term));
+            if (!fields.length) continue;
+            html += `<div class="rb-group-label">${t.label}${t.is_base ? '' : ' (linked)'}</div>`;
+            for (const f of fields) {
+                shown++;
+                html += `<label class="rb-field">
+                    <input type="checkbox" data-ref="${f.ref}" ${chosen.has(f.ref) ? 'checked' : ''}>
+                    <span>${f.label}</span>
+                    <span class="rb-type">${f.type}</span></label>`;
+            }
+        }
+        const tree = el('rbFieldTree');
+        const scroll = tree.scrollTop;
+        tree.innerHTML = html || '<div class="rb-empty">No matching columns.</div>';
+        tree.scrollTop = scroll;
+        el('rbFieldCount').textContent = `${selected.length} selected of ${shown}`;
+
+        el('rbFieldTree').querySelectorAll('input[type=checkbox]').forEach(box => {
+            box.addEventListener('change', () => {
+                const ref = box.getAttribute('data-ref');
+                if (box.checked) {
+                    if (!selected.some(c => c.ref === ref))
+                        selected.push({ ref, aggregate: '', label: '', sort: '' });
+                } else {
+                    selected = selected.filter(c => c.ref !== ref);
+                }
+                // Only the count and the grid change. Re-rendering the whole
+                // tree here would throw the user back to the top of a 40-item
+                // list every time they tick a box.
+                renderColumns();
+                updateFieldCount();
+            });
+        });
+    }
+
+    function updateFieldCount() {
+        const shown = el('rbFieldTree').querySelectorAll('input[type=checkbox]').length;
+        el('rbFieldCount').textContent = `${selected.length} selected of ${shown}`;
+    }
+
+    function syncTreeTicks() {
+        const chosen = new Set(selected.map(c => c.ref));
+        el('rbFieldTree').querySelectorAll('input[type=checkbox]').forEach(box => {
+            box.checked = chosen.has(box.getAttribute('data-ref'));
+        });
+        updateFieldCount();
+    }
+
+    // ---------- selected columns ----------
+    function renderColumns() {
+        const body = el('rbColumnRows');
+        if (!selected.length) {
+            body.innerHTML = '<tr><td colspan="5" class="rb-empty">Tick columns on the left to start.</td></tr>';
+            return;
+        }
+        body.innerHTML = selected.map((c, idx) => {
+            const found = fieldByRef(c.ref);
+            const name = found ? `${found.table.is_base ? '' : found.table.label + ' · '}${found.field.label}` : c.ref;
+            const numeric = found && found.field.type === 'number';
+            const aggOptions = SCHEMA.aggregates.map(spec => {
+                if (spec.numeric_only && !numeric) return '';
+                return `<option value="${spec.key}" ${c.aggregate === spec.key ? 'selected' : ''}>${spec.label}</option>`;
+            }).join('');
+            return `<tr>
+                <td>${name}</td>
+                <td><select data-idx="${idx}" data-k="aggregate">${aggOptions}</select></td>
+                <td><input type="text" data-idx="${idx}" data-k="label"
+                     value="${(c.label || '').replace(/"/g, '&quot;')}" placeholder="(automatic)"></td>
+                <td><select data-idx="${idx}" data-k="sort">
+                    <option value="">—</option>
+                    <option value="asc" ${c.sort === 'asc' ? 'selected' : ''}>A → Z</option>
+                    <option value="desc" ${c.sort === 'desc' ? 'selected' : ''}>Z → A</option>
+                </select></td>
+                <td><button type="button" class="rb-x" data-remove="${idx}" title="Remove">×</button></td>
+            </tr>`;
+        }).join('');
+
+        body.querySelectorAll('[data-k]').forEach(input => {
+            input.addEventListener('change', () => {
+                selected[+input.dataset.idx][input.dataset.k] = input.value;
+            });
+        });
+        body.querySelectorAll('[data-remove]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                selected.splice(+btn.dataset.remove, 1);
+                renderColumns(); syncTreeTicks();
+            });
+        });
+    }
+
+    // ---------- filters ----------
+    function allFieldOptions(current) {
+        const ds = dataset();
+        return ds.tables.map(t =>
+            `<optgroup label="${t.label}">` +
+            t.fields.map(f =>
+                `<option value="${f.ref}" ${current === f.ref ? 'selected' : ''}>${f.label}</option>`
+            ).join('') + '</optgroup>').join('');
+    }
+
+    function renderFilters() {
+        const body = el('rbFilterRows');
+        if (!filters.length) {
+            body.innerHTML = '<tr><td colspan="4" class="rb-empty">No filters - the report returns everything.</td></tr>';
+            return;
+        }
+        body.innerHTML = filters.map((f, idx) => {
+            const spec = OPERATORS[f.operator] || { args: 1 };
+            const found = fieldByRef(f.ref);
+            const inputType = found && found.field.type === 'date' ? 'date'
+                : (found && found.field.type === 'number' ? 'number' : 'text');
+            let valueCell;
+            if (spec.args === 0) {
+                valueCell = '<span style="color:#94a3b8;font-size:0.8rem;">(no value needed)</span>';
+            } else if (spec.args === 2) {
+                valueCell = `<div style="display:flex;gap:6px;">
+                    <input type="${inputType}" data-idx="${idx}" data-k="value" value="${f.value || ''}">
+                    <input type="${inputType}" data-idx="${idx}" data-k="value2" value="${f.value2 || ''}"></div>`;
+            } else if (spec.args === -1) {
+                valueCell = `<input type="text" data-idx="${idx}" data-k="value"
+                    value="${f.value || ''}" placeholder="comma, separated, values">`;
+            } else {
+                valueCell = `<input type="${inputType}" data-idx="${idx}" data-k="value" value="${f.value || ''}">`;
+            }
+            const ops = SCHEMA.operators.map(o =>
+                `<option value="${o.key}" ${f.operator === o.key ? 'selected' : ''}>${o.label}</option>`).join('');
+            return `<tr>
+                <td><select data-idx="${idx}" data-k="ref">${allFieldOptions(f.ref)}</select></td>
+                <td><select data-idx="${idx}" data-k="operator">${ops}</select></td>
+                <td>${valueCell}</td>
+                <td><button type="button" class="rb-x" data-remove-filter="${idx}">×</button></td>
+            </tr>`;
+        }).join('');
+
+        body.querySelectorAll('[data-k]').forEach(input => {
+            input.addEventListener('change', () => {
+                filters[+input.dataset.idx][input.dataset.k] = input.value;
+                if (input.dataset.k === 'operator' || input.dataset.k === 'ref') renderFilters();
+            });
+        });
+        body.querySelectorAll('[data-remove-filter]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                filters.splice(+btn.dataset.removeFilter, 1);
+                renderFilters();
+            });
+        });
+    }
+
+    // ---------- definition ----------
+    function definition() {
+        return {
+            name: el('rbName').value || 'Custom Report',
+            dataset: datasetSel.value,
+            columns: selected.map(c => ({
+                field: c.ref, aggregate: c.aggregate || '', label: c.label || ''
+            })),
+            filters: filters.map(f => {
+                const spec = OPERATORS[f.operator] || { args: 1 };
+                let values;
+                if (spec.args === 0) values = [];
+                else if (spec.args === -1)
+                    values = String(f.value || '').split(',').map(s => s.trim()).filter(Boolean);
+                else if (spec.args === 2) values = [f.value, f.value2];
+                else values = [f.value];
+                return { field: f.ref, operator: f.operator, values };
+            }),
+            sort: selected.filter(c => c.sort)
+                          .map(c => ({ field: c.ref, direction: c.sort })),
+            count_rows: el('rbCountRows').checked,
+            distinct: el('rbDistinct').checked,
+            limit: Math.min(parseInt(el('rbLimit').value, 10) || 500, MAX_ROWS)
+        };
+    }
+
+    async function post(url, body, method) {
+        const res = await fetch(url, {
+            method: method || 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: body ? JSON.stringify(body) : undefined
+        });
+        let data = {};
+        try { data = await res.json(); } catch (e) { /* non-JSON error page */ }
+        if (!res.ok || !data.success) throw new Error(data.message || `Request failed (${res.status})`);
+        return data.data;
+    }
+
+    // ---------- results ----------
+    function num(v) {
+        if (v === null || v === undefined || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    function renderResults(result) {
+        lastResult = result;
+        const table = el('rbResults');
+        const isNum = result.types.map(t => t === 'number');
+        table.querySelector('thead').innerHTML = '<tr>' + result.columns.map((c, i) =>
+            `<th class="${isNum[i] ? 'num' : ''}">${c}</th>`).join('') + '</tr>';
+
+        table.querySelector('tbody').innerHTML = result.rows.map(row =>
+            '<tr>' + row.map((v, i) => {
+                const n = isNum[i] ? num(v) : null;
+                if (n !== null) {
+                    return `<td class="num ${n < 0 ? 'neg' : ''}">${n.toLocaleString(undefined,
+                        { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>`;
+                }
+                return `<td>${v === null || v === undefined ? '' : String(v)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')}</td>`;
+            }).join('') + '</tr>').join('');
+
+        // Totals for every numeric column - the first thing anyone checks.
+        const totals = result.columns.map((c, i) => {
+            if (!isNum[i]) return i === 0 ? 'Total' : '';
+            let sum = 0, any = false;
+            for (const row of result.rows) {
+                const n = num(row[i]);
+                if (n !== null) { sum += n; any = true; }
+            }
+            return any ? sum.toLocaleString(undefined,
+                { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+        });
+        table.querySelector('tfoot').innerHTML = result.rows.length
+            ? '<tr>' + totals.map((t, i) =>
+                `<td class="${isNum[i] ? 'num' : ''}">${t}</td>`).join('') + '</tr>' : '';
+
+        el('rbNoResults').style.display = result.rows.length ? 'none' : 'block';
+        el('rbNoResults').textContent = result.rows.length
+            ? '' : 'No rows matched. Try loosening the filters.';
+        el('rbResultInfo').textContent = `${result.rows.length} row(s)` +
+            (result.truncated ? ` — stopped at the ${result.limit} row limit` : '');
+        el('rbSql').textContent = result.sql;
+    }
+
+    // ---------- saved reports ----------
+    function renderSaved() {
+        if (!SAVED.length) {
+            el('rbSavedList').innerHTML =
+                '<div style="color:#94a3b8;font-size:0.82rem;">Nothing saved yet.</div>';
+            return;
+        }
+        el('rbSavedList').innerHTML = SAVED.map(r => `
+            <div class="rb-saved-item">
+                <a data-load="${r.id}">${r.name}<small>${r.description || r.dataset}</small></a>
+                <button type="button" class="rb-x" data-delete="${r.id}" title="Delete">×</button>
+            </div>`).join('');
+
+        el('rbSavedList').querySelectorAll('[data-load]').forEach(a =>
+            a.addEventListener('click', () => loadReport(+a.dataset.load)));
+        el('rbSavedList').querySelectorAll('[data-delete]').forEach(b =>
+            b.addEventListener('click', async () => {
+                if (!confirm('Delete this saved report?')) return;
+                try {
+                    SAVED = (await post(`/api/report_builder/reports/${b.dataset.delete}`,
+                                        null, 'DELETE')).saved;
+                    renderSaved(); message('Report deleted.', 'ok');
+                } catch (e) { message(e.message, 'err'); }
+            }));
+    }
+
+    async function loadReport(id) {
+        try {
+            const r = await post(`/api/report_builder/reports/${id}`, null, 'GET');
+            const d = r.definition || {};
+            currentId = r.id;
+            datasetSel.value = d.dataset || datasetSel.value;
+            el('rbName').value = r.name || '';
+            el('rbDescription').value = r.description || '';
+            el('rbCountRows').checked = !!d.count_rows;
+            el('rbDistinct').checked = !!d.distinct;
+            el('rbLimit').value = d.limit || 500;
+
+            const sortBy = {};
+            (d.sort || []).forEach(s => { sortBy[s.field] = s.direction; });
+            selected = (d.columns || []).map(c => ({
+                ref: c.field, aggregate: c.aggregate || '',
+                label: c.label || '', sort: sortBy[c.field] || ''
+            }));
+            filters = (d.filters || []).map(f => ({
+                ref: f.field, operator: f.operator || 'eq',
+                value: (f.values || [])[0] || '', value2: (f.values || [])[1] || ''
+            }));
+            renderTree(); renderColumns(); renderFilters();
+            message(`Loaded “${r.name}”.`, 'ok');
+        } catch (e) { message(e.message, 'err'); }
+    }
+
+    // ---------- actions ----------
+    el('rbRun').addEventListener('click', async () => {
+        message('');
+        el('rbRun').disabled = true;
+        el('rbRun').textContent = 'Running…';
+        try {
+            renderResults(await post('/api/report_builder/run', { definition: definition() }));
+        } catch (e) {
+            message(e.message, 'err');
+        } finally {
+            el('rbRun').disabled = false;
+            el('rbRun').textContent = '▶ Run report';
+        }
+    });
+
+    function download(format) {
+        // The definition has to be POSTed, so the file comes back as a blob and
+        // is handed to the browser through a temporary object URL.
+        fetch('/api/report_builder/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ definition: definition(), format })
+        }).then(async res => {
+            if (!res.ok) {
+                let msg = `Export failed (${res.status})`;
+                try { msg = (await res.json()).message || msg; } catch (e) {}
+                throw new Error(msg);
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = (el('rbName').value || 'Custom Report') +
+                         (format === 'csv' ? '.csv' : format === 'pdf' ? '.pdf' : '.xlsx');
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+        }).catch(e => message(e.message, 'err'));
+    }
+
+    el('rbExportXlsx').addEventListener('click', () => download('xlsx'));
+    el('rbExportCsv').addEventListener('click', () => download('csv'));
+    el('rbExportPdf').addEventListener('click', () => download('pdf'));
+
+    el('rbShowSql').addEventListener('click', async () => {
+        const pre = el('rbSql');
+        if (pre.style.display === 'block') { pre.style.display = 'none'; return; }
+        try {
+            const d = await post('/api/report_builder/sql', { definition: definition() });
+            pre.textContent = d.sql;
+            pre.style.display = 'block';
+        } catch (e) { message(e.message, 'err'); }
+    });
+
+    el('rbSave').addEventListener('click', async () => {
+        const name = el('rbName').value.trim();
+        if (!name) { message('Give the report a name before saving.', 'err'); return; }
+        try {
+            const d = await post('/api/report_builder/reports', {
+                id: currentId, name, description: el('rbDescription').value,
+                definition: definition()
+            });
+            currentId = d.id; SAVED = d.saved;
+            renderSaved(); message(`Saved “${name}”.`, 'ok');
+        } catch (e) { message(e.message, 'err'); }
+    });
+
+    el('rbNew').addEventListener('click', () => {
+        currentId = null; selected = []; filters = [];
+        el('rbName').value = ''; el('rbDescription').value = '';
+        el('rbCountRows').checked = false; el('rbDistinct').checked = false;
+        renderTree(); renderColumns(); renderFilters(); message('');
+    });
+
+    el('rbAddFilter').addEventListener('click', () => {
+        const ds = dataset();
+        const first = ds.tables[0].fields[0];
+        filters.push({ ref: first.ref, operator: 'eq', value: '', value2: '' });
+        renderFilters();
+    });
+
+    datasetSel.addEventListener('change', () => {
+        // Columns and filters belong to the old dataset - clear rather than
+        // leave references that will fail validation on the server.
+        selected = []; filters = []; currentId = null;
+        renderTree(); renderColumns(); renderFilters();
+    });
+
+    el('rbFieldSearch').addEventListener('input', renderTree);
+
+    renderTree(); renderColumns(); renderFilters(); renderSaved();
+})();
+</script>
+{% endblock %}

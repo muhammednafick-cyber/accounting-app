@@ -130,8 +130,13 @@ def download_voucher_template(voucher_type):
             "Ledger Name",
             "Amount",
             "Type", # Dr/Cr
-            "Cost Center"
         ]
+        # Receipt, Payment and Contra only move money between accounts, so the
+        # app does not accept a cost centre on them - offering the column would
+        # invite data the import then ignores.
+        from accounting_app.voucher_routes import COST_CENTER_ALLOWED_TYPES
+        if voucher_type in COST_CENTER_ALLOWED_TYPES:
+            headers.append("Cost Center")
 
     # Write headers
     bold = workbook.add_format({'bold': True})
@@ -229,6 +234,13 @@ def download_voucher_template(voucher_type):
                 if col < len(headers):
                     worksheet.write(2, col, data)
 
+    # Dropdowns for every column that must match an existing record. The
+    # sample rows occupy rows 2-3, so validation starts below them.
+    from database import get_current_company_id
+    from .template_lookups import apply_lookups
+    apply_lookups(workbook, worksheet, headers, get_current_company_id(),
+                  first_row=3)
+
     workbook.close()
     output.seek(0)
     print(f"Downloaded template for {voucher_type}")
@@ -242,12 +254,30 @@ def download_voucher_template(voucher_type):
 @import_bp.route("/download_group_template", methods=["GET"])
 @login_required
 def download_group_template():
+    from database import get_current_company_id
+    from .template_lookups import apply_lookups
+
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
     worksheet = workbook.add_worksheet("Groups")
-    headers = ["Group Name", "Nature"]
+
+    required_fmt = workbook.add_format({
+        "bold": True, "bg_color": "#b45309", "font_color": "#FFFFFF",
+        "border": 1, "align": "center",
+    })
+
+    # Master Group is required: a group filed under no master group never
+    # appears under a heading in the Balance Sheet or P&L.
+    headers = ["Group Name", "Nature", "Master Group"]
     for col, header in enumerate(headers):
-        worksheet.write(0, col, header)
+        worksheet.write(0, col, header, required_fmt)
+    worksheet.set_column(0, 0, 30)
+    worksheet.set_column(1, 1, 16)
+    worksheet.set_column(2, 2, 32)
+    worksheet.freeze_panes(1, 0)
+
+    apply_lookups(workbook, worksheet, headers, get_current_company_id())
+
     workbook.close()
     output.seek(0)
     print("Downloaded group template")
@@ -267,6 +297,12 @@ def download_sub_group_template():
     headers = ["Parent Group Name", "Sub Group Name"]
     for col, header in enumerate(headers):
         worksheet.write(0, col, header)
+    worksheet.set_column(0, 1, 28)
+    from database import get_current_company_id
+    from .template_lookups import apply_lookups
+    # "Sub Group Name" is the new name being created here, not an existing one.
+    apply_lookups(workbook, worksheet, headers, get_current_company_id(),
+                  overrides={"Sub Group Name": None})
     workbook.close()
     output.seek(0)
     print("Downloaded sub group template")
@@ -294,6 +330,15 @@ def download_ledger_template():
     ]
     for col, header in enumerate(headers):
         worksheet.write(0, col, header)
+    worksheet.set_column(0, 0, 14)
+    worksheet.set_column(1, 2, 28)
+    worksheet.set_column(3, 6, 20)
+    worksheet.freeze_panes(1, 0)
+    from database import get_current_company_id
+    from .template_lookups import apply_lookups
+    # "Group Name" here means an account group, not a stock group.
+    apply_lookups(workbook, worksheet, headers, get_current_company_id(),
+                  overrides={"Group Name": "group", "Ledger Name": None})
     workbook.close()
     output.seek(0)
     print("Downloaded ledger template")
@@ -431,6 +476,14 @@ def download_inventory_template():
     worksheet.write(len(example_data) + 5, 0, "Selling Price: Optional. If filled, the Selling Price Master is created/updated for the item. Leave blank to skip.", note_fmt)
     worksheet.write(len(example_data) + 6, 0, "Location: Opening stock is saved against the active location (default location if not switched). Re-upload with another active location to add openings there.", note_fmt)
 
+    # "Group Name" is a stock group here, not an account group. The notes sit
+    # in column A only, so the dropdown columns are clear from row 4 down.
+    from database import get_current_company_id
+    from .template_lookups import apply_lookups
+    apply_lookups(workbook, worksheet, headers, get_current_company_id(),
+                  overrides={"Group Name": "stock_group", "Item Name": None},
+                  first_row=4)
+
     workbook.close()
     output.seek(0)
     print("Downloaded FULL inventory template with 10 columns (Purchase Date + Balancing Ledger)")
@@ -457,6 +510,11 @@ def download_credit_terms_template():
     # Example data
     worksheet.write(1, 0, "Customer A")
     worksheet.write(1, 1, 30)
+
+    from database import get_current_company_id
+    from .template_lookups import apply_lookups
+    apply_lookups(workbook, worksheet, headers, get_current_company_id(),
+                  first_row=2)
 
     workbook.close()
     output.seek(0)

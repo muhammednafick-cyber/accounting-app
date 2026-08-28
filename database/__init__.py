@@ -16,6 +16,14 @@ from .recurring_db import *
 from .analysis_db import *
 from .settlement_db import *
 from .unified_db import init_unified_db
+from .app_state_db import init_app_state_tables
+from .report_builder_db import (
+    init_report_builder_tables,
+    list_reports as list_custom_reports,
+    get_report as get_custom_report,
+    save_report as save_custom_report,
+    delete_report as delete_custom_report,
+)
 from .master_db import (
     get_all_companies as master_get_all_companies,
     get_user_companies as master_get_user_companies,
@@ -31,6 +39,10 @@ def initialize_db():
     
     # Initialize Unified Schema
     init_unified_db()
+
+    # Shared runtime state (chat context, export tokens, rate limits, jobs).
+    # These used to be per-process dicts, which only worked on one worker.
+    init_app_state_tables()
     
     # Post-initialization checks or seeding if needed (Global)
     # Most seeding should happen per-company (e.g., default groups/ledgers)
@@ -43,6 +55,7 @@ __all__ = [
     'execute_insert_returning_id',
     'initialize_db',
     'init_unified_db',
+    'init_app_state_tables',
     # Company
     'company_exists',
     'get_company_settings',

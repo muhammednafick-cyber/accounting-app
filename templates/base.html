@@ -147,6 +147,12 @@
                 <ul class="dropdown-menu">
                     {% if can_access('reports.all_reports') %}
                     <li><a href="{{ url_for('report_bp.report_all') }}" style="font-weight:600;">📋 All Reports</a></li>
+                    {% endif %}
+                    {% if can_access('reports.report_builder') %}
+                    <li><a href="{{ url_for('report_builder_bp.report_builder_page') }}" style="font-weight:600;">🛠️ Custom Report Builder</a></li>
+                    {% endif %}
+                    <li><a href="{{ url_for('report_bp.verify_books') }}" style="font-weight:600;">🩺 Verify Books</a></li>
+                    {% if can_access('reports.all_reports') or can_access('reports.report_builder') %}
                     <li><hr style="margin:4px 0;border-color:#e0e7f0;"></li>
                     {% endif %}
 
@@ -256,6 +262,7 @@
                             <li><a href="{{ url_for('report_bp.report_ageing') }}">Ageing Report</a></li>
                             <li><a href="{{ url_for('report_bp.report_inventory_ageing') }}">Inventory Ageing</a></li>
                             <li><a href="{{ url_for('report_bp.report_party_matching') }}">Party Matching</a></li>
+                            <li><a href="{{ url_for('report_bp.report_statement_of_account') }}">Statement of Account</a></li>
                         </ul>
                     </li>
                     {% endif %}
@@ -365,10 +372,16 @@
                         <option value="purchase">Purchase</option>
                         <option value="service_income">Service Income</option>
                     </select>
-                    <label class="global-chat-ai-toggle" title="When OFF, only ERP functions and database queries are used - no data is sent to OpenRouter."
+                    <label class="global-chat-ai-toggle" title="Turn ON for free-form questions, answered by the AI model configured in AI Settings (OpenRouter). Your question and the relevant data are sent to that service. When OFF, only the built-in ERP shortcuts are used."
                            style="display:flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;font-size:0.85em;user-select:none;">
                         <input type="checkbox" id="vaChatAiToggle" style="cursor:pointer;">
                         <span>Enable AI</span>
+                    </label>
+                    <label class="global-chat-ai-toggle" id="vaChatAiOnlyLabel"
+                           title="Send every question straight to the AI model, skipping the built-in reports. Answers are generated rather than computed from a checked report, so figures may be wrong - useful for questions the built-in reports do not cover. Needs 'Enable AI'."
+                           style="display:flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;font-size:0.85em;user-select:none;">
+                        <input type="checkbox" id="vaChatAiOnlyToggle" style="cursor:pointer;">
+                        <span>AI only</span>
                     </label>
                 </div>
                 <button id="globalChatClose" type="button" class="global-chat-close" aria-label="Close assistant"

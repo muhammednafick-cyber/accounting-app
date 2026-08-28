@@ -14,3 +14,4 @@ Pillow
 psycopg2-binary
 python-dotenv
 gunicorn
+reportlab>=4.0
