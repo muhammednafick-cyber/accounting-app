@@ -477,25 +477,52 @@ def reports(user_id, company_id):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        # Invoiced value per month. Voucher amounts are the gross totals, so
-        # this is what was billed rather than revenue net of VAT - said plainly
-        # on screen so the two are never confused.
+        # Built from the goods lines and the VAT lines, not from
+        # vouchers.amount. That column is the voucher's total debit, which on a
+        # Sales voucher also carries the Cost of Goods Sold entry - counting it
+        # as revenue overstates sales by the cost of what was sold, and made
+        # August 2023 read 106.92 against a real 66.50.
         cursor.execute("""
-            SELECT TO_CHAR(date::DATE, 'YYYY-MM') AS period,
-                   COALESCE(SUM(CASE WHEN voucher_type = 'Sales'
-                                     THEN amount END), 0) AS sales,
-                   COALESCE(SUM(CASE WHEN voucher_type = 'Purchase'
-                                     THEN amount END), 0) AS purchases
-            FROM vouchers
-            WHERE company_id = %s AND voucher_type IN ('Sales', 'Purchase')
-              AND date >= %s AND date <= %s
+            SELECT TO_CHAR(v.date::DATE, 'YYYY-MM') AS period,
+                   COALESCE(SUM(CASE WHEN v.voucher_type = 'Sales'
+                                     THEN goods.net END), 0) AS sales_net,
+                   COALESCE(SUM(CASE WHEN v.voucher_type = 'Purchase'
+                                     THEN goods.net END), 0) AS purchase_net,
+                   COALESCE(SUM(CASE WHEN v.voucher_type = 'Sales'
+                                     THEN vat.amount END), 0) AS sales_vat,
+                   COALESCE(SUM(CASE WHEN v.voucher_type = 'Purchase'
+                                     THEN vat.amount END), 0) AS purchase_vat
+            FROM vouchers v
+            LEFT JOIN (
+                SELECT company_id, voucher_number, SUM(amount) AS net
+                FROM item_entries GROUP BY company_id, voucher_number
+            ) goods ON goods.company_id = v.company_id
+                   AND goods.voucher_number = v.voucher_number
+            LEFT JOIN (
+                SELECT company_id, voucher_number, SUM(amount) AS amount
+                FROM ledger_entries
+                WHERE ledger_name IN ('Output VAT 5%%', 'Input VAT 5%%')
+                GROUP BY company_id, voucher_number
+            ) vat ON vat.company_id = v.company_id
+                 AND vat.voucher_number = v.voucher_number
+            WHERE v.company_id = %s AND v.voucher_type IN ('Sales', 'Purchase')
+              AND v.date >= %s AND v.date <= %s
             GROUP BY period
             ORDER BY period
         """, (company_id, start, end))
-        monthly = [{"period": r[0],
-                    "sales": round(float(r[1] or 0), 2),
-                    "purchases": round(float(r[2] or 0), 2)}
-                   for r in cursor.fetchall()]
+        monthly = []
+        for r in cursor.fetchall():
+            sales_net, purchase_net = float(r[1] or 0), float(r[2] or 0)
+            sales_vat, purchase_vat = float(r[3] or 0), float(r[4] or 0)
+            monthly.append({
+                "period": r[0],
+                # Net of VAT, so these tie back to the income and expense
+                # figures on the same screen.
+                "sales": round(sales_net, 2),
+                "purchases": round(purchase_net, 2),
+                "sales_gross": round(sales_net + sales_vat, 2),
+                "purchases_gross": round(purchase_net + purchase_vat, 2),
+            })
     finally:
         conn.close()
 
@@ -522,6 +549,8 @@ def reports(user_id, company_id):
         "monthly_totals": {
             "sales": round(sum(m["sales"] for m in monthly), 2),
             "purchases": round(sum(m["purchases"] for m in monthly), 2),
+            "sales_gross": round(sum(m["sales_gross"] for m in monthly), 2),
+            "purchases_gross": round(sum(m["purchases_gross"] for m in monthly), 2),
         },
         "income_by_group": by_group((statement or {}).get("income")),
         "expense_by_group": by_group((statement or {}).get("expenses")),

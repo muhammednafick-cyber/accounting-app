@@ -466,16 +466,22 @@
                     + '<div style="margin-top:12px">'
                     + d.monthly.map(function (m) {
                         return '<div class="row"><span class="name">'
-                            + escapeHtml(m.period) + '</span><span class="amount">'
+                            + escapeHtml(m.period)
+                            + '<span class="sub">incl. VAT '
+                            + exact(m.sales_gross) + ' / '
+                            + exact(m.purchases_gross) + '</span></span>'
+                            + '<span class="amount">'
                             + exact(m.sales) + ' / ' + exact(m.purchases)
                             + '</span></div>';
                     }).join('')
-                    + '<div class="row total"><span class="name">Total invoiced</span>'
+                    + '<div class="row total"><span class="name">Total</span>'
                     + '<span class="amount">' + exact(d.monthly_totals.sales)
                     + ' / ' + exact(d.monthly_totals.purchases) + '</span></div>'
                     + '</div>'
                     + '<div class="muted tiny" style="margin-top:8px">'
-                    + 'Sales / purchases, as invoiced (including VAT).</div>';
+                    + 'Sales / purchases, net of VAT - the same basis as the '
+                    + 'income and expense figures below. Each row also shows '
+                    + 'the VAT-inclusive invoiced value.</div>';
             }
             html += '</div>';
 
