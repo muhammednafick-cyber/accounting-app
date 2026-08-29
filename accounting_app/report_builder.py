@@ -726,6 +726,8 @@ def run_report(definition, company_id):
     """Compile, execute and return {columns, rows, sql, truncated}."""
     from database.config import get_connection
 
+    from accounting_app.models import format_display_date
+
     sql, params, headers = compile_report(definition, company_id)
     limit = params[-1]
 
@@ -737,9 +739,15 @@ def run_report(definition, company_id):
         rows = []
         for r in raw:
             if hasattr(r, "values") and not isinstance(r, (list, tuple)):
-                rows.append(list(r.values()))
+                row = list(r.values())
             else:
-                rows.append(list(r))
+                row = list(r)
+            # DD-MM-YYYY on the way out: the screen, the downloads and the
+            # chat exporter all read these same rows. Applied to every value
+            # rather than only the columns typed "date", so timestamps like
+            # "Entered On" read the same way; anything that is not a whole
+            # date is returned untouched.
+            rows.append([format_display_date(v) for v in row])
     finally:
         try:
             conn.close()

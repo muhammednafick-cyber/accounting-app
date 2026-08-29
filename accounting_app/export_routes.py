@@ -633,9 +633,10 @@ def export_statement_of_account():
     columns = ["Date", "Invoice / Voucher", "Type", "Reference", "Due Date",
                "Days Overdue", "Original Amount", "Matched Amount",
                "Remaining Amount", "Status"]
-    rows = [[r["date"], r["voucher_number"], r["voucher_type"], r["reference"],
-             r["due_date"], r["days_overdue"], r["original_amount"],
-             r["matched_amount"], r["remaining_amount"], r["status"]]
+    rows = [[format_date(r["date"]), r["voucher_number"], r["voucher_type"],
+             r["reference"], format_date(r["due_date"]), r["days_overdue"],
+             r["original_amount"], r["matched_amount"], r["remaining_amount"],
+             r["status"]]
             for r in statement["rows"]]
     frame = pd.DataFrame(rows, columns=columns)
 
@@ -644,7 +645,7 @@ def export_statement_of_account():
         ["Party", statement["ledger_name"]],
         ["Type", statement["party_kind"]],
         ["Group", statement["group_name"]],
-        ["As of", statement["as_of_date"]],
+        ["As of", format_date(statement["as_of_date"])],
         ["Outstanding invoices", len(statement["rows"])],
         ["Original invoiced", totals["original"]],
         ["Matched / settled", totals["matched"]],
@@ -662,7 +663,7 @@ def export_statement_of_account():
         frame.to_excel(writer, index=False, sheet_name="Outstanding Invoices")
         if statement["unallocated"]:
             pd.DataFrame(
-                [[u["date"], u["voucher_number"], u["voucher_type"],
+                [[format_date(u["date"]), u["voucher_number"], u["voucher_type"],
                   u["description"], u["amount"]] for u in statement["unallocated"]],
                 columns=["Date", "Voucher", "Type", "Description",
                          "Unmatched Amount"]

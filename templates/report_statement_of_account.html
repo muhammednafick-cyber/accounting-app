@@ -161,7 +161,7 @@
         </div>
     </div>
     <div style="margin-left:auto;" class="meta">
-        As of <b>{{ statement.as_of_date }}</b>
+        As of <b>{{ statement.as_of_date | format_date }}</b>
         {% if statement.phone %}<br>{{ statement.phone }}{% endif %}
     </div>
 </div>
@@ -232,11 +232,11 @@
             {% for r in statement.rows %}
             {# Credits are shaded so the listing reads as one running account #}
             <tr class="{{ '' if r.is_invoice else 'credit-row' }}">
-                <td>{{ r.date }}</td>
+                <td>{{ r.date | format_date }}</td>
                 <td>{{ r.voucher_number }}</td>
                 <td>{{ r.voucher_type }}</td>
                 <td>{{ r.reference }}</td>
-                <td>{{ r.due_date }}</td>
+                <td>{{ r.due_date | format_date }}</td>
                 <td class="num {% if r.days_overdue > 0 %}overdue{% endif %}">
                     {{ r.days_overdue if r.days_overdue else '' }}
                 </td>

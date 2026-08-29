@@ -85,19 +85,25 @@ def drcr(value):
 
 
 def table(title, columns, rows, summary=None, totals=None, note=None):
-    rows = [list(r) for r in (rows or [])]
+    # Every chatbot answer - and every Excel, CSV or PDF exported from one -
+    # is built here, so dates are turned into DD-MM-YYYY once, at the point
+    # they stop being data and start being something a person reads.
+    from accounting_app.models import (format_display_date,
+                                        format_display_dates_in_text)
+    rows = [[format_display_date(v) for v in r] for r in (rows or [])]
     return {"title": title, "columns": list(columns or []), "rows": rows,
-            "summary": summary, "totals": totals or {}, "note": note}
+            "summary": format_display_dates_in_text(summary),
+            "totals": totals or {},
+            "note": format_display_dates_in_text(note)}
 
 
 def scalar(title, summary, columns=None, rows=None, totals=None, note=None):
-    return {"title": title, "columns": list(columns or []), "rows": list(rows or []),
-            "summary": summary, "totals": totals or {}, "note": note}
+    # Same envelope as table(), so a one-number answer reads dates the same way
+    return table(title, columns or [], rows or [], summary, totals, note)
 
 
 def empty(title, message, note=None):
-    return {"title": title, "columns": [], "rows": [], "summary": message,
-            "totals": {}, "note": note}
+    return table(title, [], [], message, None, note)
 
 
 def dicts_to_table(records, title, columns=None, summary=None, totals=None,

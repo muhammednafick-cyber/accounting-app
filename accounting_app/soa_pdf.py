@@ -7,6 +7,7 @@ but not yet matched.
 """
 import io
 
+from accounting_app.models import format_date
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -116,7 +117,7 @@ def build_statement_pdf(statement, company=None):
     # ---- letterhead + heading -------------------------------------------
     heading = [
         Paragraph("STATEMENT OF ACCOUNT", st["title"]),
-        Paragraph(f"As at <b>{statement['as_of_date']}</b>", st["small"]),
+        Paragraph(f"As at <b>{format_date(statement['as_of_date'])}</b>", st["small"]),
     ]
     header = Table([[_company_block(company, st), heading]],
                    colWidths=[width * 0.55, width * 0.45])
@@ -180,10 +181,10 @@ def build_statement_pdf(statement, company=None):
     for row in statement["rows"]:
         overdue = row["days_overdue"]
         data.append([
-            row["date"],
+            format_date(row["date"]),
             row["voucher_number"],
             row["voucher_type"],
-            row["due_date"] or "",
+            format_date(row["due_date"]) or "",
             str(overdue) if overdue else "",
             _money(row["original_amount"]),
             _money(row["matched_amount"]) if row["matched_amount"] else "",
@@ -277,7 +278,8 @@ def build_statement_pdf(statement, company=None):
         canvas.setFillColor(MUTED)
         canvas.drawString(15 * mm, 10 * mm,
                           f"{(company or {}).get('company_name') or ''}"
-                          f"   |   Statement as at {statement['as_of_date']}")
+                          f"   |   Statement as at "
+                          f"{format_date(statement['as_of_date'])}")
         canvas.drawRightString(A4[0] - 15 * mm, 10 * mm, f"Page {document.page}")
         canvas.restoreState()
 

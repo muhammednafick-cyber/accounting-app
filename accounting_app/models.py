@@ -1,4 +1,5 @@
-from datetime import datetime
+import re
+from datetime import date, datetime
 from functools import wraps
 
 from flask import redirect, url_for
@@ -102,6 +103,59 @@ def format_date(date_str):
         except ValueError:
             return date_str
     return date_str
+
+
+# Dates are shown to users as DD-MM-YYYY everywhere - on screen, in Excel and
+# CSV downloads, and in chatbot answers. The database stores them as
+# YYYY-MM-DD (some columns as text, some as real dates), so this is the one
+# place that turns a stored value into a displayed one.
+_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_ISO_DATETIME = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}:\d{2})(:\d{2})?")
+
+
+def format_display_date(value):
+    """A stored date rendered as DD-MM-YYYY. Anything else is returned as-is.
+
+    Accepts real date/datetime objects and the ISO strings this schema keeps in
+    its text date columns. A value that is not a whole date is left untouched,
+    so narration and codes that merely contain digits are never rewritten.
+    """
+    if value is None or value == "":
+        return value
+
+    if isinstance(value, datetime):
+        return value.strftime("%d-%m-%Y")
+    if isinstance(value, date):
+        return value.strftime("%d-%m-%Y")
+
+    if not isinstance(value, str):
+        return value
+
+    text = value.strip()
+    match = _ISO_DATE.match(text)
+    if match:
+        return f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
+
+    # Timestamps keep their time, which is the useful half of "Entered On".
+    match = _ISO_DATETIME.match(text)
+    if match:
+        return (f"{match.group(3)}-{match.group(2)}-{match.group(1)} "
+                f"{match.group(4)}")
+    return value
+
+
+def format_display_dates_in_text(text):
+    """Rewrite whole ISO dates inside a sentence as DD-MM-YYYY.
+
+    Chatbot answers put dates into prose ("Sales from 2024-01-01 to
+    2024-03-31"), where a per-value formatter cannot reach them. Only complete
+    YYYY-MM-DD runs are touched, so voucher numbers, codes and amounts are
+    left exactly as they are.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    return re.sub(r"(?<![\d-])(\d{4})-(\d{2})-(\d{2})(?![\d-])",
+                  lambda m: f"{m.group(3)}-{m.group(2)}-{m.group(1)}", text)
 
 
 def parse_date(date_str):
