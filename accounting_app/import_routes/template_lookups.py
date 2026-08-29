@@ -50,6 +50,9 @@ HEADER_LOOKUPS = {
     "purchase ledger": "ledger",
     "balancing ledger": "ledger",
     "item name": "item",
+    # Purchase templates split the item column in two: the system name must
+    # match an existing item, the extracted (vendor's) name is free text.
+    "system item name": "item",
     "parent group name": "group",
     "sub group name": "sub_group",
     "unit": "unit",

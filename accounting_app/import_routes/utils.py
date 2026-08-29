@@ -1,6 +1,57 @@
 from accounting_app.models import validate_voucher_ledger_groups
 
 
+def multiple_locations_enabled(company_id=None):
+    """Does this company keep stock in more than one location?
+
+    Decides whether the Excel templates offer a Location column and whether the
+    import insists on one - manual voucher entry stamps a location whenever
+    this is on, so the import has to match.
+    """
+    try:
+        from database import get_company_settings
+        company = get_company_settings(company_id=company_id)
+        return bool(company and company.get("multiple_locations_applicable"))
+    except Exception as exc:
+        print(f"[import] could not read location setting: {exc}")
+        return False
+
+
+def default_location_name(company_id=None):
+    """This company's default location name, or None."""
+    try:
+        from database import get_default_location
+        location = get_default_location(company_id=company_id)
+        return location["location_name"] if location else None
+    except Exception as exc:
+        print(f"[import] could not read default location: {exc}")
+        return None
+
+
+def active_location_name(company_id=None):
+    """Location that imported vouchers are posted to.
+
+    The session's active location (the main-menu switcher), falling back to the
+    company default. This is exactly what manual voucher entry uses, and the
+    import deliberately offers no way to override it.
+    """
+    try:
+        from database import get_company_settings, get_locations, get_default_location
+        company = get_company_settings(company_id=company_id)
+        if not (company and company.get("multiple_locations_applicable")):
+            return "Main Location"
+        from flask import session
+        valid_names = {l["location_name"] for l in get_locations(company_id=company_id)}
+        active = session.get("active_location")
+        if active in valid_names:
+            return active
+        default = get_default_location(company_id=company_id)
+        return default["location_name"] if default else "Main Location"
+    except Exception as exc:
+        print(f"[import] could not resolve active location: {exc}")
+        return "Main Location"
+
+
 def validate_import_data(import_type, data, company_id=None):
     print(f"Validating import_type={import_type}, data={data}, type={type(data)}, company_id={company_id}")
 
@@ -235,6 +286,27 @@ def validate_single_voucher(import_type, data, company_id=None):
         msg = f"Invalid date format '{date_val}'. Expected YYYY-MM-DD or DD-MM-YYYY."
         print(msg)
         return False, msg
+
+    # An order is not a voucher: it has no ledger side, no debit/credit and no
+    # cost centre, so the voucher rules below do not apply to it. What it does
+    # need is a party and at least one usable item line.
+    from database.orders_db import ORDER_TYPES
+    if import_type in ORDER_TYPES:
+        if not str(data.get("party_ledger_name") or data.get("party_ledger") or "").strip():
+            return False, "Party Ledger Name is required"
+        if not has_items:
+            return False, "An order needs at least one item line"
+        for entry in data.get("item_entries", []):
+            if not str(entry.get("item_name") or "").strip():
+                return False, f"Item Name is required on every line: {entry}"
+            try:
+                if float(entry.get("quantity") or 0) <= 0:
+                    return False, (f"Quantity must be greater than 0 for "
+                                   f"'{entry.get('item_name')}'")
+            except (TypeError, ValueError):
+                return False, (f"Quantity must be a number for "
+                               f"'{entry.get('item_name')}'")
+        return True, "Success"
 
     # Cost Center Mandatory Check
     from database import get_company_settings

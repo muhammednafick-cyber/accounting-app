@@ -717,14 +717,21 @@ def _no_items_message(used_text, model):
         "Settings (for example a GPT-4o, Claude or Gemini model), or upload a "
         "PDF that contains real text rather than a scan.")
 
-def generate_purchase_excel(data, company_id=None):
+def generate_purchase_excel(data, company_id=None, location=None):
     """
     Generate Excel file matching the Purchase Import Template exactly.
-    Columns: Voucher Group ID, Date, Narration, Party Ledger Name, Purchase Ledger, 
-             Item Name, Quantity, Rate, VAT %, Discount Amount, Location, 
-             Cost Center, Reference Number, Invoice Date, Weight (KG)
-    Applies Item Mapping logic.
+    Columns: Voucher Group ID, Date, Narration, Party Ledger Name, Purchase Ledger,
+             Extracted Item Name, System Item Name, Quantity, Rate, VAT %,
+             Discount Amount, Location, Cost Center, Reference Number,
+             Invoice Date, Weight (KG)
+
+    "Extracted Item Name" is what the invoice calls the item. "System Item
+    Name" is filled from this vendor's saved item mapping where one exists;
+    otherwise it is left blank for the user to pick, and the import records the
+    pairing for next time.
     """
+    from accounting_app.import_routes.utils import multiple_locations_enabled
+
     items = data.get('items', [])
     vendor_name = data.get('vendor_name', '')
     invoice_no = data.get('invoice_number', '')
@@ -733,10 +740,17 @@ def generate_purchase_excel(data, company_id=None):
     # Template columns in exact order
     columns = [
         "Voucher Group ID", "Date", "Narration", "Party Ledger Name", "Purchase Ledger",
-        "Item Name", "Quantity", "Rate", "VAT %", "Discount Amount", "Location",
-        "Cost Center", "Reference Number", "Invoice Date", "Weight (KG)"
+        "Extracted Item Name", "System Item Name", "Quantity", "Rate", "VAT %",
+        "Discount Amount", "Location", "Cost Center", "Reference Number",
+        "Invoice Date", "Weight (KG)"
     ]
     
+    # The import insists on a location once the company runs more than one, and
+    # accepts only the location active when the sheet is imported - so it is
+    # filled in here rather than left for the user to guess at.
+    if not multiple_locations_enabled(company_id):
+        location = ""
+
     rows = []
     for item in items:
         v_item_name = item.get('description', '')
@@ -744,7 +758,6 @@ def generate_purchase_excel(data, company_id=None):
         # Mapping Logic - try to map vendor item to app item
         app_item_name = get_item_mapping(vendor_name, v_item_name,
                                          company_id=company_id)
-        final_item_name = app_item_name if app_item_name else v_item_name
         
         # Get VAT % directly from AI response
         vat_percent = item.get('vat_percent', 0) or 0
@@ -757,12 +770,15 @@ def generate_purchase_excel(data, company_id=None):
             "Narration": "",  # Optional
             "Party Ledger Name": vendor_name,
             "Purchase Ledger": "Retail Purchase",  # Default purchase ledger
-            "Item Name": final_item_name,
+            "Extracted Item Name": v_item_name,
+            # Blank when this vendor's item has not been mapped yet - the user
+            # picks it, and uploading the voucher saves the pairing.
+            "System Item Name": app_item_name or "",
             "Quantity": quantity,
             "Rate": unit_rate,
             "VAT %": vat_percent,
             "Discount Amount": "",  # Leave blank if not available
-            "Location": "",  # Leave blank - system will use default
+            "Location": location or "",
             "Cost Center": "",  # Leave blank
             "Reference Number": invoice_no,
             "Invoice Date": invoice_date,
@@ -784,6 +800,14 @@ def generate_purchase_excel(data, company_id=None):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Purchase Import')
+        # Same pick-lists as the downloaded template, so "System Item Name"
+        # can only be filled with an item the import will accept.
+        try:
+            from accounting_app.import_routes.template_lookups import apply_lookups
+            apply_lookups(writer.book, writer.sheets['Purchase Import'],
+                          columns, company_id)
+        except Exception as exc:
+            print(f"[invoice] could not attach template dropdowns: {exc}")
         
     output.seek(0)
     return output

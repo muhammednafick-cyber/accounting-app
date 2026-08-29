@@ -405,6 +405,7 @@ def get_inventory_details(company_id=None):
                 i.unit_price,
                 i.stock_quantity,
                 i.vat_rate,
+                COALESCE(i.barcode, '') AS barcode,
                 i.opening_price,
                 i.opening_location_name,
                 COALESCE(i.is_active, 1) AS is_active
@@ -478,5 +479,99 @@ def delete_inventory(item_name, company_id=None):
         print(f"delete_inventory: {item_name} (Company: {company_id})")
     except Exception as e:
         raise Exception(f"Error deleting inventory item: {str(e)}")
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------- POS lookup
+
+def set_item_barcode(item_code, barcode, company_id=None):
+    """Attach (or clear) the barcode a scanner will read for this item."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        raise Exception("Company ID is required")
+    barcode = (barcode or '').strip() or None
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if barcode:
+            cursor.execute(
+                "SELECT item_code FROM inventory WHERE company_id = %s "
+                "AND barcode = %s AND item_code <> %s",
+                (company_id, barcode, item_code))
+            clash = cursor.fetchone()
+            if clash:
+                other = clash['item_code'] if hasattr(clash, 'keys') else clash[0]
+                raise Exception(f"Barcode {barcode} is already on item {other}")
+        cursor.execute(
+            "UPDATE inventory SET barcode = %s WHERE company_id = %s AND item_code = %s",
+            (barcode, company_id, item_code))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def find_item_by_scan(code, company_id=None):
+    """The item a scanner (or a typed code) means, or None.
+
+    Tried in order: the barcode field, the item code, then the code trailing
+    the item name after the last ' - '. That last one is why the till works
+    before a single barcode has been filled in - this catalogue already keeps
+    the barcode on the end of the item name.
+    """
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return None
+    code = (code or '').strip()
+    if not code:
+        return None
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        select = ("SELECT item_code, name, unit_price, vat_rate, stock_quantity, "
+                  "COALESCE(barcode,'') AS barcode FROM inventory "
+                  "WHERE company_id = %s AND COALESCE(is_active, 1) = 1 AND ")
+        for where, params in (
+            ("barcode = %s", (company_id, code)),
+            ("UPPER(item_code) = UPPER(%s)", (company_id, code)),
+            # trailing token of the name, e.g. "... - 6281022118070".
+            # Reversing is how Postgres gets at the *last* ' - ' segment.
+            ("UPPER(TRIM(REVERSE(SPLIT_PART(REVERSE(name), ' - ', 1)))) "
+             "= UPPER(%s)", (company_id, code)),
+        ):
+            cursor.execute(select + where + " LIMIT 1", params)
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+    finally:
+        conn.close()
+
+
+def search_items_for_pos(term, company_id=None, limit=20):
+    """Items whose name, code or barcode contains `term` - the till's search."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id or not (term or '').strip():
+        return []
+    like = f"%{term.strip()}%"
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT item_code, name, unit_price, vat_rate, stock_quantity,
+                   COALESCE(barcode, '') AS barcode
+            FROM inventory
+            WHERE company_id = %s AND COALESCE(is_active, 1) = 1
+              AND (name ILIKE %s OR item_code ILIKE %s OR COALESCE(barcode,'') ILIKE %s)
+            ORDER BY name
+            LIMIT %s
+        """, (company_id, like, like, like, limit))
+        return [dict(r) for r in cursor.fetchall()]
     finally:
         conn.close()

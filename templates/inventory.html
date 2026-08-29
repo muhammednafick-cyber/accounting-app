@@ -130,6 +130,11 @@
             <label>Unit Code:</label>
             <input type="text" name="unit_code" value="NOS">
         </div>
+        <div class="form-row">
+            <label>Barcode:</label>
+            <input type="text" name="barcode" placeholder="Scan or type - optional"
+                title="What the POS scanner reads for this item">
+        </div>
 
         <div class="form-row">
             <label>Selling Price:</label>
@@ -184,6 +189,7 @@
             <thead>
                 <tr>
                     <th>Item Code</th>
+                    <th>Barcode</th>
                     <th>Item Name</th>
                     <th>Group</th>
                     <th>Unit</th>
@@ -195,8 +201,9 @@
             </thead>
             <tbody>
                 {% for it in items %}
-                <tr data-search="{{ (it.item_code ~ ' ' ~ it.name) | lower }}" {% if not it.is_active %}style="opacity:.55;"{% endif %}>
+                <tr data-search="{{ (it.item_code ~ ' ' ~ it.name ~ ' ' ~ (it.barcode or '')) | lower }}" {% if not it.is_active %}style="opacity:.55;"{% endif %}>
                     <td>{{ it.item_code }}</td>
+                    <td>{{ it.barcode or '' }}</td>
                     <td>{{ it.name }}</td>
                     <td>{{ it.group_name or '' }}</td>
                     <td>{{ it.unit_code or '' }}</td>
@@ -205,7 +212,7 @@
                     <td>{% if it.is_active %}<span style="color:green;">Active</span>{% else %}<span style="color:#c0392b;">Blocked</span>{% endif %}</td>
                     <td>
                         <button type="button" class="btn" style="padding:2px 10px;"
-                            onclick="editItem('{{ it.item_code|e }}', '{{ it.name|e }}', '{{ (it.group_name or '')|e }}', '{{ (it.unit_code or '')|e }}', '{{ it.vat_rate or 0 }}')">Edit</button>
+                            onclick="editItem('{{ it.item_code|e }}', '{{ it.name|e }}', '{{ (it.group_name or '')|e }}', '{{ (it.unit_code or '')|e }}', '{{ it.vat_rate or 0 }}', '{{ (it.barcode or '')|e }}')">Edit</button>
                         <button type="button" class="btn" style="padding:2px 10px; background:{% if it.is_active %}#c0392b{% else %}#27ae60{% endif %};"
                             onclick="toggleActive('{{ it.item_code|e }}', {{ 0 if it.is_active else 1 }})">{% if it.is_active %}Block{% else %}Unblock{% endif %}</button>
                     </td>
@@ -423,7 +430,7 @@
         });
     }
 
-    function editItem(code, name, group, unit, vat) {
+    function editItem(code, name, group, unit, vat, barcode) {
         const formEl = document.getElementById('addInventoryForm');
         formEl.querySelector('input[name="item_code"]').value = code;
         formEl.querySelector('input[name="item_code"]').readOnly = true;
@@ -432,6 +439,7 @@
         formEl.querySelector('input[name="unit_code"]').value = unit;
         const vatEl = formEl.querySelector('input[name="vat_rate"]');
         if (vatEl) vatEl.value = vat;
+        formEl.querySelector('input[name="barcode"]').value = barcode || '';
         document.getElementById('addItemBtn').textContent = 'Update Item';
         document.getElementById('cancelEditBtn').style.display = '';
         formEl.scrollIntoView({ behavior: 'smooth' });

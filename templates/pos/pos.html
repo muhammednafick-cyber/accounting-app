@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}Point of Sale{% endblock %}
+
+{% block extra_head %}
+<style>
+    .pos-wrap { display: grid; grid-template-columns: 1fr 360px; gap: 16px; }
+    @media (max-width: 991px) { .pos-wrap { grid-template-columns: 1fr; } }
+
+    /* The scan box is the whole point of the screen, so it is hard to miss
+       and keeps focus unless the operator deliberately clicks away. */
+    #scanInput {
+        font-size: 1.25rem; padding: 14px 16px; border: 2px solid #2563ab;
+        border-radius: 8px;
+    }
+    #scanInput:focus { box-shadow: 0 0 0 .25rem rgba(37,99,171,.25); outline: 0; }
+
+    .cart-table td, .cart-table th { vertical-align: middle; }
+    .cart-table input { width: 80px; }
+    .totals { font-size: 1.05rem; }
+    .totals .grand { font-size: 1.6rem; font-weight: 700; color: #1a3c6e; }
+    .scan-feedback { min-height: 24px; font-weight: 600; }
+    .suggestion { cursor: pointer; }
+    .suggestion:hover { background: #eef4fb; }
+    .pay-btn { padding: 14px; font-size: 1.05rem; font-weight: 600; }
+    .empty-cart td { color: #8a97a5; padding: 34px 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="mb-0">Point of Sale</h2>
+        <div class="text-muted small">
+            Scan a barcode, or type a name and press Enter. F2 jumps back to the
+            scan box.
+        </div>
+    </div>
+
+    <div class="pos-wrap">
+        <!-- Left: scanning and the cart -->
+        <div>
+            <input type="text" id="scanInput" class="form-control mb-1"
+                   placeholder="Scan barcode or type item name..." autocomplete="off">
+            <div id="scanFeedback" class="scan-feedback small mb-2"></div>
+
+            <div id="suggestions" class="list-group mb-2" style="display:none;"></div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-sm cart-table mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Item</th>
+                                <th style="width:110px" class="text-end">Qty</th>
+                                <th style="width:120px" class="text-end">Rate</th>
+                                {% if vat_applicable %}<th style="width:90px" class="text-end">VAT %</th>{% endif %}
+                                <th style="width:130px" class="text-end">Amount</th>
+                                <th style="width:50px"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="cartBody">
+                            <tr class="empty-cart"><td colspan="6" class="text-center">
+                                Nothing scanned yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: who is paying, how, and the total -->
+        <div>
+            <div class="card mb-2">
+                <div class="card-body py-2">
+                    <label class="form-label small mb-1" for="customer">
+                        Customer <span class="text-muted">(optional)</span></label>
+                    <select id="customer" class="form-select form-select-sm mb-1">
+                        <option value="" selected>Walk-in - no customer</option>
+                        {% for c in customers %}
+                        <option value="{{ c.ledger_name }}">{{ c.ledger_name }}</option>
+                        {% endfor %}
+                    </select>
+                    <div id="customerNote" class="form-text mb-2">
+                        Cash and card sales post straight to the till ledger.
+                    </div>
+
+                    <label class="form-label small mb-1" for="salesLedger">Sales account</label>
+                    <select id="salesLedger" class="form-select form-select-sm">
+                        {% for l in sales_ledgers %}
+                        <option value="{{ l.ledger_name }}"
+                            {% if l.ledger_name == default_sales_ledger %}selected{% endif %}>
+                            {{ l.ledger_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="card mb-2">
+                <div class="card-body py-2">
+                    <div class="btn-group w-100 mb-2" role="group">
+                        <input type="radio" class="btn-check" name="mode" id="modeCash" value="cash" checked>
+                        <label class="btn btn-outline-primary btn-sm" for="modeCash">Cash</label>
+                        <input type="radio" class="btn-check" name="mode" id="modeCard" value="card">
+                        <label class="btn btn-outline-primary btn-sm" for="modeCard">Card</label>
+                        <input type="radio" class="btn-check" name="mode" id="modeCredit" value="credit">
+                        <label class="btn btn-outline-primary btn-sm" for="modeCredit">Credit</label>
+                    </div>
+
+                    <div id="paymentLedgerRow">
+                        <label class="form-label small mb-1" for="paymentLedger">Received into</label>
+                        <select id="paymentLedger" class="form-select form-select-sm"></select>
+                    </div>
+                    <div id="creditNote" class="form-text" style="display:none;">
+                        Left on the customer's account - no receipt is posted.
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-2">
+                <div class="card-body py-2 totals">
+                    <div class="d-flex justify-content-between"><span>Net</span>
+                        <span id="netTotal">0.00</span></div>
+                    <div class="d-flex justify-content-between"><span>VAT</span>
+                        <span id="vatTotal">0.00</span></div>
+                    <hr class="my-2">
+                    <div class="d-flex justify-content-between grand"><span>Total</span>
+                        <span id="grandTotal">0.00</span></div>
+                </div>
+            </div>
+
+            <div class="d-grid gap-2">
+                <button class="btn btn-success pay-btn" id="payBtn" onclick="completeSale()">
+                    Complete sale &amp; print</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="completeSale(false)">
+                    Complete without printing</button>
+                <button class="btn btn-outline-danger btn-sm" onclick="clearCart()">Clear sale</button>
+            </div>
+
+            <div id="saleResult" class="mt-2 small"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const vatApplicable = {{ 'true' if vat_applicable else 'false' }};
+    const cashLedgers = {{ cash_ledgers | map(attribute='ledger_name') | list | tojson }};
+    const bankLedgers = {{ bank_ledgers | map(attribute='ledger_name') | list | tojson }};
+    let cart = [];
+    let lastSale = null;
+
+    // ---- payment mode ----------------------------------------------------
+    function paymentLedgersFor(mode) {
+        return mode === 'card' ? bankLedgers : cashLedgers;
+    }
+
+    function setCustomerNote(mode) {
+        const note = document.getElementById('customerNote');
+        const named = !!document.getElementById('customer').value;
+        if (mode === 'credit') {
+            note.textContent = 'Required for a credit sale - it stays on their account.';
+            note.className = 'form-text mb-2 ' + (named ? '' : 'text-danger');
+        } else if (named) {
+            note.textContent = 'Posted to their account and settled by a receipt.';
+            note.className = 'form-text mb-2';
+        } else {
+            note.textContent = 'Cash and card sales post straight to the till ledger.';
+            note.className = 'form-text mb-2';
+        }
+    }
+    document.getElementById('customer').addEventListener('change', () =>
+        setCustomerNote(document.querySelector('input[name="mode"]:checked').value));
+
+    function onModeChange() {
+        const mode = document.querySelector('input[name="mode"]:checked').value;
+        const row = document.getElementById('paymentLedgerRow');
+        const note = document.getElementById('creditNote');
+        if (mode === 'credit') {
+            row.style.display = 'none';
+            note.style.display = '';
+            setCustomerNote(mode);
+            return;
+        }
+        row.style.display = '';
+        note.style.display = 'none';
+        setCustomerNote(mode);
+        const select = document.getElementById('paymentLedger');
+        const options = paymentLedgersFor(mode);
+        select.innerHTML = options.map(n => `<option value="${n}">${n}</option>`).join('')
+            || '<option value="">No ledger of this kind exists</option>';
+    }
+    document.querySelectorAll('input[name="mode"]').forEach(
+        r => r.addEventListener('change', onModeChange));
+
+    // ---- the cart --------------------------------------------------------
+    function addItem(item) {
+        const existing = cart.find(l => l.item_name === item.name);
+        if (existing) {
+            existing.quantity += 1;              // scanning twice means two of them
+        } else {
+            cart.push({
+                item_name: item.name,
+                item_code: item.item_code,
+                quantity: 1,
+                unit_price: Number(item.unit_price) || 0,
+                vat_percent: vatApplicable ? (Number(item.vat_rate) || 0) : 0,
+                stock: Number(item.stock_quantity) || 0,
+            });
+        }
+        renderCart();
+        feedback(`${item.name}`, true);
+    }
+
+    function renderCart() {
+        const body = document.getElementById('cartBody');
+        if (!cart.length) {
+            body.innerHTML = `<tr class="empty-cart"><td colspan="6" class="text-center">
+                Nothing scanned yet.</td></tr>`;
+        } else {
+            body.innerHTML = cart.map((line, i) => {
+                const amount = line.quantity * line.unit_price;
+                const low = line.quantity > line.stock;
+                return `<tr>
+                    <td>${line.item_name}
+                        ${low ? `<div class="small text-danger">Only ${line.stock} in stock</div>` : ''}</td>
+                    <td class="text-end"><input type="number" class="form-control form-control-sm text-end"
+                        value="${line.quantity}" min="0.01" step="0.01"
+                        onchange="updateLine(${i}, 'quantity', this.value)"></td>
+                    <td class="text-end"><input type="number" class="form-control form-control-sm text-end"
+                        value="${line.unit_price}" min="0" step="0.01"
+                        onchange="updateLine(${i}, 'unit_price', this.value)"></td>
+                    ${vatApplicable ? `<td class="text-end"><input type="number"
+                        class="form-control form-control-sm text-end" value="${line.vat_percent}"
+                        min="0" max="100" step="0.01"
+                        onchange="updateLine(${i}, 'vat_percent', this.value)"></td>` : ''}
+                    <td class="text-end">${amount.toFixed(2)}</td>
+                    <td class="text-end"><button class="btn btn-sm btn-outline-danger"
+                        onclick="removeLine(${i})">&times;</button></td>
+                </tr>`;
+            }).join('');
+        }
+        renderTotals();
+    }
+
+    function renderTotals() {
+        let net = 0, vat = 0;
+        cart.forEach(l => {
+            const amount = l.quantity * l.unit_price;
+            net += amount;
+            vat += amount * (l.vat_percent || 0) / 100;
+        });
+        document.getElementById('netTotal').textContent = net.toFixed(2);
+        document.getElementById('vatTotal').textContent = vat.toFixed(2);
+        document.getElementById('grandTotal').textContent = (net + vat).toFixed(2);
+    }
+
+    function updateLine(index, field, value) {
+        cart[index][field] = parseFloat(value) || 0;
+        if (field === 'quantity' && cart[index].quantity <= 0) cart.splice(index, 1);
+        renderCart();
+    }
+
+    function removeLine(index) { cart.splice(index, 1); renderCart(); }
+
+    function clearCart() {
+        cart = [];
+        renderCart();
+        document.getElementById('saleResult').innerHTML = '';
+        focusScan();
+    }
+
+    // ---- scanning --------------------------------------------------------
+    function feedback(text, ok) {
+        const el = document.getElementById('scanFeedback');
+        el.textContent = text;
+        el.className = 'scan-feedback small mb-2 ' + (ok ? 'text-success' : 'text-danger');
+    }
+
+    function focusScan() {
+        const input = document.getElementById('scanInput');
+        input.focus();
+        input.select();
+    }
+
+    function hideSuggestions() {
+        document.getElementById('suggestions').style.display = 'none';
+    }
+
+    // A scanner types the code and presses Enter, so Enter is the trigger:
+    // an exact code wins, otherwise the text is treated as a search.
+    document.getElementById('scanInput').addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const code = this.value.trim();
+        if (!code) return;
+        hideSuggestions();
+
+        fetch(`/api/pos/scan?code=${encodeURIComponent(code)}`)
+            .then(r => r.json().then(d => ({ ok: r.ok, d })))
+            .then(({ ok, d }) => {
+                if (ok && d.success) { addItem(d.item); this.value = ''; focusScan(); return; }
+                return searchFor(code);
+            })
+            .catch(err => feedback('Lookup failed: ' + err, false));
+    });
+
+    function searchFor(term) {
+        return fetch(`/api/pos/search?q=${encodeURIComponent(term)}`)
+            .then(r => r.json())
+            .then(d => {
+                const box = document.getElementById('suggestions');
+                if (!d.items || !d.items.length) {
+                    feedback(`Nothing matches "${term}"`, false);
+                    box.style.display = 'none';
+                    return;
+                }
+                feedback(`${d.items.length} match(es) - pick one`, true);
+                box.innerHTML = d.items.map(i => `
+                    <button type="button" class="list-group-item list-group-item-action suggestion"
+                            data-item='${JSON.stringify(i).replace(/'/g, "&#39;")}'>
+                        <div class="d-flex justify-content-between">
+                            <span>${i.name}</span>
+                            <span class="text-muted small">${Number(i.unit_price).toFixed(2)}
+                                &middot; stock ${i.stock_quantity}</span>
+                        </div>
+                    </button>`).join('');
+                box.style.display = '';
+                box.querySelectorAll('.suggestion').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        addItem(JSON.parse(btn.dataset.item));
+                        document.getElementById('scanInput').value = '';
+                        hideSuggestions();
+                        focusScan();
+                    });
+                });
+            });
+    }
+
+    // F2 returns to the scan box from anywhere on the screen
+    document.addEventListener('keydown', e => {
+        if (e.key === 'F2') { e.preventDefault(); focusScan(); }
+    });
+
+    // ---- completing the sale --------------------------------------------
+    function completeSale(print = true) {
+        if (!cart.length) { alert('There is nothing in the sale.'); return; }
+        const mode = document.querySelector('input[name="mode"]:checked').value;
+        if (mode === 'credit' && !document.getElementById('customer').value) {
+            alert('A credit sale needs a customer - somebody has to owe it.');
+            document.getElementById('customer').focus();
+            return;
+        }
+        const result = document.getElementById('saleResult');
+        const button = document.getElementById('payBtn');
+        button.disabled = true;
+        result.innerHTML = '<span class="text-muted">Posting...</span>';
+
+        fetch('/pos/sale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                payment_mode: mode,
+                customer: document.getElementById('customer').value,
+                sales_ledger: document.getElementById('salesLedger').value,
+                payment_ledger: mode === 'credit' ? '' : document.getElementById('paymentLedger').value,
+                lines: cart,
+            })
+        })
+            .then(r => r.json())
+            .then(d => {
+                button.disabled = false;
+                if (!d.success) {
+                    result.innerHTML = `<span class="text-danger">${d.message}</span>`;
+                    return;
+                }
+                lastSale = d;
+                result.innerHTML = `<span class="text-success">${d.message}</span>
+                    <div class="mt-1">
+                        <a class="btn btn-sm btn-outline-secondary"
+                           href="${d.receipt_url}" target="_blank">Receipt (80mm)</a>
+                        <a class="btn btn-sm btn-outline-secondary"
+                           href="/print/voucher/${d.voucher_number}" target="_blank">A4 tax invoice</a>
+                    </div>`;
+                if (print) window.open(d.receipt_url + '?auto=1', '_blank');
+                cart = [];
+                renderCart();
+                focusScan();
+            })
+            .catch(err => {
+                button.disabled = false;
+                result.innerHTML = `<span class="text-danger">Could not post the sale: ${err}</span>`;
+            });
+    }
+
+    onModeChange();
+    renderCart();
+    focusScan();
+</script>
+{% endblock %}

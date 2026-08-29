@@ -63,7 +63,7 @@ PERMISSION_KEYS = (
 
 
 class User(UserMixin):
-    def __init__(self, id, username, email, password_hash, is_admin, is_principal=0, permissions=None, hide_dashboard=0):
+    def __init__(self, id, username, email, password_hash, is_admin, is_principal=0, permissions=None, hide_dashboard=0, hide_pos=0):
         self.id = id
         self.username = username
         self.email = email
@@ -72,6 +72,7 @@ class User(UserMixin):
         self.is_principal = bool(is_principal)
         self.permissions = set(permissions or [])
         self.hide_dashboard = bool(hide_dashboard)
+        self.hide_pos = bool(hide_pos)
 
     def can_access(self, perm_key):
         """Admin and Principal users can access every assignable area;

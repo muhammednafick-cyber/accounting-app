@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Receipt {{ voucher.voucher.voucher_number }}</title>
+    <style>
+        /* 80mm till roll: one narrow column, monospaced so the columns line
+           up on a thermal printer that has no font of its own. */
+        body {
+            font-family: "Courier New", Consolas, monospace;
+            font-size: 12px; color: #000; margin: 0; padding: 8px;
+            width: 76mm;
+        }
+        .center { text-align: center; }
+        .right { text-align: right; }
+        h1 { font-size: 15px; margin: 0 0 2px; text-transform: uppercase; }
+        .muted { color: #333; }
+        .rule { border-top: 1px dashed #000; margin: 6px 0; }
+        table { width: 100%; border-collapse: collapse; }
+        td { padding: 1px 0; vertical-align: top; }
+        .item td { padding-top: 3px; }
+        .totals td { padding: 1px 0; }
+        .grand td { font-size: 14px; font-weight: bold; padding-top: 4px; }
+        .noprint { margin-bottom: 10px; }
+        .noprint button { font-family: sans-serif; padding: 6px 10px; }
+        @media print {
+            .noprint { display: none; }
+            body { width: auto; padding: 0; }
+            @page { margin: 3mm; }
+        }
+    </style>
+</head>
+<body>
+    <div class="noprint">
+        <button onclick="window.print()">Print</button>
+        <button onclick="window.close()">Close</button>
+        <a href="/print/voucher/{{ voucher.voucher.voucher_number }}">A4 tax invoice</a>
+    </div>
+
+    {% set header = voucher.voucher %}
+    {% set items = voucher.item_entries %}
+    {% set vat_total = voucher.ledger_entries
+        | selectattr('ledger_name', 'in', ['Output VAT 5%', 'Input VAT 5%'])
+        | sum(attribute='amount') %}
+    {% set net_total = items | sum(attribute='amount') %}
+
+    <div class="center">
+        <h1>{{ company.company_name or 'Tax Invoice' }}</h1>
+        {% if company.address_line1 %}<div class="muted">{{ company.address_line1 }}</div>{% endif %}
+        {% if company.city %}<div class="muted">{{ company.city }}</div>{% endif %}
+        {% if company.phone %}<div class="muted">Tel {{ company.phone }}</div>{% endif %}
+        {% if company.vat_registration_number %}
+        <div class="muted">TRN {{ company.vat_registration_number }}</div>
+        <div style="margin-top:4px; font-weight:bold;">TAX INVOICE</div>
+        {% endif %}
+    </div>
+
+    <div class="rule"></div>
+
+    <table>
+        <tr><td>No</td><td class="right">{{ header.voucher_number }}</td></tr>
+        <tr><td>Date</td><td class="right">{{ header.date | format_date }}</td></tr>
+        {% if header.location_name %}
+        <tr><td>Location</td><td class="right">{{ header.location_name }}</td></tr>
+        {% endif %}
+        <tr><td>Served by</td><td class="right">{{ header.created_by or served_by }}</td></tr>
+    </table>
+
+    <div class="rule"></div>
+
+    <table>
+        {% for item in items %}
+        <tr class="item"><td colspan="2">{{ item.item_name }}</td></tr>
+        <tr>
+            <td class="muted">
+                {{ '%g' | format(item.quantity | float) }} x {{ '%.2f' | format(item.unit_price | float) }}
+            </td>
+            <td class="right">{{ '%.2f' | format(item.amount | float) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <div class="rule"></div>
+
+    <table class="totals">
+        <tr><td>Subtotal</td><td class="right">{{ '%.2f' | format(net_total | float) }}</td></tr>
+        {% if vat_total %}
+        <tr><td>VAT</td><td class="right">{{ '%.2f' | format(vat_total | float) }}</td></tr>
+        {% endif %}
+        <tr class="grand">
+            <td>TOTAL</td>
+            <td class="right">
+                {{ '%.2f' | format((net_total | float) + (vat_total | float)) }}
+                {{ company.currency_code or '' }}
+            </td>
+        </tr>
+    </table>
+
+    <div class="rule"></div>
+
+    <div class="center muted">
+        <div>{{ items | length }} item(s)</div>
+        <div style="margin-top:6px;">Thank you for your custom</div>
+        <div style="margin-top:10px;">&nbsp;</div>
+    </div>
+
+    {% if auto_print %}
+    <script>window.addEventListener('load', () => window.print());</script>
+    {% endif %}
+</body>
+</html>

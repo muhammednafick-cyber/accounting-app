@@ -36,6 +36,10 @@ def init_unified_db():
     # Hide-dashboard flag: users land on Vouchers instead of the Dashboard
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_dashboard INTEGER DEFAULT 0")
+        # Hiding the dashboard and hiding the till are separate decisions: a
+        # counter operator wants the POS and no dashboard, a bookkeeper the
+        # reverse. Default 0 keeps POS visible for everyone who had it before.
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hide_pos INTEGER DEFAULT 0")
     except Exception:
         pass
 
@@ -377,6 +381,16 @@ def init_unified_db():
     # Blocked/active flag for items (blocked items can't be used in new vouchers)
     cursor.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1")
 
+    # Scanned barcode. Optional, and unique per company only where it is set -
+    # most catalogues are filled in gradually, and a partial index lets the
+    # blanks coexist while still refusing two items with the same barcode.
+    cursor.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS barcode TEXT")
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_barcode
+        ON inventory(company_id, barcode)
+        WHERE barcode IS NOT NULL AND barcode <> ''
+    """)
+
     # Item names must be unique per company regardless of case/spacing
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_name_ci ON inventory (company_id, LOWER(TRIM(name)))")
 
@@ -695,6 +709,61 @@ def init_unified_db():
         )
     """)
 
+    # Sales / Purchase Orders. An order is a commitment, not a transaction:
+    # it posts nothing to the ledger or to stock. It is closed - fully or
+    # partially - by the vouchers raised against it.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            order_number TEXT NOT NULL,
+            order_type TEXT NOT NULL,          -- Sales Order / Purchase Order
+            date TEXT NOT NULL,
+            party_ledger_name TEXT NOT NULL,
+            reference TEXT,                    -- the party's own order reference
+            expected_date TEXT,
+            narration TEXT,
+            location_name TEXT,
+            status TEXT NOT NULL DEFAULT 'Open',  -- Open / Partially Billed / Closed / Cancelled
+            status_reason TEXT,
+            created_by TEXT,
+            created_at TEXT,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            UNIQUE(company_id, order_number)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS order_items (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL,
+            item_name TEXT NOT NULL,
+            quantity DOUBLE PRECISION NOT NULL,
+            unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+            billed_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+        )
+    """)
+
+    # One row per order line billed by one voucher. Kept so deleting a voucher
+    # can hand the quantity back to the order instead of stranding it.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS order_billings (
+            id SERIAL PRIMARY KEY,
+            company_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL,
+            order_item_id INTEGER NOT NULL,
+            voucher_number TEXT NOT NULL,
+            quantity DOUBLE PRECISION NOT NULL,
+            created_at TEXT,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+            FOREIGN KEY (order_item_id) REFERENCES order_items(id) ON DELETE CASCADE
+        )
+    """)
+
     # Performance indexes for the most-queried columns
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_le_company_voucher ON ledger_entries(company_id, voucher_number)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_le_company_ledger ON ledger_entries(company_id, ledger_name)")
@@ -702,6 +771,9 @@ def init_unified_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ie_company_item ON item_entries(company_id, item_name)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_v_company_date ON vouchers(company_id, date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_v_company_type ON vouchers(company_id, voucher_type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ord_company_type ON orders(company_id, order_type, status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ordi_company_order ON order_items(company_id, order_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ordb_company_voucher ON order_billings(company_id, voucher_number)")
 
     conn.commit()
     conn.close()

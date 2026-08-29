@@ -451,6 +451,17 @@ Charges on Purchase Voucher
             <button type="button" class="btn" onclick="loadReturnItems()">Load Items</button>
         </div>
         {% endif %}
+        {% if voucher_type in ['Sales','Purchase'] and not edit_mode %}
+        <div class="form-row" id="orderPullRow">
+            <label for="order_number_input">
+                {{ 'Sales' if voucher_type == 'Sales' else 'Purchase' }} Order:</label>
+            <input type="text" id="order_number_input" placeholder="Order number - optional"
+                style="width: 200px;">
+            <button type="button" class="btn" onclick="loadOrderItems()"
+                style="background-color:#2563ab; color:#fff;">Load Order</button>
+            <span id="orderPullStatus" style="margin-left:10px; font-weight:600;"></span>
+        </div>
+        {% endif %}
         <div class="grid-wrap" id="itemGridWrap">
         <table id="itemTable">
             <thead>
@@ -3203,6 +3214,103 @@ Charges on Purchase Voucher
         }
         if (!isNaN(val) && val < 0) input.value = 0;
     }
+
+    // ---- Orders -------------------------------------------------------
+    // A Sales/Purchase Order is billed by loading its pending lines into this
+    // voucher. Each line carries the order line it bills, so saving the
+    // voucher closes the order off - fully or partly.
+    function setOrderStatus(text, ok) {
+        const el = document.getElementById('orderPullStatus');
+        if (!el) return;
+        el.textContent = text || '';
+        el.style.color = ok ? '#1a7f37' : '#b3261e';
+    }
+
+    function warnIfOverBilling(input) {
+        const pending = parseFloat(input.dataset.pendingQuantity);
+        const value = parseFloat(input.value);
+        if (isNaN(pending) || isNaN(value)) return;
+        if (value > pending && !input.dataset.overWarned) {
+            input.dataset.overWarned = '1';   // warn once, then let them get on with it
+            alert(`This is more than the order has pending (${pending}). `
+                + `You can still bill it - the order will simply show as over-billed.`);
+        }
+        if (value <= pending) delete input.dataset.overWarned;
+    }
+
+    function loadOrderItems(orderNumberFromUrl) {
+        const input = document.getElementById('order_number_input');
+        const orderNumber = (orderNumberFromUrl || (input ? input.value : '') || '').trim();
+        if (!orderNumber) { alert('Enter an order number'); return; }
+        if (input) input.value = orderNumber;
+        setOrderStatus('Loading...', true);
+
+        fetch(`/api/order_lines?order_number=${encodeURIComponent(orderNumber)}`
+              + `&voucher_type=${encodeURIComponent(voucherType)}`)
+            .then(r => r.json().then(data => ({ ok: r.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok || !data.success) {
+                    setOrderStatus(data.message || 'Could not load that order', false);
+                    return;
+                }
+
+                const tbody = document.querySelector('#itemTable tbody');
+                tbody.innerHTML = '';
+                data.items.forEach(line => {
+                    addItemRow();
+                    const row = tbody.lastElementChild;
+
+                    const itemSelect = row.querySelector('select[name="item_name[]"]');
+                    if (itemSelect) {
+                        itemSelect.value = line.item_name;
+                        if (window.jQuery) $(itemSelect).trigger('change');
+                        else itemSelect.dispatchEvent(new Event('change'));
+                    }
+
+                    const qty = row.querySelector('input[name="quantity[]"]');
+                    if (qty) {
+                        qty.value = line.quantity;
+                        qty.dataset.pendingQuantity = line.quantity;
+                        qty.title = `Ordered ${line.ordered_quantity}, `
+                                  + `already billed ${line.billed_quantity}, `
+                                  + `pending ${line.quantity}`;
+                        qty.addEventListener('input', () => warnIfOverBilling(qty));
+                    }
+
+                    const rate = row.querySelector('input[name="unit_price[]"]');
+                    if (rate && line.unit_price) rate.value = line.unit_price;
+
+                    // What ties the voucher line back to the order line
+                    const link = document.createElement('input');
+                    link.type = 'hidden';
+                    link.name = 'order_item_id[]';
+                    link.value = line.order_item_id;
+                    row.appendChild(link);
+
+                    if (rate) onItemInputChange(rate);
+                });
+
+                // Bill the party the order was raised on
+                const partySelect = document.querySelector('select[name="ledger_name[]"]');
+                if (partySelect && !partySelect.value) {
+                    partySelect.value = data.party_ledger_name;
+                    if (window.jQuery) $(partySelect).trigger('change');
+                    else partySelect.dispatchEvent(new Event('change'));
+                }
+
+                setOrderStatus(`${data.order_number} loaded - `
+                    + `${data.items.length} line(s) pending`, true);
+            })
+            .catch(err => setOrderStatus('Could not load that order: ' + err, false));
+    }
+
+    // Arriving from the order screen's "Convert to ..." button
+    (function () {
+        const fromUrl = new URLSearchParams(window.location.search).get('order');
+        if (fromUrl && document.getElementById('order_number_input')) {
+            window.addEventListener('load', () => loadOrderItems(fromUrl));
+        }
+    })();
 
     function loadReturnItems() {
         const src = document.getElementById('source_voucher_number');

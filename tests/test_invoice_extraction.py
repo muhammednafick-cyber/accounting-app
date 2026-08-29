@@ -424,7 +424,7 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(len(frame), 1)
         row = frame.iloc[0]
         self.assertEqual(row["Party Ledger Name"], "BAQAR MOHEBI")
-        self.assertEqual(row["Item Name"], "HAYAT SPAGHETTI PASTA 500GM")
+        self.assertEqual(row["Extracted Item Name"], "HAYAT SPAGHETTI PASTA 500GM")
         self.assertEqual(row["Quantity"], 11)
         self.assertAlmostEqual(row["Rate"], 75.37, places=2)
         self.assertEqual(row["VAT %"], 5)

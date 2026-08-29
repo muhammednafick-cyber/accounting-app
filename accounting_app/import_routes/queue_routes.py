@@ -5,7 +5,10 @@ import xlsxwriter
 from flask import jsonify, render_template, request, send_file
 from flask_login import current_user, login_required
 from . import import_bp
-from .utils import validate_import_data
+from database.orders_db import ORDER_TYPES
+
+from .utils import (active_location_name, multiple_locations_enabled,
+                    validate_import_data)
 from accounting_app import get_db_connection
 from accounting_app.models import format_date, get_cost_center_code, parse_date
 from database import (
@@ -193,7 +196,9 @@ def queue_import():
                 # Per-row required-column validation (all mandatory columns must
                 # be filled; failures are queued with a row-by-row reason and
                 # blocked from upload)
-                row_errors = _validate_required_columns(voucher_type, import_data)
+                _normalise_item_columns(import_data)
+                row_errors = _validate_required_columns(voucher_type, import_data,
+                                                        company_id=company_id)
                 if row_errors:
                     validation_status = "Failed"
                     shown = row_errors[:15]
@@ -356,7 +361,8 @@ def queue_import():
 
                         # Check Balance (Debit vs Credit)
                         # Skip for Physical Stock and Opening as they might be one-sided or auto-balanced later
-                        if voucher_type not in ["Physical Stock", "Opening"]:
+                        if voucher_type not in ["Physical Stock", "Opening",
+                                                "Sales Order", "Purchase Order"]:
                             total_debit = 0.0
                             total_credit = 0.0
                             
@@ -938,6 +944,9 @@ def upload_import(id):
         success_count = 0
         affected_items = set()
         earliest_date = None
+        # (vendor, vendor item name, system item name) learnt from this import,
+        # written to the vendor item mapping only once the upload commits.
+        learned_item_mappings = set()
 
         # ---------- MASTER IMPORTS ----------
         if import_type == "Group":
@@ -1101,6 +1110,7 @@ def upload_import(id):
             # row wins (same as entering it twice manually).
             opening_rows = {}
             selling_price_updates = []  # (item_code, selling_price)
+            barcode_updates = []        # (item_code, barcode)
 
             for item in import_data:
                 stock_group_code = group_map.get(item["Group Name"])
@@ -1127,6 +1137,11 @@ def upload_import(id):
                         selling_price_updates.append((item["Item Code"], round(float(selling_price_raw), 2)))
                     except (ValueError, TypeError):
                         print(f"Skipping invalid Selling Price '{selling_price_raw}' for item {item.get('Item Name')}")
+
+                # Optional barcode -> what the POS scanner reads for this item
+                barcode_raw = str(item.get("Barcode", "") or "").strip()
+                if barcode_raw:
+                    barcode_updates.append((item["Item Code"], barcode_raw))
 
                 # Optional opening fields
                 opening_qty_raw = item.get("Opening Quantity", "")
@@ -1188,6 +1203,25 @@ def upload_import(id):
                 except Exception as e:
                     print(f"Selling price update failed for {sp_item_code}: {e}")
 
+            # 1b-ii. Barcodes, inside the same transaction as the items. A
+            # barcode already on another item is reported and skipped rather
+            # than failing the whole sheet.
+            for bc_item_code, bc_value in barcode_updates:
+                try:
+                    cursor.execute(
+                        "UPDATE inventory SET barcode = %s "
+                        "WHERE company_id = %s AND item_code = %s "
+                        "AND NOT EXISTS (SELECT 1 FROM inventory x "
+                        "WHERE x.company_id = %s AND x.barcode = %s "
+                        "AND x.item_code <> %s)",
+                        (bc_value, company_id, bc_item_code,
+                         company_id, bc_value, bc_item_code))
+                    if cursor.rowcount == 0:
+                        print(f"Barcode {bc_value} skipped for {bc_item_code} "
+                              f"(already used by another item)")
+                except Exception as e:
+                    print(f"Barcode update failed for {bc_item_code}: {e}")
+
             # 1c. Opening upsert: replace any previous opening for each
             # (item, location) so re-uploads overwrite instead of stacking;
             # other locations' openings stay untouched. Also build the Opening
@@ -1240,6 +1274,26 @@ def upload_import(id):
                     raise e
                     
             message = f"Inventory items uploaded successfully! Created {success_vouchers} Opening Vouchers."
+
+        elif import_type in ORDER_TYPES:
+            # ---------- ORDER IMPORTS ----------
+            # Orders post nothing, so there is no stock or ledger work here -
+            # each grouped block simply becomes one order.
+            from database.orders_db import create_order
+            for order in import_data:
+                create_order(
+                    import_type,
+                    order["date"],
+                    order.get("party_ledger_name") or order.get("party_ledger"),
+                    order.get("item_entries", []),
+                    reference=order.get("reference"),
+                    expected_date=order.get("expected_date"),
+                    narration=order.get("narration", ""),
+                    company_id=company_id,
+                    db_connection=conn,
+                )
+                success_count += 1
+            message = f"Created {success_count} {import_type}s successfully!"
 
         else:
             # ---------- VOUCHER IMPORTS ----------
@@ -1334,7 +1388,14 @@ def upload_import(id):
                         if entry.get("cost_center") and not entry.get("cost_center_code"):
                             entry["cost_center_code"] = get_cost_center_code(entry["cost_center"], company_id=company_id)
 
+                    vendor_name = (voucher.get("vendor_name") or "").strip()
                     for entry in voucher.get("item_entries", []):
+                        vendor_item = entry.pop("vendor_item_name", None)
+                        if import_type == "Purchase" and vendor_name and vendor_item:
+                            system_item = (entry.get("item_name") or "").strip()
+                            if system_item:
+                                learned_item_mappings.add(
+                                    (vendor_name, str(vendor_item).strip(), system_item))
                         if "item_type" in entry: entry["type"] = entry.pop("item_type")
                         if "item_amount" in entry: entry["amount"] = entry.pop("item_amount")
                         if "item_ledger_name" in entry: entry["ledger_name"] = entry.pop("item_ledger_name")
@@ -1378,6 +1439,19 @@ def upload_import(id):
         # Close connection (we are done with atomic part)
         conn.close()
         conn = None 
+
+        # Post-Processing: remember what this vendor calls each item, so the
+        # next AI-extracted invoice from them fills the system name in itself.
+        if learned_item_mappings:
+            try:
+                from database.item_mapping_db import add_item_mapping
+                for vendor, vendor_item, system_item in learned_item_mappings:
+                    add_item_mapping(vendor, vendor_item, system_item,
+                                     company_id=company_id)
+            except Exception as e:
+                # The vouchers are already committed; a mapping that fails to
+                # save is a convenience lost, not a failed import.
+                print(f"Error saving vendor item mappings: {e}")
 
         # Post-Processing: Recalculate Running Balances (if any items affected)
         # This runs in its own connection(s).
@@ -1548,6 +1622,8 @@ def diagnose_inventory():
 # are intentionally not listed. (*Cost Center mandatory-ness is company-setting
 # driven and enforced in validate_single_voucher.)
 _HEADER_REQUIRED_COLUMNS = {
+    "Sales Order": ["Party Ledger Name"],
+    "Purchase Order": ["Party Ledger Name"],
     "Sales": ["Party Ledger Name"],
     "Purchase": ["Party Ledger Name", "Invoice Date"],
     "Additional Charge": ["Linked Purchase Voucher"],
@@ -1555,6 +1631,8 @@ _HEADER_REQUIRED_COLUMNS = {
 }
 
 _LINE_REQUIRED_COLUMNS = {
+    "Sales Order": ["Item Name", "Quantity"],
+    "Purchase Order": ["Item Name", "Quantity"],
     "Sales": ["Item Name", "Quantity", "Rate"],
     "Purchase": ["Item Name", "Quantity", "Rate"],
     "Additional Charge": ["Party Ledger Name", "Amount"],
@@ -1568,11 +1646,40 @@ _LINE_REQUIRED_COLUMNS = {
     "Stock Adjustment": ["Ledger Name", "Type", "Item Name", "Quantity"],
 }
 
+# Voucher types whose Excel import must name a location when the company runs
+# multiple locations - the same set that gets a read-only Location on the
+# manual entry screen. Inventory Transfer names both ends of the move in its
+# own columns, and an Additional Charge takes the location of the purchase it
+# is attached to, so neither asks for one.
+_LOCATION_REQUIRED_TYPES = {
+    "Sales", "Purchase", "Expense", "Service Income", "Journal",
+    "Receipt", "Payment", "Contra", "Stock Adjustment",
+}
+
 _NUMERIC_COLUMNS = {"Quantity", "Rate", "Amount"}
 _POSITIVE_COLUMNS = {"Quantity", "Amount"}
 
 
-def _validate_required_columns(voucher_type, rows):
+def _normalise_item_columns(rows):
+    """Fold the split Purchase item columns back into one 'Item Name'.
+
+    The Purchase template asks for an "Extracted Item Name" (what the vendor
+    calls it - optional, prefilled by the AI extraction) and a "System Item
+    Name" (what this company calls it). Everything downstream works off
+    "Item Name", so the system name becomes that, and the extracted name is
+    kept alongside so the mapping can be learnt once the voucher is uploaded.
+    """
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        system_name = row.get("System Item Name")
+        if system_name is not None and str(system_name).strip():
+            row["Item Name"] = system_name
+        elif "System Item Name" in row and not str(row.get("Item Name") or "").strip():
+            row["Item Name"] = ""
+
+
+def _validate_required_columns(voucher_type, rows, company_id=None):
     """Check raw Excel rows for missing/invalid required columns.
 
     Returns a list of error strings referencing Excel row numbers
@@ -1582,7 +1689,23 @@ def _validate_required_columns(voucher_type, rows):
     if line_required is None:
         return []  # Unknown/master type: leave to existing validation
 
-    header_required = _HEADER_REQUIRED_COLUMNS.get(voucher_type, [])
+    header_required = list(_HEADER_REQUIRED_COLUMNS.get(voucher_type, []))
+
+    # Manual entry stamps every voucher with a location once the company runs
+    # more than one, so an import of the same voucher must name one too. The
+    # names themselves are checked against the location master further down,
+    # in the same pass that checks ledgers and items.
+    location_required = (voucher_type in _LOCATION_REQUIRED_TYPES
+                         and multiple_locations_enabled(company_id))
+    if location_required:
+        header_required.append("Location")
+        # Manual entry posts to the location selected in the main menu and
+        # offers no way to override it. An import must not be a way around
+        # that, so a sheet naming a different location is rejected rather than
+        # quietly posted somewhere else.
+        active_location = _resolve_active_location(company_id=company_id)
+    else:
+        active_location = None
     errors = []
     seen_groups = set()
 
@@ -1608,9 +1731,20 @@ def _validate_required_columns(voucher_type, rows):
                 if is_blank(col):
                     errors.append(f"Row {row_num}: {col} is required")
 
+        if location_required and not is_blank("Location"):
+            given = str(row.get("Location")).strip()
+            if active_location and given.lower() != active_location.lower():
+                errors.append(
+                    f"Row {row_num}: Location must be '{active_location}', the "
+                    f"location selected in the main menu (found '{given}'). "
+                    f"Switch location before importing.")
+
         for col in line_required:
+            # The Purchase template calls this column "System Item Name"
+            label = ("System Item Name"
+                     if col == "Item Name" and "System Item Name" in row else col)
             if is_blank(col):
-                errors.append(f"Row {row_num}: {col} is required")
+                errors.append(f"Row {row_num}: {label} is required")
                 continue
             if col in _NUMERIC_COLUMNS:
                 try:
@@ -1629,24 +1763,8 @@ def _validate_required_columns(voucher_type, rows):
 
 
 def _resolve_active_location(company_id=None):
-    """Location applied to imported vouchers: the session's active location
-    (main-menu switcher), falling back to the company default location.
-    Mirrors the manual voucher entry behaviour."""
-    try:
-        from database import get_company_settings, get_locations, get_default_location
-        company = get_company_settings(company_id=company_id)
-        if not (company and company.get("multiple_locations_applicable")):
-            return "Main Location"
-        from flask import session
-        valid_names = {l["location_name"] for l in get_locations(company_id=company_id)}
-        active = session.get("active_location")
-        if active in valid_names:
-            return active
-        default = get_default_location(company_id=company_id)
-        return default["location_name"] if default else "Main Location"
-    except Exception as e:
-        print(f"Error resolving active location for import: {e}")
-        return "Main Location"
+    """Location applied to imported vouchers - the same one manual entry uses."""
+    return active_location_name(company_id=company_id)
 
 
 def _group_voucher_rows(voucher_type, rows, company_id=None):
@@ -1702,6 +1820,32 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
             if current_date != first_date:
                 raise ValueError(f"Date mismatch in Voucher Group ID '{group_id}'. All rows must have the same date ({first_date}). Found '{current_date}' at row index {i+1}.")
         
+        if voucher_type in ORDER_TYPES:
+            # An order posts nothing, so it carries no ledger entries. The item
+            # lines are still called item_entries so the shared validation
+            # (missing items, missing party ledger) applies unchanged.
+            party = first_row.get("Party Ledger Name") or first_row.get("Ledger Name")
+            order = {
+                "order_type": voucher_type,
+                "date": first_date,
+                "party_ledger": party,          # checked against the ledger master
+                "party_ledger_name": party,
+                "reference": first_row.get("Reference Number") or first_row.get("Reference"),
+                "expected_date": (parse_excel_date(first_row.get("Expected Date"))
+                                  if first_row.get("Expected Date") else None),
+                "narration": first_row.get("Narration", ""),
+                "ledger_entries": [],
+                "item_entries": [],
+            }
+            for row in group_list:
+                order["item_entries"].append({
+                    "item_name": row.get("Item Name"),
+                    "quantity": float(row.get("Quantity", 0) or 0),
+                    "unit_price": float(row.get("Rate", 0) or 0),
+                })
+            grouped_vouchers.append(order)
+            continue
+
         if voucher_type == "Additional Charge":
             # Special structure for Additional Charge
             voucher = {
@@ -1744,7 +1888,10 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
         voucher = {
             "date": first_date,
             "narration": first_row.get("Narration", ""),
-            "location_name": active_location,  # Session active location; Location column no longer used
+            # Always the active location, exactly as manual entry does. The
+            # sheet's Location column is checked against this during validation
+            # and cannot move a voucher somewhere else.
+            "location_name": active_location,
             "cost_center": first_row.get("Cost Center", ""),
             "credit_days": first_row.get("Credit Days"),
             "original_invoice_ref": first_row.get("Reference Number"),
@@ -1807,6 +1954,8 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
             # 3. VAT (if applicable)
             
             party_ledger_name = first_row.get("Party Ledger Name") or first_row.get("Ledger Name") # Party
+            if voucher_type == "Purchase":
+                voucher["vendor_name"] = party_ledger_name
             
             total_item_amount = 0.0
             total_vat_amount = 0.0
@@ -1838,6 +1987,10 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
                 
                 item_entry = {
                     "item_name": row.get("Item Name"),
+                    # Kept only so a successful Purchase upload can record the
+                    # vendor's own name for this item; stripped before the
+                    # voucher is written.
+                    "vendor_item_name": (str(row.get("Extracted Item Name") or "").strip() or None),
                     "quantity": qty,
                     "unit_price": rate,
                     "item_amount": amount,

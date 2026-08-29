@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{ order.order_type }} {{ order.order_number }}</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #222; margin: 30px; }
+        .header { display: flex; justify-content: space-between; border-bottom: 3px solid #444; padding-bottom: 12px; }
+        .company h2 { margin: 0 0 4px 0; }
+        .company div { color: #555; }
+        .doc-title h1 { margin: 0; font-size: 22px; }
+        .doc-title div { text-align: right; color: #555; }
+        .meta { margin-top: 15px; }
+        .meta td { padding: 2px 8px 2px 0; }
+        .label { color: #666; }
+        table.lines { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        table.lines th { background: #444; color: #fff; padding: 6px 8px; text-align: left; }
+        table.lines th.num, table.lines td.num { text-align: right; }
+        table.lines td { border-bottom: 1px solid #ddd; padding: 6px 8px; }
+        .totals { margin-top: 12px; width: 320px; margin-left: auto; }
+        .totals td { padding: 4px 8px; }
+        .totals .grand { font-weight: bold; border-top: 2px solid #444; font-size: 15px; }
+        .note { margin-top: 18px; color: #666; font-size: 12px; }
+        .footer { margin-top: 40px; display: flex; justify-content: space-between; color: #666; }
+        .sig { border-top: 1px solid #999; padding-top: 4px; width: 200px; text-align: center; }
+        .noprint { margin-bottom: 15px; }
+        @media print { .noprint { display: none; } body { margin: 10mm; } }
+    </style>
+</head>
+<body>
+    <div class="noprint">
+        <button onclick="window.print()">Print</button>
+        <button onclick="window.close()">Close</button>
+    </div>
+
+    <div class="header">
+        <div class="company">
+            <h2>{{ company.company_name or '' }}</h2>
+            <div>{{ company.address_line1 or '' }}{% if company.address_line2 %}, {{ company.address_line2 }}{% endif %}</div>
+            <div>{{ company.city or '' }}{% if company.country %}, {{ company.country }}{% endif %}</div>
+            {% if company.vat_registration_number %}
+            <div><strong>TRN: {{ company.vat_registration_number }}</strong></div>
+            {% endif %}
+        </div>
+        <div class="doc-title">
+            <h1>{{ order.order_type | upper }}</h1>
+            <div>{{ order.order_number }}</div>
+            <div>{{ order.status }}</div>
+        </div>
+    </div>
+
+    <table class="meta">
+        <tr>
+            <td class="label">{{ 'Customer' if order.order_type == 'Sales Order' else 'Vendor' }}</td>
+            <td><strong>{{ order.party_ledger_name }}</strong></td>
+            <td class="label" style="padding-left:40px">Order Date</td>
+            <td>{{ order.date | format_date }}</td>
+        </tr>
+        <tr>
+            <td class="label">Their Reference</td>
+            <td>{{ order.reference or '-' }}</td>
+            <td class="label" style="padding-left:40px">Expected</td>
+            <td>{{ order.expected_date | format_date if order.expected_date else '-' }}</td>
+        </tr>
+        {% if order.location_name %}
+        <tr>
+            <td class="label">Location</td>
+            <td colspan="3">{{ order.location_name }}</td>
+        </tr>
+        {% endif %}
+    </table>
+
+    <table class="lines">
+        <thead>
+            <tr>
+                <th style="width:40px" class="num">#</th>
+                <th>Item</th>
+                <th class="num">Quantity</th>
+                <th class="num">Rate</th>
+                <th class="num">Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in order['items'] %}
+            <tr>
+                <td class="num">{{ loop.index }}</td>
+                <td>{{ item.item_name }}</td>
+                <td class="num">{{ '%.2f' | format(item.quantity | float) }}</td>
+                <td class="num">{{ '%.2f' | format(item.unit_price | float) }}</td>
+                <td class="num">{{ '%.2f' | format((item.quantity | float) * (item.unit_price | float)) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <table class="totals">
+        <tr class="grand">
+            <td>Order Value</td>
+            <td class="num" style="text-align:right">
+                {{ '%.2f' | format(order.order_value) }} {{ company.currency_code or '' }}
+            </td>
+        </tr>
+    </table>
+
+    {% if order.narration %}
+    <div class="note"><strong>Note:</strong> {{ order.narration }}</div>
+    {% endif %}
+    <div class="note">
+        This is an order, not a tax invoice. No accounting entry arises from it.
+    </div>
+
+    <div class="footer">
+        <div class="sig">Prepared by</div>
+        <div class="sig">Authorised signatory</div>
+    </div>
+</body>
+</html>

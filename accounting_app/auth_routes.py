@@ -144,11 +144,14 @@ def admin():
             is_principal = 1 if request.form.get("is_principal") == "on" else 0
             selected_perms = [p for p in request.form.getlist("perms") if p in PERMISSION_KEYS]
             hide_dashboard = 1 if request.form.get("hide_dashboard") == "on" else 0
+            hide_pos = 1 if request.form.get("hide_pos") == "on" else 0
             try:
-                from database.master_db import set_user_principal, set_user_permissions, set_user_hide_dashboard
+                from database.master_db import (set_user_principal, set_user_permissions,
+                                                set_user_hide_dashboard, set_user_hide_pos)
                 set_user_principal(user_id, is_principal)
                 set_user_permissions(user_id, selected_perms)
                 set_user_hide_dashboard(user_id, hide_dashboard)
+                set_user_hide_pos(user_id, hide_pos)
                 # Allowed locations (empty selection = unrestricted)
                 from database import set_user_locations, get_locations
                 valid_locs = {l['location_name'] for l in get_locations()}

@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}New {{ order_type }}{% endblock %}
+
+{% block extra_head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
+<style>
+    /* Match Bootstrap's control height so a Select2 sits level with the
+       inputs beside it. */
+    .select2-container .select2-selection--single { height: 38px; }
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        line-height: 36px;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__arrow { height: 36px; }
+    #itemTable .select2-container .select2-selection--single { height: 31px; }
+    #itemTable .select2-container--default .select2-selection--single .select2-selection__rendered {
+        line-height: 29px; font-size: .875rem;
+    }
+    #itemTable .select2-container--default .select2-selection--single .select2-selection__arrow { height: 29px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="mb-0">New {{ order_type }}</h2>
+        <a href="{{ url_for('order_bp.orders', order_slug=order_slug) }}"
+           class="btn btn-outline-secondary btn-sm">All {{ order_type }}s</a>
+    </div>
+
+    <p class="text-muted small">
+        An order records what was agreed. Nothing is posted to the ledger or to
+        stock until a {{ 'Sales' if order_type == 'Sales Order' else 'Purchase' }}
+        voucher is billed against it.
+    </p>
+
+    <form method="POST" action="{{ url_for('order_bp.save_order') }}" id="orderForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="order_slug" value="{{ order_slug }}">
+
+        <div class="card mb-3">
+            <div class="card-body row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" for="date">Order Date <span class="text-danger">*</span></label>
+                    <input type="date" class="form-control" id="date" name="date" required>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label" for="party_ledger_name">
+                        {{ 'Customer' if order_type == 'Sales Order' else 'Vendor' }}
+                        <span class="text-danger">*</span>
+                    </label>
+                    <select class="form-select searchable" id="party_ledger_name"
+                            name="party_ledger_name" data-placeholder="Type to search" required>
+                        <option value=""></option>
+                        {% for ledger in party_ledgers %}
+                        <option value="{{ ledger.ledger_name }}">{{ ledger.ledger_name }}</option>
+                        {% endfor %}
+                    </select>
+                    {% if not party_ledgers %}
+                    <div class="form-text text-danger">
+                        No {{ 'customers' if order_type == 'Sales Order' else 'vendors' }} set up yet.
+                        <a href="{{ party_master_url }}">Create one</a> first.
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="reference">Their Reference</label>
+                    <input type="text" class="form-control" id="reference" name="reference"
+                           placeholder="The order number they gave you">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="expected_date">Expected Date</label>
+                    <input type="date" class="form-control" id="expected_date" name="expected_date">
+                </div>
+                <div class="col-md-9">
+                    <label class="form-label" for="narration">Narration</label>
+                    <input type="text" class="form-control" id="narration" name="narration">
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Items</strong>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addRow()">Add Line</button>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle" id="itemTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="min-width:220px">Item <span class="text-danger">*</span></th>
+                            <th style="width:130px">Quantity <span class="text-danger">*</span></th>
+                            <th style="width:130px">Rate</th>
+                            <th style="width:140px" class="text-end">Value</th>
+                            <th style="width:60px"></th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                    <tfoot>
+                        <tr class="table-light">
+                            <th colspan="3" class="text-end">Order Value</th>
+                            <th class="text-end" id="orderTotal">0.00</th>
+                            <th></th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Order</button>
+        <a href="{{ url_for('voucher_bp.vouchers') }}" class="btn btn-link">Cancel</a>
+    </form>
+</div>
+
+<script>
+    const itemOptions = `<option value=""></option>` + {{ items | map(attribute='name') | list | tojson }}
+        .map(n => `<option value="${n.replace(/"/g, '&quot;')}">${n}</option>`).join('');
+
+    // Long chart-of-accounts and item lists are unusable as plain dropdowns,
+    // so every one here is a Select2 with a search box - the same control the
+    // voucher form uses.
+    function makeSearchable(scope) {
+        $(scope).find('select.searchable').each(function () {
+            if ($(this).data('select2')) return;
+            $(this).select2({
+                placeholder: $(this).data('placeholder') || 'Select',
+                allowClear: !this.required,
+                width: '100%',
+            });
+        });
+    }
+
+    function addRow() {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><select name="item_name[]" class="form-select form-select-sm searchable"
+                        data-placeholder="Type to search" required>${itemOptions}</select></td>
+            <td><input type="number" name="quantity[]" class="form-control form-control-sm qty"
+                       step="0.01" min="0.01" oninput="recalc()" required></td>
+            <td><input type="number" name="unit_price[]" class="form-control form-control-sm rate"
+                       step="0.01" min="0" value="0" oninput="recalc()"></td>
+            <td class="text-end line-value">0.00</td>
+            <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        onclick="this.closest('tr').remove(); recalc();">&times;</button>
+            </td>`;
+        document.querySelector('#itemTable tbody').appendChild(row);
+        makeSearchable(row);
+    }
+
+    function recalc() {
+        let total = 0;
+        document.querySelectorAll('#itemTable tbody tr').forEach(row => {
+            const qty = parseFloat(row.querySelector('.qty').value) || 0;
+            const rate = parseFloat(row.querySelector('.rate').value) || 0;
+            const value = qty * rate;
+            row.querySelector('.line-value').textContent = value.toFixed(2);
+            total += value;
+        });
+        document.getElementById('orderTotal').textContent = total.toFixed(2);
+    }
+
+    document.getElementById('date').valueAsDate = new Date();
+    $(function () {
+        makeSearchable(document);
+        addRow();
+    });
+
+    document.getElementById('orderForm').addEventListener('submit', function (e) {
+        if (!document.querySelector('#itemTable tbody tr')) {
+            e.preventDefault();
+            alert('An order needs at least one item line.');
+        }
+    });
+</script>
+{% endblock %}

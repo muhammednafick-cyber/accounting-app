@@ -93,11 +93,22 @@ def add_additional_charges_voucher(date, linked_voucher_number, charges, narrati
         # Override date to match linked purchase voucher date for correct accounting period
         # This ensures that the financial impact (GL entries) of the additional charges
         # is recorded in the same period as the original purchase, aligning Balance Sheet with Inventory Valuation.
+        # An additional charge belongs to the purchase it is attached to, so it
+        # is filed under that purchase's location rather than being left with
+        # none. Resolved here because this voucher does not go through
+        # add_voucher.
+        location_name = None
         if linked_voucher_number:
-            cursor.execute("SELECT date FROM vouchers WHERE company_id = %s AND voucher_number = %s", (company_id, linked_voucher_number))
+            cursor.execute("SELECT date, location_name FROM vouchers WHERE company_id = %s AND voucher_number = %s", (company_id, linked_voucher_number))
             linked_res = cursor.fetchone()
             if linked_res:
-                date = linked_res['date'] if hasattr(linked_res, 'keys') else linked_res[0]
+                if hasattr(linked_res, 'keys'):
+                    date = linked_res['date']
+                    location_name = linked_res['location_name']
+                else:
+                    date, location_name = linked_res[0], linked_res[1]
+        location_name = resolve_voucher_location(
+            cursor, company_id, "Additional Charge", location_name)
 
         # Financial Year validation (same rule as add_voucher)
         fy = get_fy_by_date(date, company_id=company_id)
@@ -141,9 +152,9 @@ def add_additional_charges_voucher(date, linked_voucher_number, charges, narrati
         
         # 2. Insert Voucher Header
         cursor.execute("""
-            INSERT INTO vouchers (company_id, voucher_number, voucher_type, date, posting_date, amount, narration, entry_date, voucher_id, linked_voucher_number, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (company_id, voucher_number, voucher_type, date, posting_date, total_voucher_amount, narration, entry_date, next_vid, linked_voucher_number, get_current_username()))
+            INSERT INTO vouchers (company_id, voucher_number, voucher_type, date, posting_date, amount, narration, location_name, entry_date, voucher_id, linked_voucher_number, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (company_id, voucher_number, voucher_type, date, posting_date, total_voucher_amount, narration, location_name, entry_date, next_vid, linked_voucher_number, get_current_username()))
 
         cursor.execute(
             "INSERT INTO audit_trail (company_id, voucher_number, action, username, details, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
@@ -587,6 +598,95 @@ def ensure_item_entries_cogs_populated(company_id=None):
     finally:
         conn.close()
 
+def _company_location_names(cursor, company_id):
+    """Canonical location names for a company, keyed by lowercase name."""
+    cursor.execute(
+        "SELECT location_name FROM locations WHERE company_id = %s "
+        "AND COALESCE(is_active, 1) = 1", (company_id,))
+    return {(r[0] or '').strip().lower(): (r[0] or '').strip()
+            for r in cursor.fetchall() if (r[0] or '').strip()}
+
+
+def _session_active_location():
+    """The main-menu location switcher, or None outside a request."""
+    try:
+        from flask import session, has_request_context
+        if not has_request_context():
+            return None
+        return (session.get('active_location') or '').strip() or None
+    except Exception:
+        return None
+
+
+def resolve_voucher_location(cursor, company_id, voucher_type, location_name,
+                             item_entries=None):
+    """The location a voucher is filed under - never blank, never invented.
+
+    Enforced here rather than in each caller so manual entry, Excel import,
+    the chatbot, recurring vouchers and every background job behave the same
+    way. When the company runs multiple locations, a voucher that names one
+    must name a real one, and a voucher that names none inherits the active
+    (or default) location instead of being filed nowhere.
+
+    Inventory Transfer is the exception: its header location is a readable
+    "From -> To" summary, and the real locations sit on the item entries,
+    which are validated individually.
+    """
+    cursor.execute(
+        "SELECT multiple_locations_applicable FROM company_settings "
+        "WHERE company_id = %s", (company_id,))
+    row = cursor.fetchone()
+    if not (row and row[0]):
+        return 'Main Location'
+
+    valid = _company_location_names(cursor, company_id)
+    if not valid:
+        # Locations are switched on but none exist yet; nothing to file under.
+        return location_name or 'Main Location'
+
+    def check(name, what):
+        canonical = valid.get(str(name).strip().lower())
+        if not canonical:
+            raise Exception(
+                f"{what} '{name}' is not a location of this company. "
+                f"Valid locations: {', '.join(sorted(valid.values()))}.")
+        return canonical
+
+    # Per-entry locations (Inventory Transfer's two ends, and any import that
+    # sets a location per line) must each be real.
+    for entry in (item_entries or []):
+        for key in ('_location_override', 'location_name'):
+            value = entry.get(key)
+            if not (value and str(value).strip()):
+                continue
+            if str(value).strip() == 'Main Location' and 'main location' not in valid:
+                # Placeholder left on data recorded before locations were
+                # switched on. Let the line inherit the voucher's location
+                # rather than failing an edit or a reversal of old data.
+                entry[key] = None
+                continue
+            entry[key] = check(value, "Location")
+
+    if voucher_type == 'Inventory Transfer':
+        return location_name
+
+    name = (location_name or '').strip()
+    if not name:
+        name = _session_active_location() or ''
+    if not name:
+        cursor.execute(
+            "SELECT location_name FROM locations WHERE company_id = %s "
+            "AND is_active = 1 ORDER BY is_default DESC, location_name LIMIT 1",
+            (company_id,))
+        default = cursor.fetchone()
+        name = (default[0] if default else '') or ''
+    if not name:
+        raise Exception(
+            "This company uses multiple locations but none could be resolved "
+            "for this voucher. Select a location and try again.")
+    return check(name, "Location")
+
+
 def add_voucher(voucher_type, date, ledger_entries, item_entries,
                 cost_center_code=None, narration='', location_name=None, credit_days=None, due_date=None, 
                 original_invoice_date=None, original_invoice_ref=None, linked_voucher_number=None,
@@ -629,6 +729,11 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
             blocked_items = [r[0] for r in _cur.fetchall()]
             if blocked_items:
                 raise Exception(f"Item(s) blocked: {', '.join(blocked_items)}. Unblock them in Manage Inventory to use them.")
+
+        # Every voucher gets a real location when the company runs more than
+        # one - whatever created it.
+        location_name = resolve_voucher_location(
+            _cur, company_id, voucher_type, location_name, item_entries)
     finally:
         if db_connection is None:
             _check_conn.close()
@@ -1804,6 +1909,15 @@ def delete_voucher(voucher_number, company_id=None):
                 cursor.execute("UPDATE ledgers SET closing_balance = closing_balance - %s WHERE company_id = %s AND ledger_name = %s", (amt, company_id, lname))
             else:
                 cursor.execute("UPDATE ledgers SET closing_balance = closing_balance + %s WHERE company_id = %s AND ledger_name = %s", (amt, company_id, lname))
+
+        # 2b. Give any order quantities this voucher billed back to the order,
+        # so a deleted invoice leaves the order open again rather than closed
+        # against a voucher that no longer exists.
+        try:
+            from .orders_db import release_billing
+            release_billing(cursor, company_id, voucher_number)
+        except Exception as exc:
+            print(f"Could not release order billing for {voucher_number}: {exc}")
 
         # 3. Delete Entries
         cursor.execute("DELETE FROM additional_charge_entries WHERE company_id = %s AND voucher_number = %s", (company_id, voucher_number))

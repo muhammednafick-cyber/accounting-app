@@ -89,6 +89,18 @@ def set_user_principal(user_id, is_principal):
     finally:
         conn.close()
 
+def set_user_hide_pos(user_id, hide_pos):
+    """Hide the Point of Sale from this user, independently of the dashboard."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE users SET hide_pos = %s WHERE id = %s",
+            (1 if hide_pos else 0, user_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
 def set_user_hide_dashboard(user_id, hide_dashboard):
     conn = get_connection()
     try:

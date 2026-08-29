@@ -5,6 +5,7 @@ from flask import send_file
 from flask_login import login_required
 
 from . import import_bp
+from .utils import active_location_name, multiple_locations_enabled
 
 
 @import_bp.route("/download_voucher_template/<voucher_type>", methods=["GET"])
@@ -37,12 +38,16 @@ def download_voucher_template(voucher_type):
             "Cost Center"
         ]
     elif voucher_type == "Purchase":
+        # Two item columns: the name as it reads on the vendor's invoice
+        # (optional, filled in by the AI extraction) and the name this company
+        # keeps the item under. Filling both teaches the vendor item mapping.
         headers = [
             "Voucher Group ID",
             "Date",
             "Narration",
             "Party Ledger Name",
-            "Item Name",
+            "Extracted Item Name",
+            "System Item Name",
             "Quantity",
             "Rate",
             "VAT %",
@@ -51,6 +56,21 @@ def download_voucher_template(voucher_type):
             "Reference Number",
             "Invoice Date",
             "Weight (KG)"
+        ]
+
+    elif voucher_type in ("Sales Order", "Purchase Order"):
+        # An order posts nothing, so it carries no ledger, VAT or cost centre
+        # columns - only what was agreed, and with whom.
+        headers = [
+            "Voucher Group ID",
+            "Date",
+            "Party Ledger Name",
+            "Item Name",
+            "Quantity",
+            "Rate",
+            "Reference Number",
+            "Expected Date",
+            "Narration",
         ]
     elif voucher_type == "Additional Charge":
         headers = [
@@ -138,6 +158,20 @@ def download_voucher_template(voucher_type):
         if voucher_type in COST_CENTER_ALLOWED_TYPES:
             headers.append("Cost Center")
 
+    # Manual entry stamps every voucher with a location once the company runs
+    # more than one, so the import has to ask for one too. Inventory Transfer
+    # already names both ends of the move, and an Additional Charge takes the
+    # location of the purchase it is attached to.
+    location_index = None
+    active_location = None
+    if (voucher_type not in ("Inventory Transfer", "Additional Charge",
+                             "Sales Order", "Purchase Order")
+            and multiple_locations_enabled()):
+        active_location = active_location_name()
+        location_index = (headers.index("Cost Center")
+                          if "Cost Center" in headers else len(headers))
+        headers.insert(location_index, "Location")
+
     # Write headers
     bold = workbook.add_format({'bold': True})
     for col, header in enumerate(headers):
@@ -155,7 +189,14 @@ def download_voucher_template(voucher_type):
     elif voucher_type == "Purchase":
         sample_data = [
             "1", "2023-12-31", "Purchase Bill #55", "Supplier B",
-            "Item Y", 20, 50, 5, 0, "Project B", "INV-55", "2023-12-30", 15.5
+            "ITM-Y 500GM CTN", "Item Y", 20, 50, 5, 0, "Project B",
+            "INV-55", "2023-12-30", 15.5
+        ]
+    elif voucher_type in ("Sales Order", "Purchase Order"):
+        party = "Customer A" if voucher_type == "Sales Order" else "Supplier B"
+        sample_data = [
+            "1", "2023-12-31", party, "Item Y", 20, 50,
+            "Their PO-118", "2024-01-15", "Agreed on call",
         ]
     elif voucher_type == "Additional Charge":
         sample_data = [
@@ -220,6 +261,9 @@ def download_voucher_template(voucher_type):
             "Item X", 5, "Warehouse A", "Shop B", "Project A"
         ]
     
+    if location_index is not None and sample_data:
+        sample_data.insert(location_index, active_location)
+
     # Write sample row
     if sample_data:
         # Format dates if needed, but writing string is safer for template
@@ -230,6 +274,8 @@ def download_voucher_template(voucher_type):
         # Add a second row for Journal to show balancing?
         if voucher_type == "Journal":
              sample_data_2 = ["1", "2023-12-31", "Adjustment", "Cash Account", 500, "Credit", 0, "Project A"]
+             if location_index is not None:
+                 sample_data_2.insert(location_index, active_location)
              for col, data in enumerate(sample_data_2):
                 if col < len(headers):
                     worksheet.write(2, col, data)
@@ -238,8 +284,26 @@ def download_voucher_template(voucher_type):
     # sample rows occupy rows 2-3, so validation starts below them.
     from database import get_current_company_id
     from .template_lookups import apply_lookups
+    # The Location column is not a free pick: a voucher is posted to the
+    # location selected in the main menu, so the sheet offers that one only and
+    # the import rejects anything else.
+    overrides = {"Location": None} if location_index is not None else None
     apply_lookups(workbook, worksheet, headers, get_current_company_id(),
-                  first_row=3)
+                  overrides=overrides, first_row=3)
+
+    if location_index is not None:
+        worksheet.data_validation(3, location_index, 2000, location_index, {
+            "validate": "list",
+            "source": [active_location],
+            "input_title": "Active location"[:32],
+            "input_message": (f"Vouchers import into '{active_location}'. To "
+                              f"import elsewhere, switch location in the main "
+                              f"menu and download the template again.")[:255],
+            "error_title": "Wrong location"[:32],
+            "error_message": (f"Only '{active_location}' can be imported right "
+                              f"now - it is the location selected in the main "
+                              f"menu.")[:255],
+        })
 
     workbook.close()
     output.seek(0)
@@ -407,7 +471,8 @@ def download_inventory_template():
         "Opening Price (Cost)",        # Optional
         "Purchase Date",               # Optional - per-item opening date (DD-MM-YYYY)
         "Balancing Ledger",            # Optional - ledger to credit for double-entry
-        "Selling Price"                # Optional - creates/updates Selling Price Master
+        "Selling Price",               # Optional - creates/updates Selling Price Master
+        "Barcode"                      # Optional - what the POS scanner reads
     ]
 
     # Write headers

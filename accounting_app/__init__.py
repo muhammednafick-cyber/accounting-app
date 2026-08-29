@@ -144,6 +144,9 @@ def create_app():
             'fixed_asset_bp': 'modules',
             'recurring_bp': 'modules',
             'settlement_bp': 'modules',
+            # Orders live under Vouchers, so they follow the Vouchers grant.
+            'order_bp': 'vouchers',
+            'pos_bp': 'vouchers',   # the till posts Sales vouchers
             'financial_year_bp': 'setup',
             'admin_config_bp': 'setup',
         }
@@ -257,6 +260,8 @@ def create_app():
     from .recurring_routes import recurring_bp
     from .admin_config_routes import admin_config_bp
     from .settlement_routes import settlement_bp
+    from .order_routes import order_bp
+    from .pos_routes import pos_bp
     from .api_routes import api_bp
     from .ai_settings_routes import ai_settings_bp
 
@@ -280,6 +285,8 @@ def create_app():
     app.register_blueprint(recurring_bp)
     app.register_blueprint(admin_config_bp)
     app.register_blueprint(settlement_bp)
+    app.register_blueprint(order_bp)
+    app.register_blueprint(pos_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(ai_settings_bp)
     
@@ -323,9 +330,11 @@ def load_user(user_id):
     try:
         user = get_user_by_id(user_id)
         if user:
-            # user is tuple: (id, username, email, password_hash, is_admin, is_principal, hide_dashboard)
+            # user is tuple: (id, username, email, password_hash, is_admin,
+            # is_principal, hide_dashboard, hide_pos)
             is_principal = user[5] if len(user) > 5 else 0
             hide_dashboard = user[6] if len(user) > 6 else 0
+            hide_pos = user[7] if len(user) > 7 else 0
             permissions = set()
             if not user[4] and not is_principal:
                 try:
@@ -333,7 +342,7 @@ def load_user(user_id):
                     permissions = get_user_permissions(user[0])
                 except Exception as pe:
                     print(f"Could not load permissions for user {user_id}: {pe}")
-            return User(user[0], user[1], user[2], user[3], user[4], is_principal, permissions, hide_dashboard)
+            return User(user[0], user[1], user[2], user[3], user[4], is_principal, permissions, hide_dashboard, hide_pos)
         print(f"No user found for ID: {user_id}")
         return None
     except Exception as e:

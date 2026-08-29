@@ -176,6 +176,55 @@
         </div>
     </div>
 
+    <!-- ── Point of Sale ───────────────────────────────────────────── -->
+    {% if inventory_applicable and not (current_user.hide_pos and not current_user.is_admin) %}
+    <div class="category-block">
+        <div class="category-header">
+            <div class="category-icon bg-inventory"><i class="bi bi-upc-scan"></i></div>
+            <div>
+                <h3>Point of Sale <span>Counter selling with a barcode scanner</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            <a class="voucher-tile" href="{{ url_for('pos_bp.pos') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">🧾</div>
+                <div class="tile-name">Open Till</div>
+                <div class="tile-desc">Scan items, take cash, card or credit, print a receipt</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ── Orders ──────────────────────────────────────────────────── -->
+    {% if inventory_applicable %}
+    <div class="category-block">
+        <div class="category-header">
+            <div class="category-icon bg-inventory"><i class="bi bi-clipboard-check"></i></div>
+            <div>
+                <h3>Orders <span>Commitments, billed off by vouchers</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            <a class="voucher-tile" href="{{ url_for('order_bp.orders', order_slug='sales') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">📄</div>
+                <div class="tile-name">Sales Orders</div>
+                <div class="tile-desc">What customers have ordered, and what is still to invoice</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="voucher-tile" href="{{ url_for('order_bp.orders', order_slug='purchase') }}">
+                <div class="tile-accent accent-inventory"></div>
+                <div class="tile-icon">📋</div>
+                <div class="tile-name">Purchase Orders</div>
+                <div class="tile-desc">What you have ordered, and what is still to be billed</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- ── Inventory Vouchers ──────────────────────────────────────── -->
     {% if inventory_applicable %}
     <div class="category-block">

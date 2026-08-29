@@ -139,6 +139,9 @@
 
             {% if can_access('vouchers') %}
             <li><a href="{{ url_for('voucher_bp.vouchers') }}">Vouchers</a></li>
+            {% if not (current_user.is_authenticated and current_user.hide_pos and not current_user.is_admin) %}
+            <li><a href="{{ url_for('pos_bp.pos') }}">POS</a></li>
+            {% endif %}
             {% endif %}
 
             {% if can_access('reports') %}

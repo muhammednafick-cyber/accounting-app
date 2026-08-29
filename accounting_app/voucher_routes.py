@@ -658,6 +658,8 @@ def add_voucher_route():
     # Item entries (exclude Service Income)
     item_entries = []
     vat_amounts_items = []
+    order_item_ids = []
+    quantities = []
     if voucher_type in [
         "Sales",
         "Sales Return",
@@ -677,6 +679,10 @@ def add_voucher_route():
         ref_voucher_numbers = request.form.getlist("ref_voucher_number[]")
         item_cost_centers = request.form.getlist("item_cost_center[]")
         item_weights = request.form.getlist("weight_kg[]")
+        # Set when the lines were pulled from a Sales/Purchase Order. Each is
+        # the order line this voucher line bills, so the order can be closed
+        # off - fully or partly - once the voucher saves.
+        order_item_ids = request.form.getlist("order_item_id[]")
 
         # Pre-fetch cost centers map
         cc_map = {c['center_name']: c['center_code'] for c in get_cost_centers()}
@@ -1104,9 +1110,13 @@ def add_voucher_route():
         print(
             f"Added voucher: {voucher_number} with narration: {narration}"
         )
+
+        order_message = _bill_orders(voucher_number, order_item_ids,
+                                     quantities, company_id)
+
         if is_ajax:
-            return jsonify({"success": True, "message": f"Voucher Added with Reference {voucher_number}", "voucher_number": voucher_number})
-        flash(f"Voucher Added with Reference {voucher_number}", "success")
+            return jsonify({"success": True, "message": f"Voucher Added with Reference {voucher_number}{order_message}", "voucher_number": voucher_number})
+        flash(f"Voucher Added with Reference {voucher_number}{order_message}", "success")
         return redirect(
             url_for("voucher_bp.voucher", voucher_type=voucher_type)
         )
@@ -1124,6 +1134,48 @@ def add_voucher_route():
 
 
 
+
+
+def _bill_orders(voucher_number, order_item_ids, quantities, company_id):
+    """Bill this voucher's lines against the order lines they came from.
+
+    Returns a short note for the confirmation message, or "" when the voucher
+    had nothing to do with an order. Billing is deliberately forgiving: the
+    voucher is already saved, and an order that fails to update is a tracking
+    problem, not a reason to lose the entry.
+    """
+    allocations = []
+    for order_item_id, quantity in zip(order_item_ids or [], quantities or []):
+        if not str(order_item_id or "").strip():
+            continue
+        try:
+            billed = float(quantity or 0)
+        except (TypeError, ValueError):
+            continue
+        if billed > 0:
+            allocations.append({"order_item_id": int(order_item_id),
+                                "quantity": billed})
+    if not allocations:
+        return ""
+
+    from database.config import get_connection
+    from database.orders_db import record_billing
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        results = record_billing(cursor, company_id, voucher_number, allocations)
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        print(f"Could not bill orders for {voucher_number}: {exc}")
+        return " (the order could not be updated - see the order screen)"
+    finally:
+        conn.close()
+
+    statuses = {status for _, status in results if status}
+    if not statuses:
+        return ""
+    return f" ({'; '.join(sorted(statuses))} on the linked order)"
 
 
 @voucher_bp.route("/api/get_voucher_details")

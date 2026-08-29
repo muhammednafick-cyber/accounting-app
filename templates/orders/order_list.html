@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% block title %}{{ order_type }}s{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="mb-0">{{ order_type }}s</h2>
+        <a href="{{ url_for('order_bp.new_order', order_slug=order_slug) }}"
+           class="btn btn-primary btn-sm">New {{ order_type }}</a>
+    </div>
+
+    <form method="GET" class="row g-2 align-items-end mb-3">
+        <div class="col-auto">
+            <label class="form-label small mb-1" for="status">Status</label>
+            <select class="form-select form-select-sm" id="status" name="status"
+                    onchange="this.form.submit()">
+                <option value="">All ({{ counts.values() | sum }})</option>
+                {% for status in statuses %}
+                <option value="{{ status }}" {% if selected_status == status %}selected{% endif %}>
+                    {{ status }} ({{ counts.get(status, 0) }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1" for="due">Delivery</label>
+            <select class="form-select form-select-sm" id="due" name="due"
+                    onchange="this.form.submit()">
+                <option value="">Any date</option>
+                {% for key, label in due_filters.items() %}
+                <option value="{{ key }}" {% if selected_due == key %}selected{% endif %}>
+                    {{ label }} ({{ due_counts.get(key, 0) }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label small mb-1" for="search">Search</label>
+            <input type="text" class="form-control form-control-sm" id="search" name="search"
+                   value="{{ search }}" placeholder="Order no, party or reference">
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-sm btn-outline-secondary">Filter</button>
+            {% if selected_status or search or selected_due %}
+            <a class="btn btn-sm btn-link"
+               href="{{ url_for('order_bp.orders', order_slug=order_slug) }}">Clear</a>
+            {% endif %}
+        </div>
+    </form>
+
+    <div class="card mb-3">
+        <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+            <strong class="me-2">Bulk import</strong>
+            <a class="btn btn-sm btn-outline-secondary"
+               href="/download_voucher_template/{{ order_type | urlencode }}">Download template</a>
+            <input type="file" id="orderFile" accept=".xlsx" class="form-control form-control-sm"
+                   style="max-width:280px">
+            <button class="btn btn-sm btn-primary" onclick="importOrders()">Upload &amp; import</button>
+            <span id="importMessage" class="small ms-2"></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Order No</th>
+                        <th>Date</th>
+                        <th>{{ 'Customer' if order_type == 'Sales Order' else 'Vendor' }}</th>
+                        <th>Reference</th>
+                        <th>Expected</th>
+                        <th class="text-end">Ordered Qty</th>
+                        <th class="text-end">Billed Qty</th>
+                        <th class="text-end">Pending</th>
+                        <th class="text-end">Value</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders %}
+                    {% set pending = (order.ordered_quantity | float) - (order.billed_quantity | float) %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('order_bp.view_order', order_number=order.order_number) }}">
+                                {{ order.order_number }}</a>
+                        </td>
+                        <td>{{ order.date | format_date }}</td>
+                        <td>{{ order.party_ledger_name }}</td>
+                        <td class="text-muted small">{{ order.reference or '' }}</td>
+                        <td class="small">
+                            {% if order.expected_date %}
+                            <span class="{% if order.status in ['Open', 'Partially Billed']
+                                              and order.expected_date < today %}text-danger fw-semibold{% endif %}">
+                                {{ order.expected_date | format_date }}
+                                {%- if order.status in ['Open', 'Partially Billed'] %}
+                                {%- if order.expected_date < today %} (overdue)
+                                {%- elif order.expected_date == today %} (today){% endif %}
+                                {%- endif %}
+                            </span>
+                            {% else %}<span class="text-muted">-</span>{% endif %}
+                        </td>
+                        <td class="text-end">{{ '%.2f' | format(order.ordered_quantity | float) }}</td>
+                        <td class="text-end">{{ '%.2f' | format(order.billed_quantity | float) }}</td>
+                        <td class="text-end">{{ '%.2f' | format(pending if pending > 0 else 0) }}</td>
+                        <td class="text-end">{{ '%.2f' | format(order.order_value | float) }}</td>
+                        <td>
+                            {% set colour = {'Open': 'primary', 'Partially Billed': 'warning',
+                                             'Closed': 'success', 'Cancelled': 'secondary'} %}
+                            <span class="badge bg-{{ colour.get(order.status, 'secondary') }}">
+                                {{ order.status }}</span>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="10" class="text-center text-muted py-4">
+                            No {{ order_type | lower }}s{% if selected_status or search or selected_due %} match this filter{% endif %}.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Orders ride the same Import Queue as vouchers: the sheet is parsed here,
+    // queued for validation, and only becomes orders when it is uploaded from
+    // the queue screen.
+    function importOrders() {
+        const file = document.getElementById('orderFile').files[0];
+        const message = document.getElementById('importMessage');
+        if (!file) { alert('Choose an Excel file first.'); return; }
+        message.textContent = 'Reading file...';
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const workbook = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+                if (!rows.length) { message.textContent = 'That file has no rows.'; return; }
+
+                fetch('/queue_import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_name: file.name,
+                        voucher_type: '{{ order_type }}',
+                        json_data: JSON.stringify(rows)
+                    })
+                })
+                    .then(r => r.json())
+                    .then(data => {
+                        message.textContent = data.message || '';
+                        message.className = 'small ms-2 ' + (data.success ? 'text-success' : 'text-danger');
+                        if (data.success) setTimeout(() => {
+                            window.location.href = '/report/import-queue';
+                        }, 1200);
+                    })
+                    .catch(err => { message.textContent = 'Upload failed: ' + err; });
+            } catch (err) {
+                message.textContent = 'Could not read that file: ' + err;
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+</script>
+{% endblock %}

@@ -11,6 +11,31 @@
 {% endblock %}
 
 {% block content %}
+{% if can_access('vouchers') and not (current_user.hide_pos and not current_user.is_admin) %}
+<!-- The till is launched from here rather than from inside the React
+     dashboard, which is a built bundle this template only wraps. -->
+<a href="{{ url_for('pos_bp.pos') }}" class="pos-launch">
+    <span class="pos-launch-icon">🧾</span>
+    <span>
+        <strong>Point of Sale</strong>
+        <small>Scan, take payment and print a receipt</small>
+    </span>
+    <span class="pos-launch-go">Open till →</span>
+</a>
+<style>
+    .pos-launch {
+        display: flex; align-items: center; gap: 14px;
+        background: linear-gradient(90deg, #1a3c6e, #2563ab);
+        color: #fff; text-decoration: none; border-radius: 10px;
+        padding: 14px 18px; margin-bottom: 18px;
+        box-shadow: 0 2px 10px rgba(37,99,171,.25);
+    }
+    .pos-launch:hover { color: #fff; filter: brightness(1.08); }
+    .pos-launch-icon { font-size: 1.7rem; }
+    .pos-launch small { display: block; opacity: .85; font-size: .8rem; }
+    .pos-launch-go { margin-left: auto; font-weight: 600; white-space: nowrap; }
+</style>
+{% endif %}
 <div id="root">
     <div style="display: flex; justify-content: center; align-items: center; height: 50vh;">
         <div style="text-align: center;">

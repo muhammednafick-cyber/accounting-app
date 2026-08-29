@@ -197,11 +197,12 @@ import uuid
 GEN_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'generated')
 os.makedirs(GEN_DIR, exist_ok=True)
 
-def _process_invoice(file_bytes, filename, invoice_type, company_id, job_id=None):
+def _process_invoice(file_bytes, filename, invoice_type, company_id, job_id=None,
+                     location=None):
     """Read one invoice. Runs on a worker thread, so it takes no Flask globals.
 
-    company_id is passed in explicitly: there is no request context here, and
-    get_current_company_id() reads the session.
+    company_id and location are passed in explicitly: there is no request
+    context here, and both are read off the session.
     """
     from .ai_invoice_services import (
         extract_invoice_data_vision, generate_purchase_excel,
@@ -218,7 +219,8 @@ def _process_invoice(file_bytes, filename, invoice_type, company_id, job_id=None
 
     if job_id:
         jobs.set_progress(job_id, "Building the import spreadsheet...")
-    excel_io = generate_purchase_excel(data, company_id=company_id)
+    excel_io = generate_purchase_excel(data, company_id=company_id,
+                                       location=location)
     out_name = f"parsed_invoice_{uuid.uuid4().hex}.xlsx"
     with open(os.path.join(GEN_DIR, out_name), "wb") as f:
         f.write(excel_io.getbuffer())
@@ -259,6 +261,10 @@ def upload_and_analyze_invoice():
 
     file_bytes = file.read()
     company_id = get_current_company_id()
+    # Resolved here, in the request: the worker thread has no session, and the
+    # import will only accept the active location.
+    from accounting_app.import_routes.utils import active_location_name
+    location = active_location_name(company_id)
 
     pages = pdf_page_count(file_bytes) if file.filename.lower().endswith('.pdf') else 1
     long_document = pages > PAGES_PER_BATCH
@@ -266,7 +272,7 @@ def upload_and_analyze_invoice():
     if long_document and not jobs.busy():
         job_id = jobs.create(f"{file.filename} ({pages} pages)")
         jobs.run(job_id, _process_invoice, file_bytes, file.filename,
-                 invoice_type, company_id, job_id)
+                 invoice_type, company_id, job_id, location)
         return jsonify({
             "success": True, "async": True, "job_id": job_id, "pages": pages,
             "message": f"Reading {pages} pages in the background - this takes "
@@ -275,7 +281,7 @@ def upload_and_analyze_invoice():
 
     try:
         result = _process_invoice(file_bytes, file.filename, invoice_type,
-                                  company_id)
+                                  company_id, location=location)
         return jsonify(dict({"success": True, "async": False}, **result))
     except InvoiceExtractionError as e:
         # The file or the chosen model is the problem, not the server - and the

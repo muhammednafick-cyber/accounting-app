@@ -715,6 +715,11 @@ def add_inventory_route():
     purchase_date_str = request.form.get("purchase_date") or request.form.get("fiscal_year")
     try:
         add_inventory(item_code, name, stock_group_code, unit_code, unit_price, vat_rate)
+        # Optional, and only touched when the field was submitted, so an older
+        # form (or an import) never wipes a barcode that is already set.
+        if "barcode" in request.form:
+            from database.inventory_db import set_item_barcode
+            set_item_barcode(item_code, request.form.get("barcode"))
         if selling_price_str:
             upsert_selling_price(item_code, selling_price_str)
         opening_qty = float(opening_quantity_str) if opening_quantity_str else 0.0

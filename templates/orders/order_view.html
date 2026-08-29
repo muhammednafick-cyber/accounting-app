@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}{{ order.order_number }}{% endblock %}
+
+{% block content %}
+{% set colour = {'Open': 'primary', 'Partially Billed': 'warning',
+                 'Closed': 'success', 'Cancelled': 'secondary'} %}
+{% set live = order.status in ['Open', 'Partially Billed'] %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div>
+            <h2 class="mb-1">
+                {{ order.order_number }}
+                <span class="badge bg-{{ colour.get(order.status, 'secondary') }} align-middle">
+                    {{ order.status }}</span>
+            </h2>
+            <div class="text-muted small">
+                {{ order.order_type }} &middot; {{ order.date | format_date }}
+                &middot; {{ order.party_ledger_name }}
+                {% if order.location_name %}&middot; {{ order.location_name }}{% endif %}
+            </div>
+            {% if order.status_reason %}
+            <div class="small text-muted mt-1"><em>{{ order.status_reason }}</em></div>
+            {% endif %}
+        </div>
+        <div class="text-end">
+            {% if live and order.pending_quantity > 0 %}
+            <a class="btn btn-primary btn-sm"
+               href="{{ url_for('voucher_bp.voucher', voucher_type=voucher_type | lower) }}?order={{ order.order_number }}">
+                Convert to {{ voucher_type }}
+            </a>
+            {% endif %}
+            <a class="btn btn-outline-secondary btn-sm"
+               href="{{ url_for('order_bp.print_order', order_number=order.order_number) }}"
+               target="_blank">Print</a>
+            <a class="btn btn-link btn-sm"
+               href="{{ url_for('order_bp.orders', order_slug=order_slug) }}">Back to list</a>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-3">
+            <div class="card"><div class="card-body py-2">
+                <div class="text-muted small">Ordered</div>
+                <div class="fs-5">{{ '%.2f' | format(order.ordered_quantity) }}</div>
+            </div></div>
+        </div>
+        <div class="col-md-3">
+            <div class="card"><div class="card-body py-2">
+                <div class="text-muted small">Billed</div>
+                <div class="fs-5">{{ '%.2f' | format(order.billed_quantity) }}</div>
+            </div></div>
+        </div>
+        <div class="col-md-3">
+            <div class="card"><div class="card-body py-2">
+                <div class="text-muted small">Pending</div>
+                <div class="fs-5">{{ '%.2f' | format(order.pending_quantity if order.pending_quantity > 0 else 0) }}</div>
+            </div></div>
+        </div>
+        <div class="col-md-3">
+            <div class="card"><div class="card-body py-2">
+                <div class="text-muted small">Order Value</div>
+                <div class="fs-5">{{ '%.2f' | format(order.order_value) }}</div>
+            </div></div>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header"><strong>Items</strong></div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Item</th>
+                        <th class="text-end">Ordered</th>
+                        <th class="text-end">Billed</th>
+                        <th class="text-end">Pending</th>
+                        <th class="text-end">Rate</th>
+                        <th class="text-end">Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in order['items'] %}
+                    <tr>
+                        <td>{{ item.item_name }}</td>
+                        <td class="text-end">{{ '%.2f' | format(item.quantity | float) }}</td>
+                        <td class="text-end">{{ '%.2f' | format(item.billed_quantity | float) }}</td>
+                        <td class="text-end {% if item.pending_quantity <= 0 %}text-success{% endif %}">
+                            {{ '%.2f' | format(item.pending_quantity if item.pending_quantity > 0 else 0) }}
+                        </td>
+                        <td class="text-end">{{ '%.2f' | format(item.unit_price | float) }}</td>
+                        <td class="text-end">
+                            {{ '%.2f' | format((item.quantity | float) * (item.unit_price | float)) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% if order.billings %}
+    <div class="card mb-3">
+        <div class="card-header"><strong>Billed by</strong></div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0">
+                <thead class="table-light">
+                    <tr><th>Voucher</th><th>Date</th><th>Item</th><th class="text-end">Quantity</th></tr>
+                </thead>
+                <tbody>
+                    {% for billing in order.billings %}
+                    <tr>
+                        <td>{{ billing.voucher_number }}</td>
+                        <td>{{ billing.date | format_date if billing.date else '' }}</td>
+                        <td>{{ billing.item_name }}</td>
+                        <td class="text-end">{{ '%.2f' | format(billing.quantity | float) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+            {% if live %}
+            <form method="POST" action="{{ url_for('order_bp.close') }}" class="d-flex gap-2"
+                  onsubmit="return confirm('Close {{ order.order_number }}? The pending quantity will not be billed.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="order_number" value="{{ order.order_number }}">
+                <input type="text" class="form-control form-control-sm" name="reason"
+                       placeholder="Reason (e.g. short supply)" style="width:240px">
+                <button class="btn btn-sm btn-outline-success">Close remaining</button>
+            </form>
+
+            {% if order.billed_quantity <= 0 %}
+            <form method="POST" action="{{ url_for('order_bp.cancel') }}" class="d-flex gap-2"
+                  onsubmit="return confirm('Cancel {{ order.order_number }}?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="order_number" value="{{ order.order_number }}">
+                <input type="text" class="form-control form-control-sm" name="reason"
+                       placeholder="Reason" style="width:200px">
+                <button class="btn btn-sm btn-outline-secondary">Cancel order</button>
+            </form>
+
+            <form method="POST" action="{{ url_for('order_bp.delete') }}"
+                  onsubmit="return confirm('Delete {{ order.order_number }} permanently?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="order_number" value="{{ order.order_number }}">
+                <button class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+            {% endif %}
+            {% else %}
+            <form method="POST" action="{{ url_for('order_bp.reopen') }}"
+                  onsubmit="return confirm('Reopen {{ order.order_number }}?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="order_number" value="{{ order.order_number }}">
+                <button class="btn btn-sm btn-outline-primary">Reopen</button>
+            </form>
+            <span class="text-muted small">
+                This order is {{ order.status | lower }}; it will not appear when billing a voucher.
+            </span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
