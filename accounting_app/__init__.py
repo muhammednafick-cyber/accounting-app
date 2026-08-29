@@ -94,6 +94,13 @@ def create_app():
         # 1. Allow static files and public auth routes
         if request.endpoint in ['static', 'auth_bp.signin', 'auth_bp.logout']:
             return None
+
+        # The phone app authenticates with a bearer token, not this session, so
+        # the browser rules below (redirect to sign-in, company gateway, idle
+        # timeout) do not apply to it. Each mobile endpoint checks its own
+        # token and answers with JSON rather than a redirect.
+        if (request.endpoint or '').startswith('mobile_bp.'):
+            return None
         
         # 2. Check Authentication
         if not current_user.is_authenticated:
@@ -262,6 +269,7 @@ def create_app():
     from .settlement_routes import settlement_bp
     from .order_routes import order_bp
     from .pos_routes import pos_bp
+    from .mobile_api import mobile_bp, init_token_table
     from .api_routes import api_bp
     from .ai_settings_routes import ai_settings_bp
 
@@ -287,6 +295,15 @@ def create_app():
     app.register_blueprint(settlement_bp)
     app.register_blueprint(order_bp)
     app.register_blueprint(pos_bp)
+    # Token-authenticated API for the shareholder phone app. Exempt from CSRF:
+    # it carries a bearer token, not a cookie, so there is no cross-site
+    # request to forge.
+    app.register_blueprint(mobile_bp)
+    csrf.exempt(mobile_bp)
+    try:
+        init_token_table()
+    except Exception as e:
+        print(f"api_tokens table not ready (non-fatal): {e}")
     app.register_blueprint(api_bp)
     app.register_blueprint(ai_settings_bp)
     

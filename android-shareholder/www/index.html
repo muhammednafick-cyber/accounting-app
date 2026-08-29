@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#1a3c6e">
+    <title>Shareholder</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ── Sign in ─────────────────────────────────────────────────────── -->
+<section id="signin" class="screen active">
+    <div class="signin-card">
+        <div class="brand">
+            <div class="brand-mark">◧</div>
+            <h1>Shareholder</h1>
+            <p class="muted">Live figures from your accounts</p>
+        </div>
+
+        <label for="server">Server</label>
+        <input id="server" type="url" inputmode="url" autocomplete="url"
+               placeholder="https://your-app.onrender.com">
+
+        <label for="login_id">Username or email</label>
+        <input id="login_id" type="text" autocomplete="username" autocapitalize="none">
+
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password">
+
+        <button id="signinBtn" class="primary">Sign in</button>
+        <p id="signinMessage" class="message"></p>
+        <p class="muted tiny">
+            Your password is sent to your own server over HTTPS and is never
+            stored on the phone. Only a sign-in token is kept.
+        </p>
+    </div>
+</section>
+
+<!-- ── Main ────────────────────────────────────────────────────────── -->
+<section id="main" class="screen">
+    <header class="topbar">
+        <div>
+            <div id="companyName" class="company">—</div>
+            <div id="periodLabel" class="muted tiny">—</div>
+        </div>
+        <button id="signoutBtn" class="ghost" title="Sign out">Sign out</button>
+    </header>
+
+    <!-- Dashboard -->
+    <div id="tab-dashboard" class="tab active">
+        <div id="dashboardBody" class="scroll">
+            <div class="loading">Loading…</div>
+        </div>
+    </div>
+
+    <!-- Shareholder detail -->
+    <div id="tab-shareholder" class="tab">
+        <div id="shareholderBody" class="scroll">
+            <div class="loading">Loading…</div>
+        </div>
+    </div>
+
+    <!-- Chat -->
+    <div id="tab-chat" class="tab">
+        <div id="chatLog" class="scroll chat-log">
+            <div class="bubble bot">
+                Ask me anything about the business — sales, profit, stock,
+                who owes what. For example: <em>“total sales this year”</em>,
+                <em>“top customers”</em>, <em>“cash balance”</em>.
+            </div>
+        </div>
+        <form id="chatForm" class="chat-input">
+            <input id="chatText" type="text" placeholder="Ask a question…"
+                   autocomplete="off">
+            <button class="primary" type="submit" aria-label="Send">→</button>
+        </form>
+    </div>
+
+    <nav class="tabbar">
+        <button class="tab-btn active" data-tab="dashboard">
+            <span>▤</span>Dashboard</button>
+        <button class="tab-btn" data-tab="shareholder">
+            <span>◔</span>Shareholding</button>
+        <button class="tab-btn" data-tab="chat">
+            <span>✦</span>Ask</button>
+    </nav>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

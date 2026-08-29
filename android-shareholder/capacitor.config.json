@@ -1,0 +1,12 @@
+{
+  "appId": "com.prodata.shareholder",
+  "appName": "Shareholder",
+  "webDir": "www",
+  "backgroundColor": "#1a3c6e",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

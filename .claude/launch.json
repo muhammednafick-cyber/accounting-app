@@ -4,8 +4,23 @@
     {
       "name": "Accounting App",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["app.py"],
+      "runtimeArgs": [
+        "app.py"
+      ],
       "port": 5000,
+      "autoPort": true
+    },
+    {
+      "name": "Shareholder App",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8100",
+        "--directory",
+        "android-shareholder/www"
+      ],
+      "port": 8100,
       "autoPort": true
     }
   ]
