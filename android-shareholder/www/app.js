@@ -537,7 +537,7 @@
         ['over_1y', 'Over a year', '#7f1d1d']
     ];
 
-    function ageingCard(title, ageing, blurb) {
+    function ageingCard(title, ageing, blurb, advanceNote) {
         // Nothing owed can still mean money held the other way round - a
         // customer who paid ahead. Saying "nothing outstanding" and hiding
         // that is how a credit balance gets missed entirely.
@@ -584,8 +584,7 @@
             // been paid ahead. Either way it is not part of what is owed.
             + (ageing.advances_total
                 ? '<div style="margin-top:14px"><div class="muted tiny" '
-                  + 'style="margin-bottom:4px">Paid in advance &middot; '
-                  + 'held the other way round, not included above</div>'
+                  + 'style="margin-bottom:4px">' + advanceNote + '</div>'
                   + ageing.advances.map(function (p) {
                       return row(p.name, p.amount);
                   }).join('') + '</div>'
@@ -599,9 +598,13 @@
 
             var html = periodBar(d.period.label)
                 + ageingCard('Owed to us', d.receivables,
-                    'Customers still to pay')
+                    'Customers still to pay',
+                    'Customers in credit &middot; they have paid ahead, so '
+                    + 'this is not money coming in')
                 + ageingCard('We owe', d.payables,
-                    'Suppliers still to be paid');
+                    'Suppliers still to be paid',
+                    'Suppliers in debit &middot; we have paid ahead, so this '
+                    + 'is not money going out');
 
             if (d.cash_accounts.length) {
                 html += '<div class="card"><h2>Where the cash is</h2>'
