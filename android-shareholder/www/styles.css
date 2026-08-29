@@ -194,6 +194,31 @@ button.ghost {
 .bubble .rv-num { text-align: right; }
 .bubble b { color: var(--navy); }
 
+/* Choice chips the assistant offers ("Yes, use AI" / "No"). */
+.bubble .rv-pick {
+    display: inline-block; margin: 8px 6px 0 0; padding: 8px 14px;
+    border: 1.5px solid var(--blue); border-radius: 999px;
+    background: #fff; color: var(--blue); font-size: .82rem; font-weight: 600;
+}
+.bubble .rv-pick:disabled { opacity: .45; border-color: var(--muted);
+                            color: var(--muted); }
+
+.chat-options {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px 0; font-size: .74rem;
+}
+.switch { display: flex; align-items: center; gap: 6px; font-weight: 600;
+          white-space: nowrap; }
+.switch input { width: 34px; height: 20px; margin: 0; accent-color: var(--blue); }
+.chat-options .tiny { line-height: 1.25; }
+
+/* Where an answer came from - shown under every reply, as on the web. */
+.bubble .rv-src { display: block; margin-top: 8px; font-size: .68rem;
+                  color: var(--muted); }
+.bubble .rv-src-ai { color: #7c3aed; font-weight: 600; }
+.bubble .rv-note { display: block; margin-top: 6px; font-size: .7rem;
+                   color: var(--muted); }
+
 .chat-input {
     display: flex; gap: 8px; padding: 10px 12px;
     border-top: 1px solid var(--line); background: var(--card);

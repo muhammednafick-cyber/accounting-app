@@ -396,6 +396,32 @@ def chat(user_id, company_id):
         return jsonify({"success": False,
                         "message": "Ask a question first."}), 400
 
+    # The web chat is capped at 30 questions a minute because a question that
+    # falls through to the model is a billed OpenRouter call. The phone has to
+    # be capped too, and keyed on the token's user rather than the IP - a
+    # dozen phones on one office connection share an address.
+    from database.app_state_db import rate_limit_check
+    try:
+        allowed, retry_after = rate_limit_check(
+            "mobile_chat", f"user:{user_id}", 30, 60)
+    except Exception:
+        allowed, retry_after = True, 0
+    if not allowed:
+        response = jsonify({
+            "success": False,
+            "message": (f"That is a lot of questions at once. Please wait "
+                        f"{retry_after}s and ask again.")})
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+
+    # Continuity: the browser identifies a conversation by its session
+    # cookie, which this caller does not have. Pin it to the signed-in user
+    # instead, so follow-ups and the assistant's own yes/no questions work the
+    # same way they do on the web.
+    from .chat_context import use_conversation
+    use_conversation(str(data.get("session_id") or f"mobile-user-{user_id}"))
+
     from .chatbot_service import process_chat_query
     try:
         reply = process_chat_query(

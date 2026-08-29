@@ -34,9 +34,29 @@ def _blank():
     }
 
 
+def use_conversation(conversation_id):
+    """Pin this request's conversation to an explicit id.
+
+    The browser gets its id from the session cookie, but a token-authenticated
+    caller - the phone app - sends no cookie, so every question would start a
+    fresh conversation and a follow-up ("and for last month?") or an answer to
+    a question the assistant asked ("shall I use AI? yes") would have nothing
+    to attach to. Callers with their own stable identity set it here instead.
+    """
+    from flask import g
+    g.chat_conversation_id = conversation_id
+
+
 def _session_id():
     """The id for the current request's session, creating one if needed."""
-    from flask import session
+    from flask import g, session
+
+    try:
+        pinned = getattr(g, "chat_conversation_id", None)
+        if pinned:
+            return pinned
+    except RuntimeError:
+        return None  # No request context (tests, CLI)
 
     try:
         sid = session.get(SESSION_KEY)

@@ -326,12 +326,39 @@
         var question = input.value.trim();
         if (!question) return;
         input.value = '';
+        ask(question);
+    });
+
+    // The assistant answers some questions with choice chips - "did you mean
+    // ABC Trading?", "shall I use AI? yes / no". Clicking one is the same as
+    // typing it, so the server reads it as the reply to what it just asked.
+    // Without this the AI path is unreachable from the phone: it always asks
+    // permission first, and an unclickable button is a dead end.
+    el('chatLog').addEventListener('click', function (event) {
+        var pick = event.target.closest && event.target.closest('.rv-pick');
+        if (!pick) return;
+        event.preventDefault();
+        var value = pick.getAttribute('data-value') || pick.textContent.trim();
+        if (!value) return;
+        Array.prototype.forEach.call(
+            pick.parentElement.querySelectorAll('.rv-pick'),
+            function (b) { b.disabled = true; });
+        ask(value);
+    });
+
+    function ask(question) {
         addBubble(question, 'me');
 
         var thinking = addBubble('…', 'bot');
         api('/api/mobile/chat', {
             method: 'POST',
-            body: { question: question, ai_enabled: true, history: history }
+            body: {
+                question: question,
+                // The coded reports answer first either way; this decides
+                // whether anything they cannot answer goes to the AI model.
+                ai_enabled: el('aiToggle').checked,
+                history: history
+            }
         }).then(function (payload) {
             thinking.remove();
             renderAnswer(payload.data);
@@ -340,7 +367,7 @@
             thinking.remove();
             addBubble('Sorry - ' + error.message, 'bot');
         });
-    });
+    }
 
     function addBubble(text, who) {
         var node = document.createElement('div');
