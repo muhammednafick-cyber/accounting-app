@@ -382,19 +382,42 @@ def shareholder(user_id, company_id):
     }})
 
 
-def _ageing_summary(group_code, company_id):
-    """How overdue the money is - the question behind "are we being paid?"."""
+def _ageing_summary(group_code, company_id, as_of=None):
+    """How overdue the money is - the question behind "are we being paid?".
+
+    The ageing report buckets `abs(balance)`, so direction has to come from the
+    signed balance it also returns. A customer who has paid in advance carries
+    a credit balance: that is money we owe back, not money owed to us, and
+    counting it as receivable overstates what is coming in. Those parties are
+    reported separately as advances and kept out of the buckets entirely.
+    """
     from database.reports_db import get_ageing_report_data
     try:
-        rows = get_ageing_report_data(group_code, company_id=company_id) or []
+        rows = get_ageing_report_data(group_code, as_of_date=as_of,
+                                      company_id=company_id) or []
     except Exception as exc:
         print(f"[mobile] ageing failed: {exc}")
         return None
 
+    # Debtors sit on the debit side, creditors on the credit side. A balance on
+    # the other side is an advance, not an overdue amount.
+    expect_debit = group_code == "G007"
+
     buckets = {"not_due": 0.0, "0_90": 0.0, "91_180": 0.0, "181_270": 0.0,
                "271_365": 0.0, "over_1y": 0.0}
-    parties = []
+    parties, advances = [], []
     for row in rows:
+        balance = float(row.get("balance") or 0)
+        if abs(balance) < 0.005:
+            continue
+        is_debit = balance > 0
+        total = abs(float((row.get("buckets") or {}).get("total") or 0))
+
+        if is_debit != expect_debit:
+            advances.append({"name": row.get("ledger_name"),
+                             "amount": round(total, 2)})
+            continue
+
         b = row.get("buckets") or {}
         buckets["not_due"] += float(b.get("not_due") or 0)
         buckets["0_90"] += float(b.get("0_90") or 0)
@@ -404,12 +427,10 @@ def _ageing_summary(group_code, company_id):
         buckets["over_1y"] += (float(b.get("1_2y") or 0)
                                + float(b.get("2_3y") or 0)
                                + float(b.get("3y_plus") or 0))
-        total = float(b.get("total") or 0)
-        if abs(total) > 0.005:
-            parties.append({"name": row.get("ledger_name"),
-                            "amount": round(total, 2)})
+        parties.append({"name": row.get("ledger_name"), "amount": round(total, 2)})
 
-    parties.sort(key=lambda p: -abs(p["amount"]))
+    parties.sort(key=lambda p: -p["amount"])
+    advances.sort(key=lambda p: -p["amount"])
     overdue = round(sum(v for k, v in buckets.items() if k != "not_due"), 2)
     return {
         "total": round(sum(buckets.values()), 2),
@@ -417,7 +438,99 @@ def _ageing_summary(group_code, company_id):
         "overdue": overdue,
         "buckets": {k: round(v, 2) for k, v in buckets.items()},
         "top": parties[:5],
+        # Credit balances on a customer (or debit balances on a supplier):
+        # money sitting the other way round.
+        "advances": advances[:5],
+        "advances_total": round(sum(a["amount"] for a in advances), 2),
     }
+
+
+def _requested_period(company_id):
+    """(from, to, label) for this request - ?from=&to=, else the open FY.
+
+    Every figure a shareholder is shown is only meaningful against a period, so
+    the range is echoed back with the data and shown on screen.
+    """
+    start = (request.args.get("from") or "").strip()[:10]
+    end = (request.args.get("to") or "").strip()[:10]
+    if start and end:
+        try:
+            datetime.strptime(start, "%Y-%m-%d")
+            datetime.strptime(end, "%Y-%m-%d")
+            if start <= end:
+                return start, end, f"{start} to {end}"
+        except ValueError:
+            pass
+    fy_start, fy_end = _financial_year(company_id)
+    return fy_start, fy_end, "Current financial year"
+
+
+@mobile_bp.route("/api/mobile/reports")
+@_auth_required
+def reports(user_id, company_id):
+    """Summaries a shareholder can pull for any period, including last year:
+    sales and purchases month by month, and income and expenses by group."""
+    from database.reports_db import get_profit_and_loss_data
+
+    start, end, label = _requested_period(company_id)
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        # Invoiced value per month. Voucher amounts are the gross totals, so
+        # this is what was billed rather than revenue net of VAT - said plainly
+        # on screen so the two are never confused.
+        cursor.execute("""
+            SELECT TO_CHAR(date::DATE, 'YYYY-MM') AS period,
+                   COALESCE(SUM(CASE WHEN voucher_type = 'Sales'
+                                     THEN amount END), 0) AS sales,
+                   COALESCE(SUM(CASE WHEN voucher_type = 'Purchase'
+                                     THEN amount END), 0) AS purchases
+            FROM vouchers
+            WHERE company_id = %s AND voucher_type IN ('Sales', 'Purchase')
+              AND date >= %s AND date <= %s
+            GROUP BY period
+            ORDER BY period
+        """, (company_id, start, end))
+        monthly = [{"period": r[0],
+                    "sales": round(float(r[1] or 0), 2),
+                    "purchases": round(float(r[2] or 0), 2)}
+                   for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+    statement, income, expenses, net_profit = get_profit_and_loss_data(
+        from_date=start, to_date=end, company_id=company_id)
+
+    def by_group(section):
+        out = []
+        for group, ledgers in (section or {}).items():
+            total = sum(float(entry.get("amount") or 0)
+                        for entry in (ledgers or []))
+            if abs(total) > 0.005:
+                out.append({"group": group, "amount": round(total, 2),
+                            "ledgers": sorted(
+                                [{"name": e.get("ledger_name"),
+                                  "amount": round(float(e.get("amount") or 0), 2)}
+                                 for e in ledgers or []],
+                                key=lambda x: -abs(x["amount"]))[:8]})
+        return sorted(out, key=lambda g: -abs(g["amount"]))
+
+    return jsonify({"success": True, "data": {
+        "period": {"from": start, "to": end, "label": label},
+        "monthly": monthly,
+        "monthly_totals": {
+            "sales": round(sum(m["sales"] for m in monthly), 2),
+            "purchases": round(sum(m["purchases"] for m in monthly), 2),
+        },
+        "income_by_group": by_group((statement or {}).get("income")),
+        "expense_by_group": by_group((statement or {}).get("expenses")),
+        "totals": {
+            "income": round(float(income or 0), 2),
+            "expenses": round(float(expenses or 0), 2),
+            "net_profit": round(float(net_profit or 0), 2),
+        },
+    }})
 
 
 @mobile_bp.route("/api/mobile/insights")
@@ -427,7 +540,7 @@ def insights(user_id, company_id):
     where the cash sits, what is owed in VAT, and how busy the books are."""
     from database.analysis_db import get_monthly_purchase_trend
 
-    start, end = _financial_year(company_id)
+    start, end, period_label = _requested_period(company_id)
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -509,9 +622,11 @@ def insights(user_id, company_id):
         conn.close()
 
     return jsonify({"success": True, "data": {
-        "period": {"from": start, "to": end},
-        "receivables": _ageing_summary("G007", company_id),
-        "payables": _ageing_summary("G008", company_id),
+        "period": {"from": start, "to": end, "label": period_label},
+        # Ageing is a position, so it is measured at the end of the period
+        # rather than over it.
+        "receivables": _ageing_summary("G007", company_id, as_of=end),
+        "payables": _ageing_summary("G008", company_id, as_of=end),
         "cash_accounts": cash_accounts,
         "top_items": top_items,
         "purchase_trend": _trend_series(

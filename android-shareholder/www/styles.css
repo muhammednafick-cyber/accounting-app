@@ -172,6 +172,39 @@ button.ghost {
 .bar-labels span { flex: 1; text-align: center; font-size: .6rem;
                    color: var(--muted); }
 
+/* Period filter - presets first, because a shareholder almost always
+   wants "this year" or "last year" rather than two exact dates. */
+.period-bar { background: var(--card); border: 1px solid var(--line);
+              border-radius: var(--radius); padding: 12px 14px;
+              margin-bottom: 12px; }
+.period-bar .label { font-size: .72rem; color: var(--muted);
+                     text-transform: uppercase; letter-spacing: .05em;
+                     font-weight: 700; margin-bottom: 8px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.presets button {
+    padding: 7px 12px; border-radius: 999px; font-size: .76rem;
+    font-weight: 600; background: #eef3f9; color: var(--navy);
+    border: 1px solid transparent;
+}
+.presets button.on { background: var(--blue); color: #fff; }
+.date-row { display: flex; align-items: flex-end; gap: 8px; }
+.date-row > div { flex: 1; min-width: 0; }
+.date-row label { margin: 0 0 3px; font-size: .68rem; }
+.date-row input { padding: 9px 8px; font-size: .82rem; }
+.date-row button {
+    padding: 10px 14px; border-radius: 10px; background: var(--navy);
+    color: #fff; font-weight: 600; font-size: .8rem; white-space: nowrap;
+}
+
+/* Two-series month bars: sales against purchases */
+.mbars { display: flex; align-items: flex-end; gap: 8px; height: 120px; }
+.mbar { flex: 1; display: flex; align-items: flex-end; justify-content: center;
+        gap: 2px; height: 100%; }
+.mbar i { display: block; width: 45%; border-radius: 3px 3px 0 0;
+          min-height: 2px; }
+.mbar .s { background: var(--blue); }
+.mbar .p { background: #f59e0b; }
+
 /* Ageing bar - how overdue the money is, at a glance */
 .age-bar { display: flex; height: 10px; border-radius: 6px; overflow: hidden;
            margin: 8px 0 10px; background: var(--line); }

@@ -188,7 +188,8 @@
         Promise.all([
             loadDashboard().catch(function () {}),
             loadShareholder().catch(function () {}),
-            loadInsights().catch(function () {})
+            loadInsights().catch(function () {}),
+            loadReports().catch(function () {})
         ]).then(function () {
             button.classList.remove('spinning');
             var now = new Date();
@@ -353,6 +354,176 @@
         });
     }
 
+    // ----------------------------------------------------- period filter
+
+    // Null means "whatever the server calls the current financial year",
+    // which is what a shareholder wants on opening the app.
+    var period = null;
+    var presetName = 'fy';
+
+    function periodQuery() {
+        return period ? ('?from=' + period.from + '&to=' + period.to) : '';
+    }
+
+    function periodBar(label) {
+        var from = period ? period.from : '';
+        var to = period ? period.to : '';
+        return '<div class="period-bar">'
+            + '<div class="label">Period &middot; ' + escapeHtml(label || '')
+            + '</div>'
+            + '<div class="presets">'
+            + preset('fy', 'This financial year')
+            + preset('year', 'This year')
+            + preset('last', 'Last year')
+            + preset('q', 'Last 90 days')
+            + '</div>'
+            + '<div class="date-row">'
+            + '<div><label for="fromDate">From</label>'
+            + '<input type="date" id="fromDate" value="' + from + '"></div>'
+            + '<div><label for="toDate">To</label>'
+            + '<input type="date" id="toDate" value="' + to + '"></div>'
+            + '<button type="button" data-apply="1">Apply</button>'
+            + '</div></div>';
+    }
+
+    function preset(key, text) {
+        return '<button type="button" data-preset="' + key + '"'
+            + (presetName === key ? ' class="on"' : '') + '>' + text
+            + '</button>';
+    }
+
+    function iso(date) { return date.toISOString().slice(0, 10); }
+
+    // One delegated handler covers the bar wherever it is rendered, including
+    // after a reload replaces the markup.
+    document.addEventListener('click', function (event) {
+        var target = event.target;
+        var chip = target.closest && target.closest('[data-preset]');
+        if (chip) {
+            var now = new Date();
+            presetName = chip.dataset.preset;
+            if (presetName === 'fy') {
+                period = null;                       // server decides
+            } else if (presetName === 'year') {
+                period = { from: now.getFullYear() + '-01-01',
+                           to: now.getFullYear() + '-12-31' };
+            } else if (presetName === 'last') {
+                period = { from: (now.getFullYear() - 1) + '-01-01',
+                           to: (now.getFullYear() - 1) + '-12-31' };
+            } else {
+                var back = new Date(now.getTime() - 90 * 86400000);
+                period = { from: iso(back), to: iso(now) };
+            }
+            reloadPeriodScreens();
+            return;
+        }
+        if (target.dataset && target.dataset.apply) {
+            var from = document.getElementById('fromDate').value;
+            var to = document.getElementById('toDate').value;
+            if (!from || !to) { alert('Pick both dates.'); return; }
+            if (from > to) { alert('The "from" date is after the "to" date.'); return; }
+            period = { from: from, to: to };
+            presetName = '';
+            reloadPeriodScreens();
+        }
+    });
+
+    function reloadPeriodScreens() {
+        el('insightsBody').innerHTML = '<div class="loading">Loading…</div>';
+        el('reportsBody').innerHTML = '<div class="loading">Loading…</div>';
+        loadInsights().catch(function () {});
+        loadReports().catch(function () {});
+    }
+
+    // ----------------------------------------------------------- reports
+
+    function loadReports() {
+        return api('/api/mobile/reports' + periodQuery()).then(function (payload) {
+            var d = payload.data;
+            var html = periodBar(d.period.label);
+
+            var peak = Math.max.apply(null, d.monthly.map(function (m) {
+                return Math.max(m.sales, m.purchases);
+            }).concat([1]));
+
+            html += '<div class="card"><h2>Sales and purchases by month</h2>';
+            if (!d.monthly.length) {
+                html += '<div class="muted tiny">Nothing invoiced in this period.</div>';
+            } else {
+                html += '<div class="mbars">' + d.monthly.map(function (m) {
+                    return '<div class="mbar">'
+                        + '<i class="s" style="height:' + ((m.sales / peak) * 100) + '%"></i>'
+                        + '<i class="p" style="height:' + ((m.purchases / peak) * 100) + '%"></i>'
+                        + '</div>';
+                }).join('') + '</div>'
+                    + '<div class="bar-labels">' + d.monthly.map(function (m) {
+                        return '<span>' + escapeHtml(m.period.slice(5)) + '</span>';
+                    }).join('') + '</div>'
+                    + '<div class="age-legend" style="margin-top:8px">'
+                    + '<span><i style="background:var(--blue)"></i>Sales</span>'
+                    + '<span><i style="background:#f59e0b"></i>Purchases</span>'
+                    + '</div>'
+                    + '<div style="margin-top:12px">'
+                    + d.monthly.map(function (m) {
+                        return '<div class="row"><span class="name">'
+                            + escapeHtml(m.period) + '</span><span class="amount">'
+                            + exact(m.sales) + ' / ' + exact(m.purchases)
+                            + '</span></div>';
+                    }).join('')
+                    + '<div class="row total"><span class="name">Total invoiced</span>'
+                    + '<span class="amount">' + exact(d.monthly_totals.sales)
+                    + ' / ' + exact(d.monthly_totals.purchases) + '</span></div>'
+                    + '</div>'
+                    + '<div class="muted tiny" style="margin-top:8px">'
+                    + 'Sales / purchases, as invoiced (including VAT).</div>';
+            }
+            html += '</div>';
+
+            html += groupCard('Income by group', d.income_by_group,
+                              d.totals.income);
+            html += groupCard('Expenses by group', d.expense_by_group,
+                              d.totals.expenses);
+
+            html += '<div class="card headline">'
+                + '<div class="label">Net ' + (d.totals.net_profit >= 0 ? 'profit' : 'loss')
+                + ' for the period</div><div class="value '
+                + (d.totals.net_profit >= 0 ? 'pos' : 'neg') + '" '
+                + 'style="font-size:1.7rem">' + money(d.totals.net_profit)
+                + '</div><div class="sub">' + escapeHtml(d.period.label)
+                + '</div></div>';
+
+            el('reportsBody').innerHTML = html;
+        }).catch(function (error) {
+            el('reportsBody').innerHTML = '<div class="card">Could not load: '
+                + escapeHtml(error.message) + '</div>';
+            throw error;
+        });
+    }
+
+    // Groups first, with the ledgers under each - a shareholder wants the
+    // shape before the detail, but the detail is what prompts the question.
+    function groupCard(title, groups, total) {
+        if (!groups || !groups.length) {
+            return '<div class="card"><h2>' + title + '</h2>'
+                + '<div class="muted tiny">Nothing in this period.</div></div>';
+        }
+        return '<div class="card"><h2>' + title + '</h2>'
+            + groups.map(function (g) {
+                return '<div class="row"><span class="name">'
+                    + escapeHtml(g.group) + '</span><span class="amount">'
+                    + exact(g.amount) + '</span></div>'
+                    + g.ledgers.map(function (l) {
+                        return '<div class="row" style="padding-left:14px">'
+                            + '<span class="name muted tiny">'
+                            + escapeHtml(l.name) + '</span>'
+                            + '<span class="amount muted tiny">'
+                            + exact(l.amount) + '</span></div>';
+                    }).join('');
+            }).join('')
+            + '<div class="row total"><span class="name">Total</span>'
+            + '<span class="amount">' + exact(total) + '</span></div></div>';
+    }
+
     // ---------------------------------------------------------- insights
 
     // Colours run "fine" to "worrying" as debt ages, so the bar reads at a
@@ -367,7 +538,10 @@
     ];
 
     function ageingCard(title, ageing, blurb) {
-        if (!ageing || !ageing.total) {
+        // Nothing owed can still mean money held the other way round - a
+        // customer who paid ahead. Saying "nothing outstanding" and hiding
+        // that is how a credit balance gets missed entirely.
+        if (!ageing || (!ageing.total && !ageing.advances_total)) {
             return '<div class="card"><h2>' + title + '</h2>'
                 + '<div class="muted tiny">Nothing outstanding.</div></div>';
         }
@@ -390,26 +564,41 @@
             + '<span class="name">Total<span class="sub">' + blurb
             + '</span></span>'
             + '<span class="amount">' + exact(ageing.total) + '</span></div>'
-            + '<div class="age-bar">' + bar + '</div>'
-            + '<div class="age-legend">' + legend + '</div>'
+            + (ageing.total
+                ? '<div class="age-bar">' + bar + '</div>'
+                  + '<div class="age-legend">' + legend + '</div>'
+                : '')
             + (ageing.overdue > 0
                 ? '<div style="margin-top:10px"><span class="pill warn">'
                   + money(ageing.overdue) + ' overdue</span></div>'
-                : '<div style="margin-top:10px"><span class="pill good">'
-                  + 'Nothing overdue</span></div>')
+                : (ageing.total
+                    ? '<div style="margin-top:10px"><span class="pill good">'
+                      + 'Nothing overdue</span></div>'
+                    : ''))
             + (ageing.top.length
                 ? '<div style="margin-top:12px">' + ageing.top.map(function (p) {
                     return row(p.name, p.amount);
                 }).join('') + '</div>'
                 : '')
+            // A customer in credit has paid ahead; a supplier in debit has
+            // been paid ahead. Either way it is not part of what is owed.
+            + (ageing.advances_total
+                ? '<div style="margin-top:14px"><div class="muted tiny" '
+                  + 'style="margin-bottom:4px">Paid in advance &middot; '
+                  + 'held the other way round, not included above</div>'
+                  + ageing.advances.map(function (p) {
+                      return row(p.name, p.amount);
+                  }).join('') + '</div>'
+                : '')
             + '</div>';
     }
 
     function loadInsights() {
-        return api('/api/mobile/insights').then(function (payload) {
+        return api('/api/mobile/insights' + periodQuery()).then(function (payload) {
             var d = payload.data;
 
-            var html = ageingCard('Owed to us', d.receivables,
+            var html = periodBar(d.period.label)
+                + ageingCard('Owed to us', d.receivables,
                     'Customers still to pay')
                 + ageingCard('We owe', d.payables,
                     'Suppliers still to be paid');
