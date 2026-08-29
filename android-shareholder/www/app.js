@@ -176,16 +176,53 @@
 
     function openApp() {
         showScreen('main');
-        loadDashboard();
-        loadShareholder();
+        refreshAll();
     }
 
+    // One place that reloads every data screen, so the refresh button, the
+    // pull-down gesture and a fresh sign-in all behave identically.
+    function refreshAll() {
+        var button = el('refreshBtn');
+        button.classList.add('spinning');
+        el('updatedLabel').textContent = 'Refreshing...';
+        Promise.all([
+            loadDashboard().catch(function () {}),
+            loadShareholder().catch(function () {}),
+            loadInsights().catch(function () {})
+        ]).then(function () {
+            button.classList.remove('spinning');
+            var now = new Date();
+            el('updatedLabel').textContent = 'Updated '
+                + ('0' + now.getHours()).slice(-2) + ':'
+                + ('0' + now.getMinutes()).slice(-2);
+        });
+    }
+
+    el('refreshBtn').addEventListener('click', refreshAll);
+
+    // Pull down at the top of a list to refresh - what a phone user tries
+    // first, before hunting for a button.
+    (function () {
+        var startY = 0, pulling = false;
+        document.addEventListener('touchstart', function (e) {
+            var scroller = e.target.closest && e.target.closest('.scroll');
+            pulling = !!scroller && scroller.scrollTop <= 0;
+            startY = e.touches[0].clientY;
+        }, { passive: true });
+        document.addEventListener('touchend', function (e) {
+            if (!pulling) return;
+            pulling = false;
+            if (e.changedTouches[0].clientY - startY > 90) refreshAll();
+        }, { passive: true });
+    }());
+
     function loadDashboard() {
-        api('/api/mobile/dashboard').then(function (payload) {
+        return api('/api/mobile/dashboard').then(function (payload) {
             var d = payload.data;
             el('companyName').textContent = d.company || 'Company';
-            el('periodLabel').textContent = 'Year to date · '
-                + showDate(d.period.from) + ' to ' + showDate(d.period.to);
+            // Short enough to sit on one line next to the buttons.
+            el('periodLabel').textContent = showDate(d.period.from) + ' – '
+                + showDate(d.period.to);
 
             var profit = d.headline.net_profit;
             var trend = Array.isArray(d.sales_trend) ? d.sales_trend : [];
@@ -265,7 +302,7 @@
     // ------------------------------------------------------- shareholder
 
     function loadShareholder() {
-        api('/api/mobile/shareholder').then(function (payload) {
+        return api('/api/mobile/shareholder').then(function (payload) {
             var d = payload.data;
             var pl = d.profit_and_loss;
 
@@ -313,6 +350,117 @@
         }).catch(function (error) {
             el('shareholderBody').innerHTML = '<div class="card">Could not load: '
                 + escapeHtml(error.message) + '</div>';
+        });
+    }
+
+    // ---------------------------------------------------------- insights
+
+    // Colours run "fine" to "worrying" as debt ages, so the bar reads at a
+    // glance before anyone studies the legend.
+    var AGE_BANDS = [
+        ['not_due', 'Not due', '#1a7f37'],
+        ['0_90', '0-90 days', '#2563ab'],
+        ['91_180', '91-180', '#d97706'],
+        ['181_270', '181-270', '#ea580c'],
+        ['271_365', '271-365', '#dc2626'],
+        ['over_1y', 'Over a year', '#7f1d1d']
+    ];
+
+    function ageingCard(title, ageing, blurb) {
+        if (!ageing || !ageing.total) {
+            return '<div class="card"><h2>' + title + '</h2>'
+                + '<div class="muted tiny">Nothing outstanding.</div></div>';
+        }
+        var total = ageing.total || 1;
+        var bar = AGE_BANDS.map(function (band) {
+            var value = ageing.buckets[band[0]] || 0;
+            if (value <= 0) return '';
+            return '<span style="width:' + ((value / total) * 100)
+                + '%;background:' + band[2] + '"></span>';
+        }).join('');
+        var legend = AGE_BANDS.filter(function (band) {
+            return (ageing.buckets[band[0]] || 0) > 0;
+        }).map(function (band) {
+            return '<span><i style="background:' + band[2] + '"></i>'
+                + band[1] + ' ' + money(ageing.buckets[band[0]]) + '</span>';
+        }).join('');
+
+        return '<div class="card"><h2>' + title + '</h2>'
+            + '<div class="row" style="border:0;padding-top:0">'
+            + '<span class="name">Total<span class="sub">' + blurb
+            + '</span></span>'
+            + '<span class="amount">' + exact(ageing.total) + '</span></div>'
+            + '<div class="age-bar">' + bar + '</div>'
+            + '<div class="age-legend">' + legend + '</div>'
+            + (ageing.overdue > 0
+                ? '<div style="margin-top:10px"><span class="pill warn">'
+                  + money(ageing.overdue) + ' overdue</span></div>'
+                : '<div style="margin-top:10px"><span class="pill good">'
+                  + 'Nothing overdue</span></div>')
+            + (ageing.top.length
+                ? '<div style="margin-top:12px">' + ageing.top.map(function (p) {
+                    return row(p.name, p.amount);
+                }).join('') + '</div>'
+                : '')
+            + '</div>';
+    }
+
+    function loadInsights() {
+        return api('/api/mobile/insights').then(function (payload) {
+            var d = payload.data;
+
+            var html = ageingCard('Owed to us', d.receivables,
+                    'Customers still to pay')
+                + ageingCard('We owe', d.payables,
+                    'Suppliers still to be paid');
+
+            if (d.cash_accounts.length) {
+                html += '<div class="card"><h2>Where the cash is</h2>'
+                    + d.cash_accounts.map(function (a) {
+                        return row(a.name, a.amount, a.group);
+                    }).join('') + '</div>';
+            }
+
+            if (d.top_items.length) {
+                html += '<div class="card"><h2>Best sellers this year</h2>'
+                    + d.top_items.map(function (i) {
+                        return row(i.name, i.value, exact(i.quantity) + ' sold');
+                    }).join('') + '</div>';
+            }
+
+            if (d.idle_stock.length) {
+                html += '<div class="card"><h2>Stock not sold this year</h2>'
+                    + '<div class="muted tiny" style="margin:-6px 0 8px">'
+                    + 'Cash sitting on a shelf - worth asking about.</div>'
+                    + d.idle_stock.map(function (i) {
+                        return row(i.name, i.value,
+                                   exact(i.quantity) + ' in stock');
+                    }).join('') + '</div>';
+            }
+
+            html += '<div class="card"><h2>VAT position</h2>'
+                + row('Output VAT (collected)', d.vat.output)
+                + row('Input VAT (paid)', d.vat.input)
+                + '<div class="row total"><span class="name">'
+                + (d.vat.payable >= 0 ? 'Payable to authority' : 'Refundable')
+                + '</span><span class="amount">'
+                + exact(Math.abs(d.vat.payable)) + '</span></div></div>'
+
+                + '<div class="card"><h2>Book activity</h2>'
+                + row('Vouchers this year', d.activity.vouchers_this_year)
+                + '<div class="row"><span class="name">Last entry</span>'
+                + '<span class="amount">'
+                + (d.activity.last_entry ? showDate(d.activity.last_entry) : '-')
+                + '</span></div></div>'
+
+                + '<div class="note">Figures update as the books are kept. '
+                + 'Pull down, or tap the refresh icon, for the latest.</div>';
+
+            el('insightsBody').innerHTML = html;
+        }).catch(function (error) {
+            el('insightsBody').innerHTML = '<div class="card">Could not load: '
+                + escapeHtml(error.message) + '</div>';
+            throw error;
         });
     }
 
