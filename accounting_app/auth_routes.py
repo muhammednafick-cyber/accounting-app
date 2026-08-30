@@ -46,6 +46,17 @@ def signin():
     if request.method == "POST":
         login_id = request.form.get("login_id") or request.form.get("username")
         password = request.form["password"]
+
+        # Brute-force guard: a password can only be guessed as fast as this
+        # allows, per IP and per account.
+        from .rate_limit import login_attempt_allowed
+        allowed, retry_after = login_attempt_allowed(login_id)
+        if not allowed:
+            return render_template(
+                "signin.html",
+                error=f"Too many sign-in attempts. Try again in {retry_after} seconds.",
+            ), 429
+
         user_data = get_user_by_login_id(login_id)
         if user_data and check_password_hash(user_data[3], password):
             user = User(

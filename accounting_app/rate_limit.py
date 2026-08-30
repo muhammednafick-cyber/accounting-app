@@ -62,6 +62,29 @@ def rate_limit(limit, window=60, bucket=None, message=None):
     return decorator
 
 
+def login_attempt_allowed(login_id=None, limit=10, window=300):
+    """Throttle password guesses: at most `limit` failed-or-any attempts per
+    IP per `window` seconds, and the same per target account, so neither a
+    single machine nor a distributed guess against one user gets a free run.
+
+    Returns (allowed, retry_after_seconds).
+    """
+    from database.app_state_db import rate_limit_check
+
+    try:
+        ip = request.remote_addr or "unknown"
+        allowed, retry = rate_limit_check("login", f"ip:{ip}", limit, window)
+        if not allowed:
+            return False, retry
+        if login_id:
+            return rate_limit_check("login", f"acct:{login_id.lower()}",
+                                    limit, window)
+        return True, 0
+    except Exception:
+        # Counter store down: fail open, same reasoning as _check above.
+        return True, 0
+
+
 def reset():
     """Clear all counters. For tests."""
     from database.app_state_db import rate_limit_clear

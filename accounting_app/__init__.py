@@ -62,6 +62,14 @@ def create_app():
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
         seconds=IDLE_TIMEOUT_SECONDS or 3600)
     
+    # Session cookie hardening. Secure requires HTTPS, so it follows the
+    # deployment: Render (and any other host that sets this) serves TLS.
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    if os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true') \
+            or os.environ.get('RENDER'):
+        app.config['SESSION_COOKIE_SECURE'] = True
+
     app.config["BASE_PATH"] = resource_path
     
     # Login manager
@@ -78,8 +86,11 @@ def create_app():
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['X-XSS-Protection'] = '1; mode=block'
-        # HSTS - Enable in production with SSL
-        # response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        # HSTS only where TLS actually exists (Render, or explicitly enabled)
+        if os.environ.get('RENDER') or \
+                os.environ.get('ENABLE_HSTS', '').lower() in ('1', 'true'):
+            response.headers['Strict-Transport-Security'] = \
+                'max-age=31536000; includeSubDomains'
         return response
     
     # Ensure DB and default admin
@@ -187,10 +198,13 @@ def create_app():
         if isinstance(e, HTTPException):
             return e
         app.logger.exception("Unhandled exception")
+        # The full traceback is in the server log above; the client gets a
+        # generic message so internals (paths, SQL, table names) never leak.
+        detail = str(e) if app.debug else "An internal error occurred."
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             from flask import jsonify
-            return jsonify({"success": False, "message": str(e)}), 500
-        return "Internal Server Error: " + str(e), 500
+            return jsonify({"success": False, "message": detail}), 500
+        return "Internal Server Error: " + detail, 500
 
     @app.context_processor
     def inject_permissions():

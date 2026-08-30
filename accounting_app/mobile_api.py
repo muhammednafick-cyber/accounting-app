@@ -147,6 +147,17 @@ def login():
         return jsonify({"success": False,
                         "message": "Enter your username and password."}), 400
 
+    # Same brute-force guard as the web sign-in page.
+    from .rate_limit import login_attempt_allowed
+    allowed, retry_after = login_attempt_allowed(login_id)
+    if not allowed:
+        response = jsonify({"success": False,
+                            "message": "Too many sign-in attempts. "
+                                       f"Try again in {retry_after}s."})
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+
     from database.master_db import get_user_by_login_id, get_user_companies
     user = get_user_by_login_id(login_id)
     if not user or not check_password_hash(user["password_hash"], password):
