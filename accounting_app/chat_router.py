@@ -21,6 +21,7 @@ from . import chat_resolver as R
 from . import chat_toolkit as TK
 from . import chat_permissions as P
 from . import chat_skills as SK
+from . import chat_phrasebook as PB
 
 MAX_TABLE_ROWS = 15
 
@@ -530,6 +531,16 @@ def match_rules(text, state, allow_followup=True):
     m = re.match(r'^(?:show )?(?:the )?stock movements?(?: (?:of|for) (.+))?$', q)
     if m:
         return hit("stock_movement", item=m.group(1))
+    # A closing-stock question that names an item is about that item. This has
+    # to be tested before the company-wide rule below, which matches on the
+    # words alone and would drop the name, answering with the whole company's
+    # stock under the heading the user asked about.
+    m = re.match(r'^(?:closing |total )?(?:stock|inventory)'
+                 r'(?: value| valuation)? (?:of|for) '
+                 r'(?:item |product )?(.+)$', q)
+    if m and m.group(1).strip() not in ('stock', 'inventory', 'all items', 'everything'):
+        return hit("item_stock", item=m.group(1).strip())
+
     # "closing inventory" and "stock on hand" are the same report as "closing
     # stock". Left to the model these reach the inventory table instead, which
     # only holds today's snapshot - right for now, wrong for any back-date.
@@ -1066,6 +1077,33 @@ def _answers_the_question(param, value, state):
 # The AI fallback, behind a permission gate
 # ============================================================
 
+def offer_alternatives(question, company_id):
+    """A near-miss, answered or offered as choices. None if nothing is close.
+
+    Three outcomes, in the order they are tried:
+      * one scenario far ahead of the rest - just answer it
+      * several plausible - show them as chips and let the user pick
+      * nothing close enough - None, and the caller carries on to the model
+    """
+    sure = PB.confident(question)
+    if sure:
+        tool_name, args = sure
+        return execute(tool_name, args, question, company_id)
+
+    options = PB.suggest(question)
+    if not options:
+        return None
+
+    # No pending state: each label is itself a question the phrasebook knows,
+    # so a click comes back as an ordinary message and answers itself.
+    labels = [label for _, label in options]
+    return plain(
+        "I'm not certain which of these you meant:<br>"
+        + choice_buttons(labels)
+        + "<br><small>Pick one, or ask again in different words.</small>",
+        "suggestion", {"options": labels})
+
+
 def ask_permission(question, reason=None):
     # No point offering the AI fallback to someone who is not allowed it.
     if not P.can_use_ai_sql():
@@ -1179,6 +1217,11 @@ def route(question, company_id, ai_enabled=True, ai_only=False):
     matched = None
     if leading_followup:
         matched = match_followup(_norm(question), question, state)
+    # The phrasebook before the older rules: it recognises whole phrasings
+    # ("income statement", "vat payable"), where the rules match on a single
+    # word and would read those as a ledger statement and a creditors list.
+    if matched is None:
+        matched = PB.match(question)
     if matched is None:
         matched = match_rules(question, state)
     if matched is None:
@@ -1190,7 +1233,14 @@ def route(question, company_id, ai_enabled=True, ai_only=False):
             return export_previous(question, state)
         return execute(tool_name, raw_args, question, company_id)
 
-    # 3. The model picks a tool
+    # 3. Nothing matched outright, but the question may still be one we can
+    #    answer under different words. Answer it if one scenario is clearly
+    #    the one meant, otherwise offer the nearest few - both cost nothing.
+    near = offer_alternatives(question, company_id)
+    if near is not None:
+        return near
+
+    # 4. The model picks a tool
     if ai_enabled:
         tool_name, raw_or_reason = pick_with_ai(question, state)
         if tool_name:
