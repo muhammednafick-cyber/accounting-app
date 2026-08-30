@@ -340,5 +340,56 @@ class TestRegistry(unittest.TestCase):
                 self.assertIn(param, known, f"{tool.name} declares '{param}'")
 
 
+class TestClosingStockWording(unittest.TestCase):
+    """"Closing inventory" must reach the same report as "closing stock".
+
+    The two phrasings used to diverge: only "stock" had a rule, so "closing
+    inventory as of 31-12-2024" fell through to the model, which reads the
+    inventory table - today's snapshot, and so the right answer for now and the
+    wrong one for any past date.
+    """
+
+    def route(self, question):
+        matched = CR.match_rules(question, {})
+        return matched[0] if matched else None
+
+    def test_both_words_reach_the_closing_stock_report(self):
+        for question in ("closing stock", "closing inventory",
+                         "closing inventory last year",
+                         "closing inventory as of 31-12-2024",
+                         "what was our closing inventory in 2024",
+                         "stock on hand", "inventory on hand last month",
+                         "stock in hand as of 31-03-2025",
+                         "stock value", "inventory valuation",
+                         "inventory value as of 31-12-2024"):
+            self.assertEqual(self.route(question), "closing_stock_value", question)
+
+    def test_a_bare_dated_stock_question_is_the_closing_report(self):
+        # The date extractor eats "as at 31-12-2024", leaving just "stock".
+        self.assertEqual(self.route("stock as at 31-12-2024"), "closing_stock_value")
+        self.assertEqual(self.route("inventory 2024"), "closing_stock_value")
+
+    def test_the_period_survives_to_the_tool(self):
+        _, args = CR.match_rules("closing inventory as of 31-12-2024", {})
+        self.assertEqual(args["_period"][1], "2024-12-31")
+
+    def test_opening_is_still_the_opening_report(self):
+        for question in ("opening stock 2024", "opening inventory 2024",
+                         "opening stock of Cement"):
+            self.assertEqual(self.route(question), "item_opening_stock", question)
+
+    def test_the_narrower_stock_rules_still_win(self):
+        cases = {
+            "stock by location": "stock_by_location",
+            "stock movement of Cement": "stock_movement",
+            "inventory ageing": "inventory_ageing",
+            "negative stock": "negative_stock",
+            "slow moving items": "slow_moving_items",
+            "stock of Cement": "item_stock",
+        }
+        for question, expected in cases.items():
+            self.assertEqual(self.route(question), expected, question)
+
+
 if __name__ == "__main__":
     unittest.main()

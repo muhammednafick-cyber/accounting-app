@@ -171,7 +171,7 @@ Rules - all mandatory:
    Join ledger_entries -> ledgers (on ledger_name + company_id) -> groups (on
    group_code + company_id) to reach nature. This excludes the income,
    inventory, VAT and cost-of-goods lines on the same voucher.
-"""
+{skills}"""
 
 
 def _strip_sql(text):
@@ -288,11 +288,14 @@ def generate_sql(question, company_id, feedback=None):
     `feedback` carries the previous attempt's SQL and error back to the model
     so it can repair its own mistake instead of failing outright.
     """
+    from . import chat_skills
+
     system = SQL_SYSTEM_PROMPT.format(
         schema=SCHEMA_SUMMARY,
         today=datetime.date.today().isoformat(),
         company_id=int(company_id),
         max_rows=MAX_ROWS,
+        skills=chat_skills.sql_guidance(question),
     )
 
     messages = [

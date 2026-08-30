@@ -20,6 +20,7 @@ from . import chat_context as ctx
 from . import chat_resolver as R
 from . import chat_toolkit as TK
 from . import chat_permissions as P
+from . import chat_skills as SK
 
 MAX_TABLE_ROWS = 15
 
@@ -483,7 +484,8 @@ def match_rules(text, state, allow_followup=True):
                  r'(?: (?:of|for) (.+))?$', q)
     if m:
         return hit("ledger_opening_balance", ledger=m.group(1))
-    m = re.match(r'^(?:show |what (?:is|are) )?(?:the )?opening stock(?: (?:of|for) (.+))?$', q)
+    m = re.match(r'^(?:show |what (?:is|are) )?(?:the )?'
+                 r'opening (?:stock|inventory)(?: (?:of|for) (.+))?$', q)
     if m:
         return hit("item_opening_stock", item=m.group(1))
 
@@ -528,8 +530,18 @@ def match_rules(text, state, allow_followup=True):
     m = re.match(r'^(?:show )?(?:the )?stock movements?(?: (?:of|for) (.+))?$', q)
     if m:
         return hit("stock_movement", item=m.group(1))
-    if re.search(r'\b(closing stock|stock value|inventory valuation|inventory value|'
-                 r'stock valuation)\b', q):
+    # "closing inventory" and "stock on hand" are the same report as "closing
+    # stock". Left to the model these reach the inventory table instead, which
+    # only holds today's snapshot - right for now, wrong for any back-date.
+    if re.search(r'\bclosing (?:stock|inventory)\b|'
+                 r'\b(?:stock|inventory) (?:value|valuation)\b|'
+                 r'\b(?:stock|inventory) (?:on|in) hand\b|'
+                 r'\b(?:stock|inventory) as (?:at|on|of)\b', q):
+        return hit("closing_stock_value")
+    # "stock as at 31-12-2024" arrives here as a bare "stock" - the extractor
+    # has already taken the date away. A dated question about stock in general
+    # is the closing stock report.
+    if args.get("_period") and re.match(r'^(?:the )?(?:stock|inventory)$', q):
         return hit("closing_stock_value")
     if re.search(r'\b(inventory ageing|inventory aging|stock ageing|stock aging)\b', q):
         return hit("inventory_ageing")
@@ -767,7 +779,7 @@ Rules:
    repeating the value.
 5. If no function in the list can answer the question, reply
    {{"tool": null, "reason": "<one short sentence saying what is missing>"}}.
-"""
+{skills}"""
 
 
 def pick_with_ai(question, state):
@@ -783,6 +795,7 @@ def pick_with_ai(question, state):
         catalogue=TK.catalogue(),
         today=datetime.date.today().isoformat(),
         history=ctx.history_for_prompt() or "(nothing yet)",
+        skills=SK.picker_guidance(question),
     )
     payload = {
         "model": CS.get_openrouter_model(),
