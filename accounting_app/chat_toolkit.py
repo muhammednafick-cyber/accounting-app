@@ -280,7 +280,9 @@ def prepare_args(tool_obj, raw, company_id, state=None):
         elif canon == "location":
             value = raw.get("location")
             a["location_name"] = R.resolve_location(value, company_id) if value else None
-            if not a["location_name"] and param in required:
+            # A named location that resolves to nothing must not be dropped:
+            # silently widening to every location looks like a real answer.
+            if not a["location_name"] and (value or param in required):
                 raise NeedsArgument("location", ASK_FOR["location"])
 
         elif canon == "cost_center":
@@ -635,32 +637,50 @@ def _item_stock(a):
                   [[a["item_name"], round(qty, 2), round(wap, 2), round(value, 2)]])
 
 
-@tool("stock_by_location", "item? location?", "Inventory",
+@tool("stock_by_location", "item? location? period?", "Inventory",
       "Closing stock split by storage location.",
-      ["stock by location", "stock of Cement at Main Store"])
+      ["stock by location", "stock in Abu Dhabi", "stock of Cement in Abu Dhabi"])
 def _stock_by_location(a):
-    where, params = "ie.company_id = %s", [a["company_id"]]
-    if a.get("item_name"):
-        where += " AND ie.item_name = %s"
-        params.append(a["item_name"])
-    if a.get("location_name"):
-        where += " AND ie.location_name = %s"
-        params.append(a["location_name"])
-    if a.get("end"):
-        where += " AND v.date <= %s"
-        params.append(a["end"])
-    cols, rows = sql(
-        "SELECT ie.item_name, COALESCE(ie.location_name,'(none)') AS location, "
-        "SUM(CASE WHEN ie.type = 'In' THEN ie.quantity ELSE -ie.quantity END) AS quantity "
-        "FROM item_entries ie JOIN vouchers v ON v.voucher_number = ie.voucher_number "
-        f"AND v.company_id = ie.company_id WHERE {where} "
-        "GROUP BY ie.item_name, ie.location_name HAVING "
-        "ABS(SUM(CASE WHEN ie.type = 'In' THEN ie.quantity ELSE -ie.quantity END)) > 0.0001 "
-        "ORDER BY ie.item_name, location", tuple(params))
-    if not rows:
-        return empty("Stock by Location", "No stock movements found for that scope.")
-    return table("Stock by Location", ["Item", "Location", "Quantity"], rows,
-                 f"Stock across <b>{len(rows)}</b> item/location combination(s).")
+    """Closing stock per location, from the same replay the report screen uses.
+
+    This used to sum item_entries with `CASE WHEN ie.type = 'In'`, but that
+    column holds 'Debit' / 'Credit' - 'In' never matches, so every quantity
+    fell to the ELSE branch and the report showed minus the gross movement
+    instead of the stock on hand. It also ignored opening balances entirely.
+    """
+    from database.reports_db import get_closing_inventory_data
+
+    data, _ = get_closing_inventory_data(as_of(a), company_id=a["company_id"])
+    data = data or []
+
+    item, location = a.get("item_name"), a.get("location_name")
+    if item:
+        data = [d for d in data if (d.get("item_name") or "") == item]
+    if location:
+        data = [d for d in data if (d.get("location_name") or "") == location]
+    data = [d for d in data if abs(float(d.get("quantity") or 0)) > 0.0001
+            or abs(float(d.get("cost_amount") or 0)) > 0.0001]
+
+    scope = " of <b>%s</b>" % item if item else ""
+    where = " at <b>%s</b>" % location if location else ""
+    when = f" as of {as_of(a)}" if as_of(a) else ""
+    if not data:
+        return empty("Stock by Location",
+                     f"No stock{scope}{where}{when}.".replace("<b>", "").replace("</b>", ""))
+
+    data.sort(key=lambda d: ((d.get("item_name") or ""), (d.get("location_name") or "")))
+    rows = [[d.get("item_name"), d.get("location_name") or "(none)", d.get("quantity"),
+             d.get("wap"), d.get("cost_amount")] for d in data]
+    qty = sum(num(d.get("quantity")) for d in data)
+    value = sum(num(d.get("cost_amount")) for d in data)
+
+    # Say plainly what was counted: a location the user named but that did not
+    # match anything would otherwise look like a company-wide total.
+    return table("Stock by Location",
+                 ["Item", "Location", "Quantity", "WAP", "Value"], rows,
+                 f"Stock{scope}{where}{when}: <b>{len(rows)}</b> line(s), "
+                 f"quantity <b>{fmt(qty)}</b>, value <b>{fmt(value)}</b>.",
+                 {"Quantity": fmt(qty), "Value": fmt(value)})
 
 
 @tool("stock_by_batch", "item?", "Inventory",
@@ -1463,12 +1483,24 @@ def _stock_movement(a):
     if not data:
         return empty("Stock Movement",
                      f"No movements for '{a['item_name']}' in {period_text(a)}.")
-    keys = list(data[0].keys())
-    rows = [[d.get(k) for k in keys] for d in data]
-    return table(f"Stock Movement - {a['item_name']}",
-                 [k.replace('_', ' ').title() for k in keys], rows,
-                 f"<b>{len(rows)}</b> movement(s) of <b>{a['item_name']}</b> "
-                 f"in {period_text(a)}.")
+
+    # get_stock_movement_data returns fixed 9-field tuples, not dicts - it is
+    # the one reporting function that does. Reading keys off them raised
+    # "'tuple' object has no attribute 'keys'" for every item asked about.
+    header = ["Voucher", "Date", "Type", "In", "Out", "Balance Qty", "WAP", "Value",
+              "Location"]
+    rows = [list(row[:len(header)]) for row in data]
+
+    total_in = sum(num(r[3]) for r in rows)
+    total_out = sum(num(r[4]) for r in rows)
+    closing_qty, closing_value = num(rows[-1][5]), num(rows[-1][7])
+    return table(f"Stock Movement - {a['item_name']}", header, rows,
+                 f"<b>{len(rows)}</b> movement(s) of <b>{a['item_name']}</b> in "
+                 f"{period_text(a)}: in <b>{fmt(total_in)}</b>, out "
+                 f"<b>{fmt(total_out)}</b>, closing <b>{fmt(closing_qty)}</b> "
+                 f"valued <b>{fmt(closing_value)}</b>.",
+                 {"In": fmt(total_in), "Out": fmt(total_out),
+                  "Closing Qty": fmt(closing_qty), "Closing Value": fmt(closing_value)})
 
 
 @tool("inventory_ageing", "period? location?", "Inventory",
