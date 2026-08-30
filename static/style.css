@@ -787,10 +787,43 @@ table td button {
     color: white;
 }
 
+/* Title on its own line, then the voucher-type select and the AI switches
+   side by side. Laid out as a column this stacked all four, and the switch
+   labels broke mid-phrase ("Enable" / "AI") once the window was narrow. */
 .global-chat-header-left {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.global-chat-header-left .global-chat-title {
+    flex: 1 0 100%;
+}
+
+/* The switches wrap as a pair rather than letting a label split in two. */
+.global-chat-ai-toggle {
+    white-space: nowrap;
+    margin-left: 0 !important;
+}
+
+/* Ledger, Groups, Cost Centres, Sub Groups and Inventory Groups each force
+   `input, select { width: 100% !important }` for their own form, unscoped.
+   The assistant is on every page, so its controls have to hold their own
+   size or the widget changes shape from one screen to the next - the message
+   input above already does the same. */
+.global-chat-window .global-chat-select {
+    width: auto !important;
+    flex: 0 1 auto;
+    max-width: 100%;
+}
+
+.global-chat-window .global-chat-ai-toggle input[type="checkbox"] {
+    width: auto !important;
+    flex: 0 0 auto;
+    margin: 0;
 }
 
 .global-chat-title {
@@ -825,6 +858,9 @@ table td button {
 .global-chat-close {
     width: 32px;
     height: 32px;
+    /* Never squeezed by the switches next to it, and never sat under them. */
+    flex: 0 0 auto;
+    margin-left: 8px;
     padding: 0;
     border-radius: 50%;
     border: none;
