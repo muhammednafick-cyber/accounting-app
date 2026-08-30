@@ -785,7 +785,22 @@ def process_chat_query(user_query, company_id, ai_enabled=True, history=None,
 
 
 def _legacy_process_chat_query(user_query, company_id, ai_enabled=True, history=None):
-    """The previous intent-classifier path, kept as a safety net."""
+    """The previous intent-classifier path, kept as a safety net.
+
+    Its intents are all balances, totals and reports, and it queries the
+    database itself rather than through the permission-checked toolkit - so
+    the whole path is behind the reporting permission.
+    """
+    from .chat_permissions import can_use_ai_sql
+
+    if not can_use_ai_sql():
+        return {
+            "intent": "permission_denied",
+            "response": ("You don't have access to <b>Reports</b>, so I can't "
+                         "answer that. Ask your administrator if you need it."),
+            "data": None,
+        }
+
     # 1. AI off: the rule-based ERP parser is the only path. Nothing is sent
     #    to OpenRouter, so the app answers only what it can match locally.
     if not ai_enabled:

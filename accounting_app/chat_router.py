@@ -19,6 +19,7 @@ import re
 from . import chat_context as ctx
 from . import chat_resolver as R
 from . import chat_toolkit as TK
+from . import chat_permissions as P
 
 MAX_TABLE_ROWS = 15
 
@@ -842,6 +843,18 @@ def execute(tool_name, raw_args, question, company_id, source="coded",
     maybe_ledger = raw_args.pop("_maybe_ledger", None)
 
     tool_obj = TK.TOOLS[tool_name]
+
+    # The assistant answers with the same data the screens show, so it obeys
+    # the same permissions. Checked before the arguments are resolved: a
+    # refusal must not first tell the user which ledgers exist.
+    try:
+        P.check(tool_name)
+    except P.PermissionDenied as denied:
+        return plain(
+            f"You don't have access to <b>{denied.label}</b>, so I can't answer "
+            f"that one. Ask your administrator if you need it.",
+            "permission_denied", {"permission": denied.permission})
+
     try:
         prepared_raw = dict(raw_args)
         if pre_period is not None:
@@ -1041,6 +1054,13 @@ def _answers_the_question(param, value, state):
 # ============================================================
 
 def ask_permission(question, reason=None):
+    # No point offering the AI fallback to someone who is not allowed it.
+    if not P.can_use_ai_sql():
+        return plain(
+            "I couldn't match that to one of the reports you have access to. "
+            "Type <b>help</b> to see the questions I can answer for you.",
+            "permission_denied", {"permission": P.AI_SQL_PERMISSION})
+
     ctx.set_pending("permission", question=question, reason=reason)
     why = ""
     if reason and not str(reason).startswith(("unknown_tool", "no_tool", "unusable")):
@@ -1058,6 +1078,14 @@ def ask_permission(question, reason=None):
 def run_ai_fallback(question, company_id):
     """The text-to-SQL path - only ever reached after the user agreed."""
     from . import ai_sql
+
+    # Free-form SQL reads any business table, so it needs the broad reporting
+    # permission - otherwise it would answer what the coded tools just refused.
+    if not P.can_use_ai_sql():
+        return plain(
+            "You don't have access to <b>Reports</b>, so I can't query the "
+            "database for that. Ask your administrator if you need it.",
+            "permission_denied", {"permission": P.AI_SQL_PERMISSION})
     try:
         result = ai_sql.answer_from_database(question, company_id)
     except Exception as exc:

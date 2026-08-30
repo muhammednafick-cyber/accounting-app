@@ -58,8 +58,12 @@ def chat_reset():
 def chat_capabilities():
     """Everything the assistant can answer without AI, for the help panel."""
     from .chat_toolkit import TOOLS
+    from .chat_permissions import can_use
     groups = {}
     for tool in TOOLS.values():
+        # The panel lists what this user may actually ask for.
+        if not can_use(tool.name):
+            continue
         groups.setdefault(tool.group, []).append({
             "name": tool.name,
             "description": tool.desc,

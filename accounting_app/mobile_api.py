@@ -713,6 +713,11 @@ def chat(user_id, company_id):
     from .chat_context import use_conversation
     use_conversation(str(data.get("session_id") or f"mobile-user-{user_id}"))
 
+    # Permissions travel with the token's user: `current_user` is anonymous on
+    # this path, so the chat engine is told whose menu access to apply.
+    from .chat_permissions import use_user
+    use_user(user_id)
+
     from .chatbot_service import process_chat_query
     try:
         reply = process_chat_query(

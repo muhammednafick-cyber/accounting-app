@@ -333,8 +333,16 @@ def prepare_args(tool_obj, raw, company_id, state=None):
 
 
 def run(tool_name, raw_args, company_id=None, state=None):
-    """Resolve arguments then execute. Returns (result, resolved_args)."""
+    """Resolve arguments then execute. Returns (result, resolved_args).
+
+    Raises chat_permissions.PermissionDenied when the signed-in user is not
+    allowed the menu this tool belongs to - the assistant must not be a way
+    around the permissions the app enforces on its own screens.
+    """
+    from . import chat_permissions as P
+
     company_id = company_id or get_current_company_id()
+    P.check(tool_name)
     tool_obj = TOOLS[tool_name]
     a = prepare_args(tool_obj, raw_args, company_id, state)
     result = tool_obj.fn(a)
@@ -2005,9 +2013,17 @@ def _compare(a):
 # ============================================================
 
 def catalogue():
-    """The tool list the model chooses from, grouped, one line each."""
+    """The tool list the model chooses from, grouped, one line each.
+
+    Only tools this user is allowed: a tool the model cannot see is a tool it
+    cannot pick, so a restricted user gets "I can't answer that" rather than a
+    refusal for a report they were never offered.
+    """
+    from . import chat_permissions as P
+
     lines = []
-    for name in sorted(TOOLS, key=lambda n: (TOOLS[n].group, n)):
+    names = [n for n in TOOLS if P.can_use(n)]
+    for name in sorted(names, key=lambda n: (TOOLS[n].group, n)):
         t = TOOLS[name]
         params = t.params or "-"
         lines.append(f"{name}({params}) [{t.group}] - {t.desc}")
@@ -2016,8 +2032,12 @@ def catalogue():
 
 def help_text():
     """What the assistant can answer, for the user."""
+    from . import chat_permissions as P
+
     groups = {}
     for t in TOOLS.values():
+        if not P.can_use(t.name):
+            continue
         groups.setdefault(t.group, []).append(t)
     parts = ["I can answer these from your data directly - no AI needed:<br>"]
     for group in sorted(groups):
