@@ -692,6 +692,46 @@
         ask(value);
     });
 
+    // The two AI switches behave as they do on the web: the choice is
+    // remembered between sessions, and "AI only" follows the AI switch,
+    // because sending everything to a model you have turned off is not a
+    // state the server can honour.
+    (function initAiToggles() {
+        var ai = el('aiToggle'), only = el('aiOnlyToggle'), label = el('aiOnlyLabel');
+        if (!ai) return;
+        try {
+            ai.checked = localStorage.getItem('vaChatAiEnabled') === '1';
+            if (only) only.checked = localStorage.getItem('vaChatAiOnly') === '1';
+        } catch (e) { /* private mode - fall back to the markup defaults */ }
+
+        function sync() {
+            if (!only) return;
+            only.disabled = !ai.checked;
+            if (label) {
+                label.style.opacity = ai.checked ? '1' : '0.45';
+                label.style.cursor = ai.checked ? 'pointer' : 'not-allowed';
+            }
+            var hint = el('aiHint');
+            if (hint) {
+                hint.textContent = !ai.checked
+                    ? 'Answered from your data by the built-in reports. No AI.'
+                    : (only.checked
+                        ? 'Every question goes straight to the AI model, skipping the built-in reports.'
+                        : 'Questions the built-in reports cannot answer are sent to the AI model.');
+            }
+        }
+        function remember() {
+            try {
+                localStorage.setItem('vaChatAiEnabled', ai.checked ? '1' : '0');
+                localStorage.setItem('vaChatAiOnly', only && only.checked ? '1' : '0');
+            } catch (e) { /* nothing to do - the switches still work */ }
+            sync();
+        }
+        ai.addEventListener('change', remember);
+        if (only) only.addEventListener('change', remember);
+        sync();
+    })();
+
     function ask(question) {
         addBubble(question, 'me');
 
@@ -703,6 +743,9 @@
                 // The coded reports answer first either way; this decides
                 // whether anything they cannot answer goes to the AI model.
                 ai_enabled: el('aiToggle').checked,
+                // ...and this skips them, sending every question to the model,
+                // exactly as the web chat's "AI only" box does.
+                ai_only: el('aiOnlyToggle').checked && el('aiToggle').checked,
                 history: history
             }
         }).then(function (payload) {

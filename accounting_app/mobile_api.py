@@ -731,9 +731,13 @@ def chat(user_id, company_id):
 
     from .chatbot_service import process_chat_query
     try:
+        ai_enabled = bool(data.get("ai_enabled", True))
         reply = process_chat_query(
             question, company_id,
-            ai_enabled=bool(data.get("ai_enabled", True)),
+            ai_enabled=ai_enabled,
+            # "AI only" skips the coded reports entirely, as on the web. It
+            # has no meaning with AI switched off, so it is gated the same way.
+            ai_only=bool(data.get("ai_only")) and ai_enabled,
             history=data.get("history") or [])
         if "error" in reply:
             return jsonify({"success": False, "message": reply["error"]}), 500
