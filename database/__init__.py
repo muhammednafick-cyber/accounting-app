@@ -169,6 +169,11 @@ __all__ = [
     'get_total_asset_value_by_ledger',
     # Recurring
     'add_recurring_template',
+    'get_recurring_templates',
+    'get_recurring_template',
+    'update_recurring_template',
+    'delete_recurring_template',
+    'validate_ledger_entries',
     'get_due_recurring_entries',
     'process_recurring_entry',
     # Analysis

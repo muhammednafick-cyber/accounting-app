@@ -1,29 +1,30 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set editing = template_id is not none %}
 <div class="container mt-4">
     <div class="row justify-content-center">
         <div class="col-md-10">
             <div class="card">
                 <div class="card-header">
-                    <h3>New Recurring Template</h3>
+                    <h3>{{ 'Edit Recurring Template' if editing else 'New Recurring Template' }}</h3>
                 </div>
                 <div class="card-body">
-                    <form method="POST">
+                    <form method="POST" id="recurringForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Template Name</label>
-                                <input type="text" class="form-control" name="template_name" required>
+                                <input type="text" class="form-control" name="template_name"
+                                    value="{{ values.template_name or '' }}" required>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Voucher Type</label>
                                 <select class="form-select" name="voucher_type" required>
-                                    <option value="Journal">Journal</option>
-                                    <option value="Expense">Expense</option>
-                                    <option value="Receipt">Receipt</option>
-                                    <option value="Payment">Payment</option>
-                                    <option value="Contra">Contra</option>
+                                    {% for vt in voucher_types %}
+                                    <option value="{{ vt }}" {{ 'selected' if values.voucher_type == vt else '' }}>
+                                        {{ vt }}</option>
+                                    {% endfor %}
                                 </select>
                             </div>
                         </div>
@@ -32,47 +33,68 @@
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Frequency</label>
                                 <select class="form-select" name="frequency" required>
-                                    <option value="Monthly">Monthly</option>
-                                    <option value="Weekly">Weekly</option>
-                                    <option value="Daily">Daily</option>
-                                    <option value="Yearly">Yearly</option>
+                                    {% for f in frequencies %}
+                                    <option value="{{ f }}" {{ 'selected' if values.frequency == f else '' }}>
+                                        {{ f }}</option>
+                                    {% endfor %}
                                 </select>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Next Due Date</label>
-                                <input type="date" class="form-control" name="next_due_date" required>
+                                <input type="date" class="form-control" name="next_due_date"
+                                    value="{{ values.next_due_date or '' }}" required>
                             </div>
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label">Narration</label>
-                            <input type="text" class="form-control" name="narration">
+                        <div class="row">
+                            <div class="col-md-9 mb-3">
+                                <label class="form-label">Narration</label>
+                                <input type="text" class="form-control" name="narration"
+                                    value="{{ values.narration or '' }}">
+                            </div>
+                            <div class="col-md-3 mb-3 d-flex align-items-end">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="active" id="activeCheck"
+                                        {{ 'checked' if values.active else '' }}>
+                                    <label class="form-check-label" for="activeCheck">
+                                        Active
+                                        <small class="text-muted d-block">Only active templates come up as due.</small>
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         <h4 class="mt-4">Ledger Entries</h4>
+                        <p class="text-muted small mb-2">
+                            Every voucher is a double entry, so the debits and the credits have to
+                            come to the same total before this can be saved.
+                        </p>
                         <table class="table table-bordered" id="ledgerTable">
                             <thead>
                                 <tr>
-                                    <th>Ledger</th>
-                                    <th>Amount</th>
-                                    <th>Type</th>
-                                    <th>Action</th>
+                                    <th style="width:45%">Ledger</th>
+                                    <th style="width:25%">Amount</th>
+                                    <th style="width:20%">Type</th>
+                                    <th style="width:10%">Action</th>
                                 </tr>
                             </thead>
                             <tbody id="ledgerTableBody">
+                                {% for e in (entries or [{}]) %}
                                 <tr>
                                     <td>
                                         <input type="text" class="form-control" name="ledger_name[]" list="ledgerList"
-                                            required placeholder="Search Ledger...">
+                                            value="{{ e.ledger_name or '' }}" placeholder="Search Ledger...">
                                     </td>
                                     <td>
-                                        <input type="number" step="0.01" class="form-control" name="ledger_amount[]"
-                                            required>
+                                        <input type="number" step="0.01" min="0" class="form-control rv-amount"
+                                            name="ledger_amount[]" value="{{ e.amount if e.amount is not none else '' }}">
                                     </td>
                                     <td>
-                                        <select class="form-select" name="ledger_type[]">
-                                            <option value="Debit">Debit</option>
-                                            <option value="Credit">Credit</option>
+                                        <select class="form-select rv-side" name="ledger_type[]">
+                                            <option value="Debit" {{ 'selected' if e.type != 'Credit' else '' }}>Debit
+                                            </option>
+                                            <option value="Credit" {{ 'selected' if e.type == 'Credit' else '' }}>Credit
+                                            </option>
                                         </select>
                                     </td>
                                     <td>
@@ -80,7 +102,18 @@
                                             onclick="removeRow(this)">X</button>
                                     </td>
                                 </tr>
+                                {% endfor %}
                             </tbody>
+                            <tfoot>
+                                <tr class="table-light fw-bold">
+                                    <td class="text-end">Totals</td>
+                                    <td colspan="3">
+                                        <span>Debit <span id="totalDebit">0.00</span></span>
+                                        <span class="ms-3">Credit <span id="totalCredit">0.00</span></span>
+                                        <span class="ms-3" id="balanceNote"></span>
+                                    </td>
+                                </tr>
+                            </tfoot>
                         </table>
                         <button type="button" class="btn btn-secondary btn-sm mb-3" onclick="addRow()">+ Add
                             Row</button>
@@ -95,7 +128,8 @@
 
                         <div class="d-flex justify-content-end gap-2">
                             <a href="{{ url_for('recurring_bp.templates') }}" class="btn btn-secondary">Cancel</a>
-                            <button type="submit" class="btn btn-primary">Save Template</button>
+                            <button type="submit" class="btn btn-primary" id="saveBtn">
+                                {{ 'Save Changes' if editing else 'Save Template' }}</button>
                         </div>
                     </form>
                 </div>
@@ -108,16 +142,62 @@
     function addRow() {
         const tbody = document.getElementById('ledgerTableBody');
         const row = tbody.rows[0].cloneNode(true);
-        // Clear inputs
-        const inputs = row.querySelectorAll('input');
-        inputs.forEach(input => input.value = '');
+        row.querySelectorAll('input').forEach(input => input.value = '');
         tbody.appendChild(row);
+        recalc();
     }
+
     function removeRow(btn) {
         const tbody = document.getElementById('ledgerTableBody');
         if (tbody.rows.length > 1) {
             btn.closest('tr').remove();
+        } else {
+            btn.closest('tr').querySelectorAll('input').forEach(i => i.value = '');
+        }
+        recalc();
+    }
+
+    // The same rule the server applies, shown as you type - so an imbalance is
+    // visible while it can still be corrected, rather than on a rejected save.
+    function recalc() {
+        let debit = 0, credit = 0;
+        document.querySelectorAll('#ledgerTableBody tr').forEach(row => {
+            const amount = parseFloat(row.querySelector('.rv-amount').value) || 0;
+            if (row.querySelector('.rv-side').value === 'Credit') credit += amount;
+            else debit += amount;
+        });
+
+        const money = n => n.toLocaleString(undefined,
+            { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        document.getElementById('totalDebit').textContent = money(debit);
+        document.getElementById('totalCredit').textContent = money(credit);
+
+        const note = document.getElementById('balanceNote');
+        const save = document.getElementById('saveBtn');
+        const difference = Math.abs(debit - credit);
+
+        if (!debit && !credit) {
+            note.textContent = '';
+            save.disabled = false;              // let the server ask for entries
+            return;
+        }
+        if (difference > 0.01) {
+            note.className = 'ms-3 text-danger';
+            note.textContent = 'Difference ' + money(difference);
+            save.disabled = true;
+        } else if (!debit || !credit) {
+            note.className = 'ms-3 text-danger';
+            note.textContent = 'Needs both a debit and a credit';
+            save.disabled = true;
+        } else {
+            note.className = 'ms-3 text-success';
+            note.textContent = 'Balanced';
+            save.disabled = false;
         }
     }
+
+    document.getElementById('ledgerTableBody').addEventListener('input', recalc);
+    document.getElementById('ledgerTableBody').addEventListener('change', recalc);
+    recalc();
 </script>
 {% endblock %}

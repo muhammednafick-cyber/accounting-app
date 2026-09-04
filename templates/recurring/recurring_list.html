@@ -20,8 +20,9 @@
                             <th>Voucher Type</th>
                             <th>Frequency</th>
                             <th>Next Due Date</th>
-                            <th>Amount</th>
+                            <th class="text-end">Amount</th>
                             <th>Active</th>
+                            <th class="text-end">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -32,14 +33,24 @@
                             <td>{{ t.voucher_type }}</td>
                             <td>{{ t.frequency }}</td>
                             <td>{{ t.next_due_date | format_date }}</td>
-                            <td>{{ t.amount }}</td>
+                            <td class="text-end">{{ '%.2f'|format(t.amount or 0) }}</td>
                             <td><span class="badge bg-{{ 'success' if t.active else 'secondary' }}">{{ 'Yes' if t.active
                                     else 'No' }}</span></td>
+                            <td class="text-end text-nowrap">
+                                <a class="btn btn-sm btn-outline-primary"
+                                    href="{{ url_for('recurring_bp.edit_template', template_id=t.id) }}">Edit</a>
+                                <form method="POST" class="d-inline"
+                                    action="{{ url_for('recurring_bp.delete_template', template_id=t.id) }}"
+                                    onsubmit="return confirm('Delete the template &quot;{{ t.template_name }}&quot;? Vouchers it has already posted are not affected.');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                </form>
+                            </td>
                         </tr>
                         {% endfor %}
                         {% else %}
                         <tr>
-                            <td colspan="6" class="text-center text-muted">No templates found.</td>
+                            <td colspan="7" class="text-center text-muted">No templates found.</td>
                         </tr>
                         {% endif %}
                     </tbody>
