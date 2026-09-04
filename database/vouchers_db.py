@@ -1977,41 +1977,120 @@ def get_voucher_details(voucher_number, company_id=None):
     finally:
         conn.close()
 
-def update_voucher_entries(voucher_number, item_entries, ledger_entries, narration, company_id=None):
-    # This is a complex operation: usually better to delete and recreate, or diff.
-    # For now, let's implement a "replace entries" logic, assuming the caller handles validation.
-    # BUT, recreating implies changing voucher number or ID? No.
-    # Safer to Reuse add_voucher logic? 
-    # For now, we will just update narration and basic fields if needed, 
-    # but full update requires full logic of add_voucher (re-stocking, re-ledgering).
-    # "Edit Voucher" usually involves:
-    # 1. Reverse old voucher effects (stock, ledgers)
-    # 2. Update voucher data
-    # 3. Apply new voucher effects
-    
-    # Since we have delete_voucher and add_voucher, we can reuse them if we can preserve the number.
-    # But add_voucher generates a new number.
-    # So we should modify add_voucher to accept specific voucher_number?
-    # Or write a specific update function.
-    
-    # Given the complexity and potential for bugs, and that 'Edit' wasn't explicitly requested in this specific turn 
-    # (though it's a general feature), I'll leave this placeholder or basic implementation.
-    # However, to be safe for "Update all database query functions", I should at least support company_id here.
-    
+def update_voucher_entries(voucher_number, date, narration, cost_center_code,
+                           ledger_entries, credit_days=None, due_date=None,
+                           original_invoice_ref=None, original_invoice_date=None,
+                           company_id=None):
+    """Replace a voucher's ledger lines, keeping its number.
+
+    This used to run a single UPDATE on the narration and nothing else, under
+    a comment calling itself a placeholder - so an edited date, amount or
+    ledger line was accepted by the screen and silently discarded.
+
+    The work is the same shape as delete_voucher's: take the old lines back out
+    of the ledger balances, put the new ones in, and swap the rows in between.
+    All of it in one transaction, so a failure leaves the voucher exactly as it
+    was rather than half-edited.
+
+    Vouchers carrying stock are refused. Re-pricing an item line means
+    replaying weighted average cost and every running quantity after it, which
+    is delete-and-re-enter territory, not an in-place edit.
+    """
     if company_id is None:
         company_id = get_current_company_id()
     if not company_id:
         raise Exception("Company ID is required")
 
+    if not ledger_entries:
+        raise ValueError("A voucher needs at least one ledger entry.")
+
+    total_debit = sum(float(e['amount']) for e in ledger_entries if e['type'] == 'Debit')
+    total_credit = sum(float(e['amount']) for e in ledger_entries if e['type'] == 'Credit')
+    if abs(total_debit - total_credit) > 0.05:
+        raise ValueError(
+            f"Debit {total_debit:,.2f} and Credit {total_credit:,.2f} do not match "
+            f"- a difference of {abs(total_debit - total_credit):,.2f}.")
+
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("UPDATE vouchers SET narration = %s WHERE company_id = %s AND voucher_number = %s", (narration, company_id, voucher_number))
         cursor.execute(
-            "INSERT INTO audit_trail (company_id, voucher_number, action, username, details) VALUES (%s, %s, %s, %s, %s)",
-            (company_id, voucher_number, 'UPDATE', get_current_username(), "Voucher entries updated")
-        )
+            "SELECT voucher_type, date FROM vouchers "
+            "WHERE company_id = %s AND voucher_number = %s",
+            (company_id, voucher_number))
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError(f"Voucher {voucher_number} was not found.")
+        voucher_type, old_date = row[0], row[1]
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM item_entries WHERE company_id = %s AND voucher_number = %s",
+            (company_id, voucher_number))
+        if cursor.fetchone()[0]:
+            raise ValueError(
+                f"{voucher_number} carries stock items, which cannot be edited in "
+                "place - the cost of everything sold since would have to be "
+                "recalculated. Delete it and enter it again instead.")
+
+        # Take the old lines back out of the running balances.
+        cursor.execute(
+            "SELECT ledger_name, amount, type FROM ledger_entries "
+            "WHERE company_id = %s AND voucher_number = %s",
+            (company_id, voucher_number))
+        for name, amount, side in cursor.fetchall():
+            sign = "-" if side == 'Debit' else "+"
+            cursor.execute(
+                f"UPDATE ledgers SET closing_balance = closing_balance {sign} %s "
+                "WHERE company_id = %s AND ledger_name = %s",
+                (amount, company_id, name))
+
+        cursor.execute(
+            "DELETE FROM ledger_entries WHERE company_id = %s AND voucher_number = %s",
+            (company_id, voucher_number))
+
+        cursor.execute(
+            """
+            UPDATE vouchers
+               SET date = %s, narration = %s, cost_center_code = %s, amount = %s,
+                   credit_days = %s, due_date = %s,
+                   original_invoice_ref = %s, original_invoice_date = %s
+             WHERE company_id = %s AND voucher_number = %s
+            """,
+            (date, narration, cost_center_code, round(total_debit, 2),
+             credit_days or None, due_date or None,
+             original_invoice_ref or None, original_invoice_date or None,
+             company_id, voucher_number))
+
+        # ...and put the new ones in.
+        for entry in ledger_entries:
+            amount = round(float(entry['amount']), 2)
+            cursor.execute(
+                """
+                INSERT INTO ledger_entries
+                    (company_id, voucher_number, ledger_name, amount, type,
+                     cost_center_code)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (company_id, voucher_number, entry['ledger_name'], amount,
+                 entry['type'], entry.get('cost_center_code')))
+            sign = "+" if entry['type'] == 'Debit' else "-"
+            cursor.execute(
+                f"UPDATE ledgers SET closing_balance = closing_balance {sign} %s "
+                "WHERE company_id = %s AND ledger_name = %s",
+                (amount, company_id, entry['ledger_name']))
+
+        cursor.execute(
+            "INSERT INTO audit_trail (company_id, voucher_number, action, username, details) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (company_id, voucher_number, 'UPDATE', get_current_username(),
+             f"Edited {voucher_type} voucher: dated {old_date} -> {date}, "
+             f"total {round(total_debit, 2)}"))
+
         conn.commit()
+        return voucher_number
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

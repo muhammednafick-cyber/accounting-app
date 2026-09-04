@@ -159,6 +159,27 @@ def vouchers():
     )
 
 
+def _cost_center_name(center_code, company_id):
+    """The cost centre's name for a stored code, or None.
+
+    The voucher row keeps the code; the entry screen shows the name.
+    """
+    if not center_code:
+        return None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT center_name FROM cost_centers WHERE company_id = ? AND center_code = ?",
+            (company_id, center_code))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as exc:
+        print(f"Could not read cost centre {center_code}: {exc}")
+        return None
+
+
 @voucher_bp.route("/voucher/<voucher_type>")
 @login_required
 def voucher(voucher_type):
@@ -181,12 +202,21 @@ def voucher(voucher_type):
         if edit_mode:
             print(f"DEBUG: Edit mode ACTIVATED for voucher: {voucher_number_param}")
             try:
-                existing_voucher_data = get_voucher_details(voucher_number_param)
+                existing_voucher_data = get_voucher_details(voucher_number_param,
+                                                           company_id=company_id)
                 print(f"DEBUG: Got voucher data: {existing_voucher_data}")
-                edit_voucher_number = existing_voucher_data["header"]["voucher_number"]
-                edit_date = existing_voucher_data["header"]["date"]
-                edit_narration = existing_voucher_data["header"].get("narration", "")
-                edit_cost_center_name = existing_voucher_data["header"].get("cost_center_name")
+                if not existing_voucher_data or not existing_voucher_data.get("voucher"):
+                    raise ValueError(
+                        f"Voucher {voucher_number_param} was not found in this company.")
+                # get_voucher_details returns the voucher under "voucher"; reading
+                # "header" raised a bare KeyError and edit mode answered 500.
+                header = existing_voucher_data["voucher"]
+                edit_voucher_number = header["voucher_number"]
+                edit_date = header["date"]
+                edit_narration = header.get("narration", "")
+                # The row carries the code; the screen wants the name.
+                edit_cost_center_name = _cost_center_name(header.get("cost_center_code"),
+                                                          company_id)
                 # ledger_entries is a list of dicts from get_voucher_details
                 ledger_entries = existing_voucher_data.get("ledger_entries", [])
                 print(f"DEBUG: Edit mode - ledger_entries count: {len(ledger_entries)}, data: {ledger_entries}")
@@ -1185,9 +1215,16 @@ def api_get_voucher_details():
     if not voucher_number:
         return jsonify({"success": False, "message": "Voucher number required"}), 400
     try:
-        data = get_voucher_details(voucher_number)
-        if data is None:
+        company_id = get_current_company_id()
+        data = get_voucher_details(voucher_number, company_id=company_id)
+        if not data or not data.get("voucher"):
             return jsonify({"success": False, "message": "Voucher not found"}), 404
+
+        # The row stores the cost centre code; the entry screen shows the name,
+        # so resolve it here rather than leaving the field blank on edit.
+        header = data["voucher"]
+        header["cost_center_name"] = _cost_center_name(
+            header.get("cost_center_code"), company_id)
         return jsonify({"success": True, "data": data})
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
@@ -1214,15 +1251,12 @@ def update_voucher_route():
         cost_center_name = request.form.get("cost_center_name")
         
         # Resolve Cost Center Code
-        cost_center_code = None
-        if cost_center_name:
-            # We need to resolve name to code again (or pass code from form)
-            # Assuming get_cost_centers is available
-            ccs = get_cost_centers()
-            for code, name, _ in ccs:
-                if name == cost_center_name:
-                    cost_center_code = code
-                    break
+        # get_cost_centers returns dicts, as the add path already assumes.
+        # This read them as (code, name, active) tuples.
+        cost_centers = get_cost_centers()
+        cc_map = {c['center_name']: c['center_code'] for c in cost_centers}
+
+        cost_center_code = cc_map.get(cost_center_name) if cost_center_name else None
         
         # Parse Ledgers
         ledger_names = request.form.getlist("ledger_name[]")
@@ -1235,9 +1269,8 @@ def update_voucher_route():
              raise ValueError("At least one ledger entry is required")
 
         ledger_entries = []
-        # Pre-fetch CC map
-        cc_map = {c[1]: c[0] for c in get_cost_centers()}
-        
+        # cc_map is built above, from the same dicts.
+
         # Pad CCs if missing
         if len(ledger_cc_names) < len(ledger_names):
             ledger_cc_names = [None] * len(ledger_names)
@@ -1537,12 +1570,23 @@ def api_create_reversal():
             conn.close()
             return jsonify({"success": False, "message": "This voucher has already been reversed."}), 400
 
-        original_voucher = get_voucher_details(original_voucher_number)
+        original_voucher = get_voucher_details(original_voucher_number,
+                                               company_id=company_id)
         conn.close()
-        
+
+        if not original_voucher or not original_voucher.get("voucher"):
+            return jsonify({"success": False,
+                            "message": f"Voucher {original_voucher_number} was not "
+                                       "found in this company."}), 404
+
+        # get_voucher_details returns the voucher under "voucher". This read
+        # "header", which no version of it has ever returned, so every reversal
+        # failed with a bare KeyError shown to the user as "'header'".
+        header = original_voucher["voucher"]
+
         # Use existing voucher type (Receipt -> Receipt, etc.)
-        voucher_type = original_voucher["header"]["voucher_type"]
-        original_voucher_number = original_voucher["header"]["voucher_number"]
+        voucher_type = header["voucher_type"]
+        original_voucher_number = header["voucher_number"]
         
         # Determine strict reversal type map if needed, or just use identical
         # Receipt -> Receipt, Payment -> Payment, Contra -> Contra, Journal -> Journal, Expense -> Expense

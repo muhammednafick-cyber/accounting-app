@@ -2112,10 +2112,15 @@ Charges on Purchase Voucher
         const form = document.getElementById('voucherForm');
         const submitBtn = form.querySelector('button[type="submit"]');
 
+        // The API returns the voucher under "voucher". This read "header",
+        // which is undefined, so the very first line threw and edit mode never
+        // engaged: the form kept posting to /add_voucher and the edit was lost.
+        const header = data.voucher || data.header || {};
+
         // Check if voucher type matches current page?
         // Normalize types for comparison
-        if (data.header.voucher_type !== voucherType) {
-            alert(`Voucher Type Mismatch! Found: ${data.header.voucher_type}. You are on: ${voucherType} page.`);
+        if (header.voucher_type !== voucherType) {
+            alert(`Voucher Type Mismatch! Found: ${header.voucher_type}. You are on: ${voucherType} page.`);
             return;
         }
 
@@ -2144,36 +2149,36 @@ Charges on Purchase Voucher
 
         // Header Fields
         const dInput = document.getElementById('date');
-        if (dInput && data.header.date) {
+        if (dInput && header.date) {
             // Convert YYYY-MM-DD to DD-MM-YYYY
-            const parts = data.header.date.split('-');
+            const parts = header.date.split('-');
             if (parts.length === 3) {
                 dInput.value = `${parts[2]}-${parts[1]}-${parts[0]}`;
             } else {
-                dInput.value = data.header.date;
+                dInput.value = header.date;
             }
         }
 
         const nInput = document.getElementById('narration');
-        if (nInput) nInput.value = data.header.narration;
+        if (nInput) nInput.value = header.narration;
 
         const ccSelect = document.getElementById('cost_center_name');
-        if (ccSelect && data.header.cost_center_name) {
-            $(ccSelect).val(data.header.cost_center_name).trigger('change');
+        if (ccSelect && header.cost_center_name) {
+            $(ccSelect).val(header.cost_center_name).trigger('change');
         }
 
         const cdInput = document.getElementById('credit_days');
-        if (cdInput) cdInput.value = data.header.credit_days || '';
+        if (cdInput) cdInput.value = header.credit_days || '';
 
         const ddInput = document.getElementById('due_date');
-        if (ddInput) ddInput.value = data.header.due_date || '';
+        if (ddInput) ddInput.value = header.due_date || '';
 
         // Original Invoice Ref
         const oirInput = document.getElementById('original_invoice_ref');
-        if (oirInput) oirInput.value = data.header.original_invoice_ref || '';
+        if (oirInput) oirInput.value = header.original_invoice_ref || '';
 
         const oidInput = document.getElementById('original_invoice_date');
-        if (oidInput) oidInput.value = data.header.original_invoice_date || '';
+        if (oidInput) oidInput.value = header.original_invoice_date || '';
 
 
         // Clear existing rows
