@@ -1518,11 +1518,14 @@ def api_search_vouchers_for_reversal():
             FROM vouchers v
             WHERE v.voucher_type IN ({placeholders})
             AND v.company_id = ?
-            AND (v.voucher_number LIKE ? OR v.narration LIKE ?)
+            AND v.voucher_number LIKE ?
             ORDER BY v.date DESC
             LIMIT 20
         """
-        params = list(allowed_types) + [company_id, f"%{query}%", f"%{query}%"]
+        # Voucher number only. Searching the narration matched vouchers whose
+        # number the user had not typed, which is the opposite of what someone
+        # reversing a specific voucher is doing.
+        params = list(allowed_types) + [company_id, f"%{query}%"]
         
         cursor.execute(sql, params)
         rows = cursor.fetchall()
