@@ -33,6 +33,8 @@ from database import (
     get_stock_category_summary,
     get_financial_comparison,
     get_kpi_summary,
+    get_profit_by_item_data,
+    get_profit_by_customer_data,
 )
 from .models import format_date, parse_date
 from . import get_db_connection
@@ -208,6 +210,44 @@ def api_gl_dump():
 @login_required
 def report_sales_summary():
     return render_template("report_sales_summary.html", username=current_user.username)
+
+@report_bp.route("/report/profit-by-item")
+@login_required
+def report_profit_by_item():
+    return render_template("report_profit_by_item.html", username=current_user.username)
+
+
+@report_bp.route("/report/profit-by-customer")
+@login_required
+def report_profit_by_customer():
+    return render_template("report_profit_by_customer.html", username=current_user.username)
+
+
+@report_bp.route("/get_profit_by_item")
+@login_required
+def get_profit_by_item():
+    from_date = parse_date(request.args.get("from_date"))
+    to_date = parse_date(request.args.get("to_date"))
+    try:
+        return jsonify({"success": True,
+                        "rows": get_profit_by_item_data(from_date, to_date)})
+    except Exception as e:
+        print(f"Error in get_profit_by_item: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@report_bp.route("/get_profit_by_customer")
+@login_required
+def get_profit_by_customer():
+    from_date = parse_date(request.args.get("from_date"))
+    to_date = parse_date(request.args.get("to_date"))
+    try:
+        return jsonify({"success": True,
+                        "rows": get_profit_by_customer_data(from_date, to_date)})
+    except Exception as e:
+        print(f"Error in get_profit_by_customer: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
 
 @report_bp.route("/report/purchase-summary")
 @login_required
@@ -860,6 +900,30 @@ def export_report(report_type):
         elif report_type == "sales_summary":
             data = get_sales_summary_data(from_date, to_date)
             return create_excel_response(pd.DataFrame(data), f"Sales_Summary_{from_date}_{to_date}")
+
+        elif report_type == "profit_by_item":
+            rows = get_profit_by_item_data(from_date, to_date)
+            formatted_data = [
+                {"Item": r["item_name"], "Quantity": r["quantity"],
+                 "Revenue": r["revenue"], "Cost": r["cost"],
+                 "Gross Profit": r["profit"],
+                 "Margin %": r["margin"] if r["margin"] is not None else ""}
+                for r in rows
+            ]
+            return create_excel_response(pd.DataFrame(formatted_data),
+                                         f"Profit_By_Item_{from_date}_{to_date}")
+
+        elif report_type == "profit_by_customer":
+            rows = get_profit_by_customer_data(from_date, to_date)
+            formatted_data = [
+                {"Customer": r["customer"], "Invoices": r["invoices"],
+                 "Revenue": r["revenue"], "Cost": r["cost"],
+                 "Gross Profit": r["profit"],
+                 "Margin %": r["margin"] if r["margin"] is not None else ""}
+                for r in rows
+            ]
+            return create_excel_response(pd.DataFrame(formatted_data),
+                                         f"Profit_By_Customer_{from_date}_{to_date}")
 
         elif report_type == "purchase_summary":
             data = get_purchase_summary_data(from_date, to_date)

@@ -2838,3 +2838,150 @@ def get_gl_dump_data(from_date=None, to_date=None, company_id=None):
         ]
     finally:
         conn.close()
+
+
+# ============================================================
+# Profitability
+# ============================================================
+#
+# Gross profit only: revenue less the cost of what was sold. It stops short of
+# overheads, which belong to the business rather than to any one item or
+# customer, so these figures will not add up to the net profit in the P&L.
+#
+# Sales Returns are netted off both sides. A returned line carries its own
+# cogs_amount, so ignoring returns would overstate revenue and cost alike.
+
+_PROFIT_SIGN = "CASE WHEN v.voucher_type = 'Sales' THEN 1 ELSE -1 END"
+
+_PROFIT_TYPES = ('Sales', 'Sales Return')
+
+
+def _profit_period(from_date, to_date, params):
+    clause = ""
+    if from_date:
+        clause += " AND v.date >= %s"
+        params.append(from_date)
+    if to_date:
+        clause += " AND v.date <= %s"
+        params.append(to_date)
+    return clause
+
+
+def get_profit_by_item_data(from_date=None, to_date=None, company_id=None):
+    """Quantity, revenue, cost and gross profit for every item sold."""
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return []
+
+    params = [company_id]
+    period = _profit_period(from_date, to_date, params)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            SELECT ie.item_name,
+                   SUM({_PROFIT_SIGN} * COALESCE(ie.quantity, 0))              AS quantity,
+                   SUM({_PROFIT_SIGN} * COALESCE(ie.amount, 0))                AS revenue,
+                   SUM({_PROFIT_SIGN} * COALESCE(ie.cogs_amount, 0))           AS cost
+              FROM item_entries ie
+              JOIN vouchers v ON v.voucher_number = ie.voucher_number
+                             AND v.company_id = ie.company_id
+             WHERE ie.company_id = %s
+               AND v.voucher_type IN ('Sales', 'Sales Return'){period}
+             GROUP BY ie.item_name
+             ORDER BY 4 DESC
+        """, tuple(params))
+        return [_profit_row(dict(r), "item_name") for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error in get_profit_by_item_data: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_profit_by_customer_data(from_date=None, to_date=None, company_id=None):
+    """Revenue, cost and gross profit for every customer sold to.
+
+    The customer is the party line on the invoice - the debit against a
+    receivable, cash or bank account. A walk-in sale therefore appears under
+    the cash or bank ledger it was rung into, which is what the voucher says
+    happened.
+
+    The item totals are collapsed per voucher before the party is joined on:
+    joining the two directly multiplies every item line by every party line.
+    """
+    if company_id is None:
+        company_id = get_current_company_id()
+    if not company_id:
+        return []
+
+    params = [company_id, company_id]
+    period = _profit_period(from_date, to_date, params)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            WITH voucher_items AS (
+                SELECT ie.voucher_number,
+                       SUM(COALESCE(ie.amount, 0))      AS revenue,
+                       SUM(COALESCE(ie.cogs_amount, 0)) AS cost
+                  FROM item_entries ie
+                 WHERE ie.company_id = %s
+                 GROUP BY ie.voucher_number
+            ),
+            voucher_party AS (
+                -- The party sits on the debit side of a sale and the credit
+                -- side of a return. Looking only at debits silently dropped
+                -- every return, which overstated both revenue and profit.
+                SELECT le.voucher_number, MIN(le.ledger_name) AS party
+                  FROM ledger_entries le
+                  JOIN vouchers pv ON pv.voucher_number = le.voucher_number
+                                  AND pv.company_id = le.company_id
+                  JOIN ledgers l ON l.ledger_name = le.ledger_name
+                                AND l.company_id = le.company_id
+                  JOIN groups g ON g.group_code = l.group_code
+                               AND g.company_id = l.company_id
+                 WHERE le.company_id = %s
+                   AND ((pv.voucher_type = 'Sales' AND le.type = 'Debit')
+                     OR (pv.voucher_type = 'Sales Return' AND le.type = 'Credit'))
+                   AND g.nature = 'Assets'
+                   AND g.group_name NOT IN ('Inventory', 'Fixed Assets')
+                 GROUP BY le.voucher_number
+            )
+            SELECT p.party                                              AS customer,
+                   COUNT(DISTINCT v.voucher_number)                     AS invoices,
+                   SUM({_PROFIT_SIGN} * i.revenue)                      AS revenue,
+                   SUM({_PROFIT_SIGN} * i.cost)                         AS cost
+              FROM vouchers v
+              JOIN voucher_items i ON i.voucher_number = v.voucher_number
+              JOIN voucher_party p ON p.voucher_number = v.voucher_number
+             WHERE v.company_id = %s
+               AND v.voucher_type IN ('Sales', 'Sales Return'){period}
+             GROUP BY p.party
+             ORDER BY 4 DESC
+        """, tuple(params[:2] + [company_id] + params[2:]))
+        return [_profit_row(dict(r), "customer") for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error in get_profit_by_customer_data: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def _profit_row(row, label_key):
+    """Round the figures and add gross profit and margin."""
+    revenue = float(row.get("revenue") or 0)
+    cost = float(row.get("cost") or 0)
+    profit = revenue - cost
+    row[label_key] = row.get(label_key) or "(unnamed)"
+    row["revenue"] = round(revenue, 2)
+    row["cost"] = round(cost, 2)
+    row["profit"] = round(profit, 2)
+    # A margin against no revenue is not 0% or 100%, it is undefined.
+    row["margin"] = round(profit / revenue * 100, 2) if revenue else None
+    if "quantity" in row:
+        row["quantity"] = round(float(row.get("quantity") or 0), 2)
+    return row
