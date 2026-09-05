@@ -145,132 +145,9 @@
             {% endif %}
 
             {% if can_access('reports') %}
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle">Reports</a>
-                <ul class="dropdown-menu">
-                    {% if can_access('reports.all_reports') %}
-                    <li><a href="{{ url_for('report_bp.report_all') }}" style="font-weight:600;">📋 All Reports</a></li>
-                    {% endif %}
-                    {% if can_access('reports.report_builder') %}
-                    <li><a href="{{ url_for('report_builder_bp.report_builder_page') }}" style="font-weight:600;">🛠️ Custom Report Builder</a></li>
-                    {% endif %}
-                    <li><a href="{{ url_for('report_bp.verify_books') }}" style="font-weight:600;">🩺 Verify Books</a></li>
-                    {% if can_access('reports.all_reports') or can_access('reports.report_builder') %}
-                    <li><hr style="margin:4px 0;border-color:#e0e7f0;"></li>
-                    {% endif %}
-
-                    <!-- Financial Statements Submenu -->
-                    {% if can_access('reports.financial_statements') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Financial Statements</a>
-                        <ul class="dropdown-menu">
-                            <li><a href="{{ url_for('report_bp.report_balance_sheet') }}">Balance Sheet</a></li>
-                            <li><a href="{{ url_for('report_bp.report_profit_and_loss') }}">Profit and Loss</a></li>
-                            <li><a href="{{ url_for('report_bp.report_trial_balance') }}">Trial Balance</a></li>
-                            <li><a href="{{ url_for('report_bp.report_cash_flow') }}">Cash Flow Statement</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- Registers Submenu -->
-                    {% if can_access('reports.registers') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Registers</a>
-                        <ul class="dropdown-menu">
-                            <li><a href="{{ url_for('report_bp.report_daybook') }}">Daybook</a></li>
-                            <li><a href="{{ url_for('report_bp.report_gl_dump') }}">GL Dump</a></li>
-                            {% if company and company.inventory_applicable == 1 %}
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Sales') }}">Sales
-                                    Register</a></li>
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Purchase') }}">Purchase
-                                    Register</a></li>
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Sales Return') }}">Sales
-                                    Return Register</a></li>
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Purchase Return') }}">Purchase
-                                    Return Register</a></li>
-                            {% endif %}
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Expense') }}">Expense
-                                    Register</a></li>
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Contra') }}">Contra
-                                    Register</a></li>
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Payment') }}">Payment
-                                    Register</a></li>
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Receipt') }}">Receipt
-                                    Register</a></li>
-                            <li><a href="{{ url_for('report_bp.report_register', voucher_type='Journal') }}">Journal
-                                    Register</a></li>
-                        </ul>
-                    </li>
-
-                    {% endif %}
-
-                    <!-- Summaries Submenu -->
-                    {% if company and company.inventory_applicable == 1 and can_access('reports.summaries') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Summaries</a>
-                        <ul class="dropdown-menu">
-                            <li><a href="{{ url_for('report_bp.report_sales_summary') }}">Sales Summary</a></li>
-                            <li><a href="{{ url_for('report_bp.report_purchase_summary') }}">Purchase Summary</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- Ledger Books Submenu -->
-                    {% if can_access('reports.ledger_books') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Ledger Books</a>
-                        <ul class="dropdown-menu">
-                            <li><a href="{{ url_for('report_bp.report_ledger_transactions') }}">General Ledger</a></li>
-                            <li><a href="{{ url_for('report_bp.report_customer_ledger') }}">Customer Ledger</a></li>
-                            <li><a href="{{ url_for('report_bp.report_supplier_ledger') }}">Supplier Ledger</a></li>
-                            <li><a href="{{ url_for('report_bp.report_bank_book') }}">Bank Book</a></li>
-                            <li><a href="{{ url_for('report_bp.report_cash_book') }}">Cash Book</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- Inventory Reports Submenu -->
-                    {% if company and company.inventory_applicable == 1 and can_access('reports.inventory_reports') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Inventory Reports</a>
-                        <ul class="dropdown-menu">
-                            <li><a href="{{ url_for('report_bp.report_stock_summary') }}">Stock Summary</a></li>
-                            <li><a href="{{ url_for('report_bp.report_stock_valuation') }}">Stock Valuation</a></li>
-                            <li><a href="{{ url_for('report_bp.report_stock_movement') }}">Stock Movement</a></li>
-                            <li><a href="{{ url_for('report_bp.report_closing_inventory') }}">Closing Inventory</a></li>
-                            <li><a href="{{ url_for('report_bp.report_slow_moving') }}">Slow/Non-Moving Stock</a></li>
-                            <li><a href="{{ url_for('report_bp.report_negative_stock') }}">Negative Stock</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- VAT Reports Submenu -->
-                    {% if can_access('reports.vat_reports') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">VAT Reports</a>
-                        <ul class="dropdown-menu">
-                            <li><a href="{{ url_for('report_bp.report_vat_summary') }}">VAT Summary</a></li>
-                            <li><a href="{{ url_for('report_bp.report_vat_detailed') }}">VAT Detailed</a></li>
-                            <li><a href="{{ url_for('report_bp.report_vat_expense') }}">Expense VAT</a></li>
-                            <li><a href="{{ url_for('report_bp.report_vat_service_income') }}">Service Income VAT</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-
-                    <!-- Other Submenu -->
-                    {% if can_access('reports.other') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Other</a>
-                        <ul class="dropdown-menu">
-                            <li><a href="{{ url_for('report_bp.report_ageing') }}">Ageing Report</a></li>
-                            <li><a href="{{ url_for('report_bp.report_inventory_ageing') }}">Inventory Ageing</a></li>
-                            <li><a href="{{ url_for('report_bp.report_party_matching') }}">Party Matching</a></li>
-                            <li><a href="{{ url_for('report_bp.report_statement_of_account') }}">Statement of Account</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-                </ul>
-            </li>
+            <!-- Reports is a page of its own, like Vouchers: a long dropdown
+                 hid most of these behind two levels of hover. -->
+            <li><a href="{{ url_for('report_bp.report_all') }}">Reports</a></li>
             {% endif %}
 
             {% if can_access('print') %}
@@ -323,9 +200,89 @@
             </li>
             {% endif %}
 
+            <li class="global-search">
+                <input type="search" id="globalSearch" placeholder="Search menus…  Ctrl+K"
+                       autocomplete="off" aria-label="Search screens and menus">
+                <div id="globalSearchResults" class="global-search-results" hidden></div>
+            </li>
+
             <li><a href="{{ url_for('auth_bp.logout') }}" class="logout-btn">Logout ({{ current_user.username }})</a>
             </li>
         </ul>
+
+        <script>
+            // One box for a voucher number, a party or an item. The server
+            // decides what the user is allowed to see; this only draws it.
+            (function () {
+                const box = document.getElementById('globalSearch');
+                const panel = document.getElementById('globalSearchResults');
+                if (!box || !panel) return;
+
+                let timer = null, items = [], active = -1, lastTerm = '';
+
+                const close = () => { panel.hidden = true; active = -1; };
+
+                function draw(groups, term) {
+                    items = [];
+                    if (!groups.length) {
+                        panel.innerHTML = '<div class="gs-empty">Nothing matches “'
+                            + term.replace(/</g, '&lt;') + '”</div>';
+                        panel.hidden = false;
+                        return;
+                    }
+                    panel.innerHTML = groups.map(g => `
+                        <div class="gs-group">${g.name}</div>` +
+                        g.items.map(it => {
+                            items.push(it.url);
+                            return `<a class="gs-item" href="${it.url}">
+                                <span class="gs-title">${it.title}</span>
+                                <span class="gs-meta">${it.meta}</span>
+                                ${it.subtitle ? `<span class="gs-sub">${it.subtitle}</span>` : ''}
+                            </a>`;
+                        }).join('')).join('');
+                    panel.hidden = false;
+                }
+
+                function highlight() {
+                    panel.querySelectorAll('.gs-item').forEach((el, i) =>
+                        el.classList.toggle('active', i === active));
+                }
+
+                box.addEventListener('input', function () {
+                    const term = this.value.trim();
+                    clearTimeout(timer);
+                    if (term.length < 2) { close(); return; }
+                    // Wait for a pause in typing: one request per search, not
+                    // one per keystroke.
+                    timer = setTimeout(() => {
+                        lastTerm = term;
+                        fetch('/api/global_search?q=' + encodeURIComponent(term))
+                            .then(r => r.headers.get('content-type')?.includes('json')
+                                ? r.json() : Promise.reject(new Error('signed out')))
+                            .then(d => { if (d.term === lastTerm) draw(d.groups || [], term); })
+                            .catch(() => close());
+                    }, 200);
+                });
+
+                box.addEventListener('keydown', function (e) {
+                    if (e.key === 'Escape') { close(); this.blur(); return; }
+                    if (panel.hidden || !items.length) return;
+                    if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
+                    else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; highlight(); }
+                    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); window.location.href = items[active]; }
+                });
+
+                // Ctrl+K (Cmd+K on a Mac) from anywhere on the page.
+                document.addEventListener('keydown', e => {
+                    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                        e.preventDefault(); box.focus(); box.select();
+                    }
+                });
+                document.addEventListener('click', e => {
+                    if (!e.target.closest('.global-search')) close();
+                });
+            })();
+        </script>
         {% else %}
         <ul class="nav-menu">
             <li><a href="{{ url_for('company_bp.company_gateway') }}">Select Company</a></li>

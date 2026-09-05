@@ -1370,3 +1370,98 @@ table td button {
 @media (max-width: 520px) {
     .global-chat-window .vrc-row { grid-template-columns: 1fr; gap: 3px; }
 }
+
+/* ============================================================
+   Global search - one box in the navbar for vouchers, parties
+   and items. The panel hangs below it, right-aligned so it does
+   not run off the edge next to the Logout button.
+   ============================================================ */
+.global-search { position: relative; display: flex; align-items: center; }
+
+.global-search input {
+    /* The navbar sets `input, select { width: 100% }` on some screens. */
+    width: 190px !important;
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 15px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    font-size: 0.8rem;
+    outline: none;
+    transition: width 0.15s, background 0.15s;
+}
+
+.global-search input::placeholder { color: rgba(255, 255, 255, 0.75); }
+
+.global-search input:focus {
+    width: 260px !important;
+    background: rgba(255, 255, 255, 0.28);
+    border-color: rgba(255, 255, 255, 0.7);
+}
+
+.global-search-results {
+    position: absolute;
+    top: 36px;
+    right: 0;
+    width: 400px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #e0e7f0;
+    border-radius: 10px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
+    z-index: 3002;
+    padding: 6px 0;
+}
+
+.global-search-results[hidden] { display: none; }
+
+.global-search-results .gs-group {
+    padding: 8px 14px 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #7a8a9a;
+}
+
+.global-search-results .gs-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 10px;
+    padding: 7px 14px;
+    margin: 0;
+    border-radius: 0;
+    text-decoration: none;
+    color: #1a3c6e;
+    font-size: inherit;
+    white-space: normal;
+}
+
+.global-search-results .gs-item:hover,
+.global-search-results .gs-item.active {
+    background: #eef4fb;
+    text-decoration: none;
+    padding-left: 14px;          /* the nav hover shifts links; this must not */
+}
+
+.global-search-results .gs-title { font-size: 0.84rem; font-weight: 600; }
+
+.global-search-results .gs-meta {
+    font-size: 0.78rem;
+    color: #16a085;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.global-search-results .gs-sub {
+    grid-column: 1 / -1;
+    font-size: 0.72rem;
+    color: #7a8a9a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.global-search-results .gs-empty { padding: 14px; font-size: 0.8rem; color: #7a8a9a; }

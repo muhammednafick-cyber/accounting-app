@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, url_for
 from flask_login import login_required, current_user
 from datetime import datetime
 
@@ -15,6 +15,7 @@ from database import (
     get_company_settings
 )
 from . import get_db_connection
+from .models import format_date
 
 api_bp = Blueprint("api_bp", __name__)
 
@@ -122,3 +123,61 @@ def api_inventory_summary():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/api/global_search")
+@login_required
+def api_global_search():
+    """The navbar search box: every screen in the app, by name.
+
+    Menus hide their contents behind hovers, so this is a way to reach a
+    screen by typing what it is called. Only screens the user could already
+    open through the menus are offered - the permission key each entry
+    carries is the one its menu used.
+    """
+    from .navigation import DESTINATIONS
+
+    term = (request.args.get("q") or "").strip().lower()
+    if len(term) < 2:
+        return jsonify({"success": True, "term": term, "groups": []})
+
+    words = term.split()
+    may = current_user.can_access
+
+    scored = []
+    for label, where, endpoint, args, perm in DESTINATIONS:
+        if perm and not may(perm):
+            continue
+        haystack = (label + " " + where).lower()
+        # Every word typed has to appear somewhere, so "sales reg" finds the
+        # Sales Register but "sales xyz" finds nothing.
+        if not all(w in haystack for w in words):
+            continue
+        low = label.lower()
+        # Rank: the name starting with what was typed beats a mention of it
+        # anywhere, and a match in the name beats one in the menu path.
+        if low.startswith(term):
+            rank = 0
+        elif term in low:
+            rank = 1
+        elif all(w in low for w in words):
+            rank = 2
+        else:
+            rank = 3
+        scored.append((rank, len(label), label, where, endpoint, args))
+
+    scored.sort()
+    groups, seen = [], {}
+    for rank, _, label, where, endpoint, args in scored[:12]:
+        try:
+            url = url_for(endpoint, **args)
+        except Exception:
+            continue        # an endpoint that no longer exists
+        # The group heading already says where it lives, so the row does not
+        # need to repeat it.
+        seen.setdefault(where, []).append(
+            {"title": label, "subtitle": "", "meta": "", "url": url})
+    for where, items in seen.items():
+        groups.append({"name": where, "items": items})
+
+    return jsonify({"success": True, "term": term, "groups": groups})
