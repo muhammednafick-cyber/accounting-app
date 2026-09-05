@@ -136,6 +136,7 @@
     </div>
 
     <!-- ── Financial Statements ───────────────────────────────────── -->
+    {% if can_access('reports.financial_statements') %}
     <div class="category-block" data-category="Financial Statements">
         <div class="category-header">
             <div class="category-icon bg-financial"><i class="bi bi-bar-chart-line-fill"></i></div>
@@ -174,8 +175,10 @@
             </a>
         </div>
     </div>
+    {% endif %}
 
     <!-- ── Ledger Books ───────────────────────────────────────────── -->
+    {% if can_access('reports.ledger_books') %}
     <div class="category-block" data-category="Ledger Books">
         <div class="category-header">
             <div class="category-icon bg-ledger"><i class="bi bi-journal-text"></i></div>
@@ -235,8 +238,10 @@
             </a>
         </div>
     </div>
+    {% endif %}
 
     <!-- ── Registers ──────────────────────────────────────────────── -->
+    {% if can_access('reports.registers') %}
     <div class="category-block" data-category="Registers">
         <div class="category-header">
             <div class="category-icon bg-register"><i class="bi bi-receipt"></i></div>
@@ -331,6 +336,20 @@
                 <div class="tile-desc">Purchase totals grouped by period or item</div>
                 <div class="tile-arrow">Open →</div>
             </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_profit_by_item') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">🏷️</div>
+                <div class="tile-name">Profit by Item</div>
+                <div class="tile-desc">Revenue, cost and gross profit per item</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.report_profit_by_customer') }}">
+                <div class="tile-accent accent-register"></div>
+                <div class="tile-icon">🤝</div>
+                <div class="tile-name">Profit by Customer</div>
+                <div class="tile-desc">Revenue, cost and gross profit per customer</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
             {% endif %}
             {% endif %}
             <a class="report-tile" href="{{ url_for('report_bp.report_register', voucher_type='Expense') }}">
@@ -342,9 +361,11 @@
             </a>
         </div>
     </div>
+    {% endif %}
 
     <!-- ── Inventory Reports ───────────────────────────────────────── -->
     {% if company and company.inventory_applicable == 1 %}
+    {% if can_access('reports.inventory_reports') %}
     <div class="category-block" data-category="Inventory Reports">
         <div class="category-header">
             <div class="category-icon bg-inventory"><i class="bi bi-box-seam"></i></div>
@@ -405,8 +426,10 @@
         </div>
     </div>
     {% endif %}
+    {% endif %}
 
     <!-- ── VAT Reports ────────────────────────────────────────────── -->
+    {% if can_access('reports.vat_reports') %}
     <div class="category-block" data-category="VAT Reports">
         <div class="category-header">
             <div class="category-icon bg-vat"><i class="bi bi-percent"></i></div>
@@ -445,6 +468,46 @@
             </a>
         </div>
     </div>
+    {% endif %}
+
+    <!-- ── Tools ──────────────────────────────────────────────────── -->
+    {% if can_access('reports.other') or can_access('reports.report_builder') %}
+    <div class="category-block" data-category="Tools">
+        <div class="category-header">
+            <div class="category-icon bg-financial"><i class="bi bi-tools"></i></div>
+            <div>
+                <h3>Statements and Tools <span>Party statements, checks and custom reports</span></h3>
+            </div>
+        </div>
+        <div class="tiles-grid">
+            {% if can_access('reports.other') %}
+            <a class="report-tile" href="{{ url_for('report_bp.report_statement_of_account') }}">
+                <div class="tile-accent accent-financial"></div>
+                <div class="tile-icon">📄</div>
+                <div class="tile-name">Statement of Account</div>
+                <div class="tile-desc">One party's running balance and ageing</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            <a class="report-tile" href="{{ url_for('report_bp.verify_books') }}">
+                <div class="tile-accent accent-financial"></div>
+                <div class="tile-icon">🩺</div>
+                <div class="tile-name">Verify Books</div>
+                <div class="tile-desc">Ten integrity checks across the ledgers</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            {% endif %}
+            {% if can_access('reports.report_builder') %}
+            <a class="report-tile" href="{{ url_for('report_builder_bp.report_builder_page') }}">
+                <div class="tile-accent accent-financial"></div>
+                <div class="tile-icon">🧱</div>
+                <div class="tile-name">Report Builder</div>
+                <div class="tile-desc">Build a custom report from any table</div>
+                <div class="tile-arrow">Open →</div>
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <script>
