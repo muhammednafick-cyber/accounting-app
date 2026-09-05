@@ -214,30 +214,18 @@ def report_sales_summary():
 @report_bp.route("/report/audit-trail")
 @login_required
 def report_audit_trail():
-    """Who created, edited or deleted vouchers, and when.
+    """Filters for the audit trail. The report itself comes back as Excel.
 
-    Paged rather than dumped: the trail gains a row per voucher change and is
-    never pruned, so it is the one table that grows without bound.
+    Nothing is rendered on the page: the trail gains a row per voucher change
+    and is never pruned, so the useful output is a file you can filter and
+    keep, not a table that grows until it will not paint.
     """
-    from database.audit_db import get_audit_trail, get_audit_actions
-
-    page = max(1, int(request.args.get("page") or 1))
-    per_page = 100
-    rows, total = get_audit_trail(
-        voucher_number=(request.args.get("voucher_number") or "").strip() or None,
-        from_date=parse_date(request.args.get("from_date")),
-        to_date=parse_date(request.args.get("to_date")),
-        action=(request.args.get("action") or "").strip() or None,
-        username=(request.args.get("username") or "").strip() or None,
-        limit=per_page, offset=(page - 1) * per_page)
+    from database.audit_db import get_audit_actions, get_audited_voucher_types
 
     return render_template(
         "report_audit_trail.html",
-        rows=rows, total=total, page=page, per_page=per_page,
-        pages=max(1, (total + per_page - 1) // per_page),
         actions=get_audit_actions(),
-        filters={k: (request.args.get(k) or "") for k in
-                 ("voucher_number", "from_date", "to_date", "action", "username")},
+        voucher_types=get_audited_voucher_types(),
         username=current_user.username)
 
 
@@ -930,6 +918,36 @@ def export_report(report_type):
         elif report_type == "sales_summary":
             data = get_sales_summary_data(from_date, to_date)
             return create_excel_response(pd.DataFrame(data), f"Sales_Summary_{from_date}_{to_date}")
+
+        elif report_type == "audit_trail":
+            from database.audit_db import get_audit_trail
+            # Capped: the trail is the one table that only ever grows, and a
+            # spreadsheet nobody can open is not an export.
+            MAX_ROWS = 50000
+            rows, total = get_audit_trail(
+                voucher_number=(request.args.get("voucher_number") or "").strip() or None,
+                from_date=from_date, to_date=to_date,
+                action=(request.args.get("action") or "").strip() or None,
+                voucher_type=(request.args.get("voucher_type") or "").strip() or None,
+                voucher_from=parse_date(request.args.get("voucher_from")),
+                voucher_to=parse_date(request.args.get("voucher_to")),
+                limit=MAX_ROWS)
+            if total > MAX_ROWS:
+                print(f"audit_trail export truncated: {total} matched, {MAX_ROWS} written")
+            formatted_data = [
+                {"Changed On": r["created_at"].strftime("%d-%m-%Y %H:%M")
+                               if hasattr(r["created_at"], "strftime") else r["created_at"],
+                 "Action": r["action"],
+                 "Voucher": r["voucher_number"],
+                 "Voucher Type": r["voucher_type"],
+                 "Voucher Date": format_date(r["voucher_date"]) if r["voucher_date"] else "",
+                 "Amount": r["amount"] if r["amount"] is not None else "",
+                 "User": r["username"],
+                 "Details": r["details"]}
+                for r in rows
+            ]
+            return create_excel_response(pd.DataFrame(formatted_data),
+                                         f"Audit_Trail_{from_date}_{to_date}")
 
         elif report_type == "profit_by_item":
             rows = get_profit_by_item_data(from_date, to_date)

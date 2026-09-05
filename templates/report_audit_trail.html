@@ -4,117 +4,73 @@
 
 {% block content %}
 <h1>Audit Trail</h1>
-<p class="text-muted" style="margin-top:-8px">
-    Every voucher created, edited or deleted, newest first. Written automatically
-    as each change is saved &mdash; nothing here can be edited from the app.
-</p>
-
-<form class="dashboard-section" method="get">
+<form class="dashboard-section" id="auditFilters" onsubmit="exportReport(); return false;">
+    <h3 style="font-size:0.95rem; margin:0 0 12px">When the change was made</h3>
     <div class="entry">
-        <label for="from_date">From Date:</label>
+        <label for="from_date">Changed From:</label>
         <input type="text" id="from_date" name="from_date" class="input-standard-width"
-               placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}" value="{{ filters.from_date }}">
+               placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
     </div>
     <div class="entry">
-        <label for="to_date">To Date:</label>
+        <label for="to_date">Changed To:</label>
         <input type="text" id="to_date" name="to_date" class="input-standard-width"
-               placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}" value="{{ filters.to_date }}">
+               placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+    </div>
+
+    <h3 style="font-size:0.95rem; margin:18px 0 12px">The voucher itself</h3>
+    <div class="entry">
+        <label for="voucher_from">Voucher Dated From:</label>
+        <input type="text" id="voucher_from" name="voucher_from" class="input-standard-width"
+               placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
     </div>
     <div class="entry">
-        <label for="voucher_number">Voucher:</label>
+        <label for="voucher_to">Voucher Dated To:</label>
+        <input type="text" id="voucher_to" name="voucher_to" class="input-standard-width"
+               placeholder="DD-MM-YYYY" pattern="\d{2}-\d{2}-\d{4}">
+    </div>
+    <div class="entry">
+        <label for="voucher_type">Voucher Type:</label>
+        <select id="voucher_type" name="voucher_type" class="input-standard-width">
+            <option value="">All</option>
+            {% for t in voucher_types %}
+            <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="entry">
+        <label for="voucher_number">Voucher Number:</label>
         <input type="text" id="voucher_number" name="voucher_number" class="input-standard-width"
-               placeholder="any part of the number" value="{{ filters.voucher_number }}">
+               placeholder="any part of the number">
     </div>
     <div class="entry">
         <label for="action">Action:</label>
         <select id="action" name="action" class="input-standard-width">
             <option value="">All</option>
             {% for a in actions %}
-            <option value="{{ a }}" {{ 'selected' if filters.action == a else '' }}>{{ a }}</option>
+            <option value="{{ a }}">{{ a }}</option>
             {% endfor %}
         </select>
     </div>
-    <div class="entry">
-        <label for="username">User:</label>
-        <input type="text" id="username" name="username" class="input-standard-width"
-               value="{{ filters.username }}">
+
+    <div style="margin-top:18px">
+        <button type="submit" class="btn btn-info">Export to Excel</button>
+        <button type="button" class="btn btn-secondary" onclick="clearFilters()">Clear</button>
     </div>
-    <button type="submit" class="btn btn-primary">Show</button>
-    <a href="{{ url_for('report_bp.report_audit_trail') }}" class="btn btn-secondary">Clear</a>
 </form>
 
-<p class="text-muted" style="margin:14px 0 6px">
-    {% if total %}
-    <strong>{{ '{:,}'.format(total) }}</strong> entr{{ 'y' if total == 1 else 'ies' }}
-    &mdash; showing {{ ((page - 1) * per_page) + 1 }}
-    to {{ [page * per_page, total] | min }}
-    {% else %}
-    Nothing recorded for that filter.
-    {% endif %}
-</p>
-
-<table id="auditTable">
-    <thead>
-        <tr>
-            <th>When</th>
-            <th>Action</th>
-            <th>Voucher</th>
-            <th>User</th>
-            <th>Details</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for r in rows %}
-        <tr>
-            <td class="nowrap">{{ r.created_at.strftime('%d-%m-%Y %H:%M') if r.created_at.strftime is defined
-                                  else r.created_at }}</td>
-            <td><span class="audit-action audit-{{ r.action | lower }}">{{ r.action }}</span></td>
-            <td class="nowrap">
-                {% if r.voucher_number %}{{ r.voucher_number }}{% else %}&mdash;{% endif %}
-            </td>
-            <td>{{ r.username }}</td>
-            <td class="audit-details">{{ r.details }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="text-center text-muted">No entries.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
-
-{% if pages > 1 %}
-<div class="audit-pager">
-    {% set base = request.args.to_dict() %}
-    {% if page > 1 %}
-    {% set _ = base.update({'page': page - 1}) %}
-    <a class="btn btn-secondary btn-sm" href="?{{ base | urlencode }}">&larr; Previous</a>
-    {% endif %}
-    <span class="text-muted">Page {{ page }} of {{ pages }}</span>
-    {% if page < pages %}
-    {% set _ = base.update({'page': page + 1}) %}
-    <a class="btn btn-secondary btn-sm" href="?{{ base | urlencode }}">Next &rarr;</a>
-    {% endif %}
-</div>
-{% endif %}
-
-<style>
-    #auditTable .nowrap { white-space: nowrap; }
-    #auditTable .audit-details { color: #55606b; font-size: 0.86rem; }
-    .audit-action {
-        display: inline-block;
-        padding: 1px 8px;
-        border-radius: 10px;
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.02em;
+<script>
+    function exportReport() {
+        const form = document.getElementById('auditFilters');
+        const params = new URLSearchParams();
+        // Only send what was filled in, so the filename and the query stay tidy.
+        new FormData(form).forEach((value, key) => {
+            if (String(value).trim()) params.append(key, value);
+        });
+        window.location.href = '/export_report/audit_trail?' + params.toString();
     }
-    .audit-create { background: #d1fae5; color: #0f6b52; }
-    .audit-update { background: #fef3c7; color: #92620a; }
-    .audit-delete { background: #fee2e2; color: #a02020; }
-    .audit-pager {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        margin: 16px 0 40px;
+
+    function clearFilters() {
+        document.getElementById('auditFilters').reset();
     }
-</style>
+</script>
 {% endblock %}
