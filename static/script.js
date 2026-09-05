@@ -2990,3 +2990,75 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 });
+
+
+// ============================================================
+// Right-align the money
+// ============================================================
+//
+// Figures in an accounting table have to line up on the decimal or the eye
+// cannot compare them: left-aligned, "900.00" looks longer than "1,000.00".
+// Fifteen of the thirty report screens were left-aligned, each building its
+// rows differently - some in Jinja, some in jQuery, some in template strings -
+// so aligning them column by column across fifteen files would have been easy
+// to half-apply. This decides per column, from the content, wherever a table
+// appears.
+
+(function () {
+    // A figure: 1,234.50 / -12 / 0 / 45%. Deliberately not a date - "30-08-2026"
+    // carries hyphens inside it and is rejected, as are codes like FY26-REC-01.
+    const FIGURE = /^-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?$/;
+
+    function alignNumericColumns(table) {
+        if (!table || table.dataset.numAligned === 'busy') return;
+        const body = table.tBodies && table.tBodies[0];
+        if (!body || !body.rows.length) return;
+
+        // A grid of inputs is an entry form, not a report.
+        if (table.querySelector('input, select, textarea')) return;
+
+        const width = Math.max(...[...body.rows].map(r => r.cells.length));
+        table.dataset.numAligned = 'busy';
+
+        for (let c = 0; c < width; c++) {
+            let figures = 0, filled = 0;
+            for (const row of body.rows) {
+                const cell = row.cells[c];
+                if (!cell) continue;
+                const text = cell.textContent.trim();
+                if (!text) continue;
+                filled++;
+                if (FIGURE.test(text)) figures++;
+            }
+            // Mostly figures, and more than one to compare.
+            if (!filled || figures < 2 || figures / filled < 0.6) continue;
+
+            for (const row of body.rows) {
+                if (row.cells[c]) row.cells[c].classList.add('num-col');
+            }
+            for (const section of [table.tHead, table.tFoot]) {
+                if (!section) continue;
+                for (const row of section.rows) {
+                    if (row.cells[c]) row.cells[c].classList.add('num-col');
+                }
+            }
+        }
+        table.dataset.numAligned = 'done';
+    }
+
+    function alignAll() {
+        document.querySelectorAll('table').forEach(alignNumericColumns);
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        alignAll();
+        // Most reports fetch their rows after load, so re-check as they arrive.
+        // Debounced: a table being filled row by row would otherwise re-scan
+        // on every append.
+        let pending = null;
+        new MutationObserver(function () {
+            clearTimeout(pending);
+            pending = setTimeout(alignAll, 120);
+        }).observe(document.body, { childList: true, subtree: true });
+    });
+})();

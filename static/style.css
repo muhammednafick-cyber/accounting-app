@@ -1,3 +1,47 @@
+/* ============================================================
+   Design tokens
+   ============================================================
+   The palette was 177 colour literals in this file and 155 more spread
+   through the templates - the same blue written thirty-four times, so no
+   single edit could change it and nothing was reliably "the brand colour".
+   These are the names; the values below are the ones already in use, so
+   nothing changes appearance today. Reach for a token, not a hex code.
+   ------------------------------------------------------------ */
+:root {
+    /* brand */
+    --brand: #2563ab;
+    --brand-dark: #1a3c6e;
+    --brand-soft: #dbeafe;
+    --nav-from: #667eea;
+    --nav-to: #764ba2;
+
+    /* intent */
+    --success: #28a745;
+    --success-dark: #218838;
+    --danger: #e74c3c;
+    --danger-dark: #c0392b;
+    --warning: #ffc107;
+    --info: #17a2b8;
+    --accent: #3498db;
+
+    /* ink */
+    --ink: #333;
+    --ink-strong: #2c3e50;
+    --ink-muted: #64748b;
+    --ink-faint: #7a8a9a;
+
+    /* surfaces */
+    --page: #f4f7fa;
+    --surface: #ffffff;
+    --surface-alt: #f1f5f9;
+    --border: #e0e7f0;
+    --border-strong: #cbd5e1;
+
+    /* shape */
+    --radius: 6px;
+    --radius-lg: 10px;
+}
+
 /* Reset and base styles */
 * {
     margin: 0;
@@ -7,7 +51,7 @@
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #f4f7fa;
+    background-color: var(--page);
     color: #333;
 }
 
@@ -16,7 +60,7 @@ body {
    ============================ */
 
 .navbar {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, var(--nav-from) 0%, var(--nav-to) 100%);
     padding: 15px 30px;
     display: flex;
     justify-content: space-between;
@@ -40,7 +84,7 @@ body {
 }
 
 .company-badge {
-    background: #28a745;
+    background: var(--success);
     color: white;
     padding: 5px 15px;
     border-radius: 20px;
@@ -150,7 +194,7 @@ body {
 
 .dropdown-menu a:hover {
     background: #f1f3f5;
-    color: #667eea;
+    color: var(--nav-from);
     padding-left: 25px;
 }
 
@@ -194,7 +238,7 @@ body {
 /* Get Number button styling */
 button[onclick*="getNextVoucherNumber"],
 .get-number-btn {
-    background-color: #28a745 !important;
+    background-color: var(--success) !important;
     color: white !important;
     padding: 8px 16px;
     border: none;
@@ -208,7 +252,7 @@ button[onclick*="getNextVoucherNumber"],
 
 button[onclick*="getNextVoucherNumber"]:hover,
 .get-number-btn:hover {
-    background-color: #218838 !important;
+    background-color: var(--success-dark) !important;
 }
 
 /* Main Content Area */
@@ -272,7 +316,7 @@ button[onclick*="getNextVoucherNumber"]:hover,
     height: 100vh;
     position: fixed;
     background-color: #1a252f;
-    color: #ffffff;
+    color: var(--surface);
     padding: 20px;
     overflow-y: auto;
     box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
@@ -316,7 +360,7 @@ button[onclick*="getNextVoucherNumber"]:hover,
     position: relative;
     left: 0;
     top: 100%;
-    background-color: #2c3e50;
+    background-color: var(--ink-strong);
     padding: 5px 0;
     margin: 5px 0 0 0;
     width: 100%;
@@ -339,14 +383,14 @@ button[onclick*="getNextVoucherNumber"]:hover,
     padding: 10px 15px;
     font-size: 0.9em;
     border-left: 3px solid transparent;
-    background-color: #2c3e50;
+    background-color: var(--ink-strong);
     white-space: nowrap;
     display: block;
 }
 
 .sidebar ul ul li:hover>a {
     background-color: #465c71;
-    border-left: 3px solid #3498db;
+    border-left: 3px solid var(--accent);
     padding-left: 20px;
 }
 
@@ -370,13 +414,13 @@ button[onclick*="getNextVoucherNumber"]:hover,
     margin-left: 250px;
     padding: 30px;
     min-height: 100vh;
-    background-color: #f4f7fa;
+    background-color: var(--page);
 }
 
 .content h1 {
     font-size: 2em;
     margin-bottom: 20px;
-    color: #2c3e50;
+    color: var(--ink-strong);
 }
 
 .content h2 {
@@ -387,7 +431,7 @@ button[onclick*="getNextVoucherNumber"]:hover,
 
 /* Dashboard sections */
 .dashboard-section {
-    background-color: #ffffff;
+    background-color: var(--surface);
     padding: 20px;
     border-radius: 8px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
@@ -402,7 +446,7 @@ button[onclick*="getNextVoucherNumber"]:hover,
 
 /* Form styling - Standardized */
 .content form {
-    background-color: #ffffff;
+    background-color: var(--surface);
     padding: 20px;
     border-radius: 8px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
@@ -446,7 +490,7 @@ textarea {
 input:focus,
 select:focus,
 textarea:focus {
-    border-color: #3498db;
+    border-color: var(--accent);
     outline: 0;
     box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
 }
@@ -510,7 +554,7 @@ button {
 .btn-primary,
 button[type="submit"],
 .btn {
-    background-color: #3498db;
+    background-color: var(--accent);
     color: white;
 }
 
@@ -523,12 +567,12 @@ button[type="submit"]:hover,
 
 /* Success Button */
 .btn-success {
-    background-color: #28a745;
+    background-color: var(--success);
     color: white;
 }
 
 .btn-success:hover {
-    background-color: #218838;
+    background-color: var(--success-dark);
 }
 
 /* Danger Button */
@@ -553,7 +597,7 @@ button[type="submit"]:hover,
 
 /* Warning Button */
 .btn-warning {
-    background-color: #ffc107;
+    background-color: var(--warning);
     color: #212529;
 }
 
@@ -564,7 +608,7 @@ button[type="submit"]:hover,
 /* Info Button (Download/Export) */
 .btn-info,
 .download-btn {
-    background-color: #17a2b8;
+    background-color: var(--info);
     color: white;
 }
 
@@ -615,16 +659,16 @@ table td {
 
 table th {
     background-color: #34495e;
-    color: #ffffff;
+    color: var(--surface);
     font-weight: 600;
 }
 
 table td {
-    background-color: #ffffff;
+    background-color: var(--surface);
 }
 
 table tr:hover td {
-    background-color: #f1f5f9;
+    background-color: var(--surface-alt);
 }
 
 table td button {
@@ -655,7 +699,7 @@ table td button {
 .import-section-container h3 {
     margin-top: 0;
     margin-bottom: 15px;
-    color: #2c3e50;
+    color: var(--ink-strong);
     font-size: 1.2em;
     border-bottom: 1px solid #eee;
     padding-bottom: 10px;
@@ -691,7 +735,7 @@ table td button {
 
 .progress-bar {
     height: 100%;
-    background-color: #28a745;
+    background-color: var(--success);
     /* Success green */
     width: 0%;
     color: white;
@@ -738,7 +782,7 @@ table td button {
     height: 54px;
     border-radius: 999px;
     border: 0;
-    background: #667eea;
+    background: var(--nav-from);
     color: #fff;
     display: grid;
     place-items: center;
@@ -783,7 +827,7 @@ table td button {
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, var(--nav-from) 0%, var(--nav-to) 100%);
     color: white;
 }
 
@@ -942,7 +986,7 @@ table td button {
     padding: 10px 14px;
     line-height: 1.5;
     border: none;
-    background: #f1f5f9;
+    background: var(--surface-alt);
     color: #1a202c;
     white-space: pre-wrap;
     word-break: break-word;
@@ -950,7 +994,7 @@ table td button {
 }
 
 .global-chat-window .rv-msg.user .rv-bubble {
-    background: #667eea;
+    background: var(--nav-from);
     color: #fff;
     border-bottom-right-radius: 2px;
 }
@@ -988,7 +1032,7 @@ table td button {
 }
 
 .global-chat-window .rv-chat-input-bar input:focus {
-    border-color: #667eea;
+    border-color: var(--nav-from);
     background-color: #fff;
     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
 }
@@ -1057,8 +1101,8 @@ table td button {
 }
 
 #vaChatNewBtn {
-    background-color: #17a2b8;
-    border-color: #17a2b8;
+    background-color: var(--info);
+    border-color: var(--info);
     color: white;
 }
 
@@ -1068,19 +1112,19 @@ table td button {
 }
 
 #vaChatSubmitBtn {
-    background-color: #28a745;
-    border-color: #28a745;
+    background-color: var(--success);
+    border-color: var(--success);
     color: white;
 }
 
 #vaChatSubmitBtn:hover {
-    background-color: #218838;
+    background-color: var(--success-dark);
     border-color: #1e7e34;
 }
 
 #vaChatShowDraftsBtn {
-    background-color: #ffc107;
-    border-color: #ffc107;
+    background-color: var(--warning);
+    border-color: var(--warning);
     color: #212529;
 }
 
@@ -1090,8 +1134,8 @@ table td button {
 }
 
 #vaChatSendBtn {
-    background-color: #667eea;
-    border-color: #667eea;
+    background-color: var(--nav-from);
+    border-color: var(--nav-from);
     color: white;
 }
 
@@ -1178,7 +1222,7 @@ table td button {
     background-color: #eef2f7;
     color: #1a202c;
     font-weight: 600;
-    border-bottom: 1px solid #cbd5e1;
+    border-bottom: 1px solid var(--border-strong);
     position: sticky;
     top: 0;
     z-index: 1;
@@ -1205,7 +1249,7 @@ table td button {
 .global-chat-window .rv-table-more {
     padding: 6px 10px;
     font-size: 0.78em;
-    color: #64748b;
+    color: var(--ink-muted);
     background: #f8fafc;
     border-top: 1px solid #edf2f7;
 }
@@ -1213,7 +1257,7 @@ table td button {
 .global-chat-window .rv-totals {
     font-size: 0.85em;
     color: #334155;
-    background: #f1f5f9;
+    background: var(--surface-alt);
     border-radius: 6px;
     padding: 6px 10px;
     margin: 4px 0;
@@ -1222,7 +1266,7 @@ table td button {
 
 .global-chat-window .rv-note {
     display: block;
-    color: #64748b;
+    color: var(--ink-muted);
     margin-top: 4px;
     white-space: normal;
 }
@@ -1231,8 +1275,8 @@ table td button {
     display: inline-block;
     margin-top: 6px;
     font-size: 0.72em;
-    color: #64748b;
-    background: #f1f5f9;
+    color: var(--ink-muted);
+    background: var(--surface-alt);
     border-radius: 10px;
     padding: 2px 8px;
 }
@@ -1252,7 +1296,7 @@ table td button {
     margin: 4px 6px 0 0;
     padding: 5px 12px;
     font-size: 0.85em;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--border-strong);
     border-radius: 14px;
     background: #fff;
     color: #1a202c;
@@ -1261,20 +1305,20 @@ table td button {
 }
 
 .global-chat-window .rv-pick:hover {
-    border-color: #667eea;
+    border-color: var(--nav-from);
     background: #eef2ff;
     color: #4c51bf;
 }
 
 .global-chat-window .rv-alt {
-    color: #64748b;
+    color: var(--ink-muted);
     margin-left: 6px;
 }
 
 .global-chat-window .rv-alt-dl {
-    color: #667eea;
+    color: var(--nav-from);
     text-decoration: none;
-    border-bottom: 1px dotted #667eea;
+    border-bottom: 1px dotted var(--nav-from);
 }
 
 .global-chat-window .rv-alt-dl:hover {
@@ -1297,7 +1341,7 @@ table td button {
 
 .global-chat-window .vrc-sub {
     font-size: 0.8em;
-    color: #64748b;
+    color: var(--ink-muted);
     margin-bottom: 10px;
 }
 
@@ -1327,7 +1371,7 @@ table td button {
     width: 100%;
     padding: 6px 9px;
     font-size: 0.86em;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
     background: #fff;
     color: #1a202c;
@@ -1335,7 +1379,7 @@ table td button {
 
 .global-chat-window .vrc-input:focus {
     outline: none;
-    border-color: #667eea;
+    border-color: var(--nav-from);
     box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
 }
 
@@ -1408,7 +1452,7 @@ table td button {
     max-height: 60vh;
     overflow-y: auto;
     background: #fff;
-    border: 1px solid #e0e7f0;
+    border: 1px solid var(--border);
     border-radius: 10px;
     box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
     z-index: 3002;
@@ -1423,7 +1467,7 @@ table td button {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #7a8a9a;
+    color: var(--ink-faint);
 }
 
 .global-search-results .gs-item {
@@ -1434,7 +1478,7 @@ table td button {
     margin: 0;
     border-radius: 0;
     text-decoration: none;
-    color: #1a3c6e;
+    color: var(--brand-dark);
     font-size: inherit;
     white-space: normal;
 }
@@ -1458,10 +1502,28 @@ table td button {
 .global-search-results .gs-sub {
     grid-column: 1 / -1;
     font-size: 0.72rem;
-    color: #7a8a9a;
+    color: var(--ink-faint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.global-search-results .gs-empty { padding: 14px; font-size: 0.8rem; color: #7a8a9a; }
+.global-search-results .gs-empty { padding: 14px; font-size: 0.8rem; color: var(--ink-faint); }
+
+/* Figures line up on the decimal; tabular-nums stops the digits changing
+   width between rows, which is what makes a column scannable. */
+.num-col {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Accent Button - a distinct action that is neither primary nor destructive
+   (Preview Journal, for instance). It had been an inline purple. */
+.btn-accent {
+    background-color: #8e44ad;
+    color: white;
+}
+
+.btn-accent:hover {
+    background-color: #76338f;
+}
