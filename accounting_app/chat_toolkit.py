@@ -1012,18 +1012,21 @@ def _vouchers_with_item(a):
       "Who created, edited or deleted vouchers, and when.",
       ["audit trail", "who deleted vouchers last month"])
 def _audit_trail(a):
+    # The column is created_at. This asked for "timestamp", which the table has
+    # never had, so every query raised and the except below reported the
+    # feature as unavailable rather than as broken.
     clause, params = "", []
     if a.get("start"):
-        clause += " AND timestamp >= %s"
+        clause += " AND created_at >= %s"
         params.append(a["start"])
     if a.get("end"):
-        clause += " AND timestamp <= %s"
+        clause += " AND created_at <= %s"
         params.append(str(a["end"]) + " 23:59:59")
     try:
         cols, rows = sql(
-            "SELECT timestamp, COALESCE(username,''), action, COALESCE(voucher_number,''), "
+            "SELECT created_at, COALESCE(username,''), action, COALESCE(voucher_number,''), "
             "COALESCE(details,'') FROM audit_trail WHERE company_id = %s"
-            f"{clause} ORDER BY timestamp DESC LIMIT %s",
+            f"{clause} ORDER BY created_at DESC, id DESC LIMIT %s",
             tuple([a["company_id"]] + params + [a.get("limit") or 200]))
     except Exception as exc:
         return empty("Audit Trail", f"The audit trail is not available ({exc}).")
