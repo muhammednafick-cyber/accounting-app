@@ -211,6 +211,36 @@ def api_gl_dump():
 def report_sales_summary():
     return render_template("report_sales_summary.html", username=current_user.username)
 
+@report_bp.route("/report/audit-trail")
+@login_required
+def report_audit_trail():
+    """Who created, edited or deleted vouchers, and when.
+
+    Paged rather than dumped: the trail gains a row per voucher change and is
+    never pruned, so it is the one table that grows without bound.
+    """
+    from database.audit_db import get_audit_trail, get_audit_actions
+
+    page = max(1, int(request.args.get("page") or 1))
+    per_page = 100
+    rows, total = get_audit_trail(
+        voucher_number=(request.args.get("voucher_number") or "").strip() or None,
+        from_date=parse_date(request.args.get("from_date")),
+        to_date=parse_date(request.args.get("to_date")),
+        action=(request.args.get("action") or "").strip() or None,
+        username=(request.args.get("username") or "").strip() or None,
+        limit=per_page, offset=(page - 1) * per_page)
+
+    return render_template(
+        "report_audit_trail.html",
+        rows=rows, total=total, page=page, per_page=per_page,
+        pages=max(1, (total + per_page - 1) // per_page),
+        actions=get_audit_actions(),
+        filters={k: (request.args.get(k) or "") for k in
+                 ("voucher_number", "from_date", "to_date", "action", "username")},
+        username=current_user.username)
+
+
 @report_bp.route("/report/profit-by-item")
 @login_required
 def report_profit_by_item():

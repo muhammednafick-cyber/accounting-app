@@ -440,6 +440,11 @@ def init_unified_db():
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_trail_voucher ON audit_trail (company_id, voucher_number)")
+    # The audit report lists a company's entries newest first. Without this the
+    # ORDER BY sorts every row that company has ever written before the LIMIT
+    # can discard them; with it, a page is read straight off the index.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_trail_created "
+                   "ON audit_trail (company_id, created_at DESC, id DESC)")
 
     # Additional Charge Entries
     cursor.execute("""

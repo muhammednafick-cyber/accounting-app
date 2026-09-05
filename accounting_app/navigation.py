@@ -82,6 +82,7 @@ DESTINATIONS = [
     ('Expense VAT', 'Reports > VAT Reports', 'report_bp.report_vat_expense', {}, 'reports'),
     ('Service Income VAT', 'Reports > VAT Reports', 'report_bp.report_vat_service_income', {}, 'reports'),
     ('Statement of Account', 'Reports > Tools', 'report_bp.report_statement_of_account', {}, 'reports'),
+    ('Audit Trail', 'Reports > Tools', 'report_bp.report_audit_trail', {}, 'reports'),
     ('Verify Books', 'Reports > Tools', 'report_bp.verify_books', {}, 'reports'),
     ('Report Builder', 'Reports > Tools', 'report_builder_bp.report_builder_page', {}, 'reports'),
     ('Find / Edit Voucher', 'Vouchers', 'voucher_bp.edit_voucher_search', {}, 'vouchers'),
