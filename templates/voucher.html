@@ -17,7 +17,32 @@ Charges on Purchase Voucher
 
 </script>
 <style>
-    /* Layout specific overrides */
+    /* The header fields used to run one per line down a 400px column, so a
+       voucher with a date, a location, a cost centre and a narration filled
+       most of a screen with empty space and needed scrolling before the
+       ledger grid came into view. They sit side by side now, as many per row
+       as the width allows. */
+    #voucherForm > .form-section:first-of-type {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+        gap: 4px 26px;
+        align-items: start;
+    }
+
+    #voucherForm > .form-section:first-of-type > h2 {
+        grid-column: 1 / -1;
+    }
+
+    /* The narration is the one field worth the full width. */
+    #voucherForm > .form-section:first-of-type > .form-row:has(#narration) {
+        grid-column: 1 / -1;
+    }
+
+    #voucherForm > .form-section:first-of-type > .form-row:has(#narration) textarea {
+        width: 100% !important;
+        max-width: 900px;
+    }
+
     .form-row label {
         display: inline-block;
         width: 150px;
@@ -203,6 +228,21 @@ Charges on Purchase Voucher
         font-size: 12px;
     }
 
+    .balance-strip {
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        margin-top: 10px;
+        padding: 8px 14px;
+        border-radius: 6px;
+        background: #f1f5f9;
+        font-size: 0.9rem;
+    }
+    .balance-strip strong { font-variant-numeric: tabular-nums; }
+    .balance-strip .ok { color: #0f6b52; font-weight: 700; }
+    .balance-strip .off { color: #c0392b; font-weight: 700; }
+    .balance-strip .vat-note { color: #7a8a9a; font-size: 0.82rem; }
+
     .grid-hint {
         color: #777;
         font-size: 12px;
@@ -237,14 +277,14 @@ Charges on Purchase Voucher
             <input type="text" id="edit_voucher_search" placeholder="Enter Voucher No (e.g. REC-00001)"
                 style="width: 200px;">
             <button type="button" class="btn" onclick="fetchVoucherDetails()"
-                style="background-color: #2196F3; color: white;">Fetch details</button>
+                class="btn-primary">Fetch details</button>
             <span id="edit_status" style="margin-left: 10px; font-weight: bold;"></span>
         </div>
     </div>
     <div id="edit_controls" style="display:none; margin-top: 10px;">
         <span class="badge" style="background-color: orange; color: black; padding: 5px;">EDIT MODE</span>
         <button type="button" class="btn" onclick="cancelEditMode()"
-            style="background-color: #f44336; color: white; margin-left: 10px;">Cancel Edit</button>
+            class="btn-danger">Cancel Edit</button>
     </div>
 </div>
 {% endif %}
@@ -328,7 +368,7 @@ Charges on Purchase Voucher
 
         <div class="form-row">
             <label for="narration">Narration:</label>
-            <textarea id="narration" name="narration" rows="2" cols="40"></textarea>
+            <textarea id="narration" name="narration" rows="2" cols="40">{{ edit_narration or "" }}</textarea>
         </div>
     </div>
 
@@ -337,8 +377,9 @@ Charges on Purchase Voucher
         <h2>Ledger Entries</h2>
         {% if voucher_type == 'Service Income Return' %}
         <div class="form-row">
-            <label for="source_voucher_number">Source Voucher:</label>
-            <input type="text" id="source_voucher_number" placeholder="e.g., SIN-00001">
+            <label for="source_voucher_number">Source Service Income Voucher:</label>
+            <input type="text" id="source_voucher_number" autocomplete="off"
+                placeholder="e.g., FY26-SRV-000001">
             <button type="button" class="btn" onclick="loadReturnItems()">Load Ledgers</button>
         </div>
         {% endif %}
@@ -436,7 +477,18 @@ Charges on Purchase Voucher
             </tbody>
         </table>
         </div>
+        <p class="grid-hint">Tab / Shift+Tab: next / previous cell &nbsp;&bull;&nbsp; Enter: next row
+            &nbsp;&bull;&nbsp; Arrow keys: move between cells &nbsp;&bull;&nbsp; Tab or &darr; on the
+            last row adds a new row</p>
         <button type="button" class="btn" onclick="addLedgerRow()">Add Ledger Entry</button>
+        {% if voucher_type in ['Journal', 'Contra', 'Payment', 'Receipt', 'Expense',
+                               'Service Income', 'Service Income Return'] %}
+        <div id="balanceStrip" class="balance-strip" hidden>
+            <span>Debit <strong id="totalDebit">0.00</strong></span>
+            <span>Credit <strong id="totalCredit">0.00</strong></span>
+            <span id="balanceNote"></span>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -445,9 +497,12 @@ Charges on Purchase Voucher
     <div class="form-section" id="item-section">
         <h2>Item Entries</h2>
         {% if voucher_type in ['Sales Return','Purchase Return'] %}
+        {% set source_label = 'Sales' if voucher_type == 'Sales Return' else 'Purchase' %}
         <div class="form-row">
-            <label for="source_voucher_number">Source Voucher:</label>
-            <input type="text" id="source_voucher_number" placeholder="e.g., SAL-00001 or PUR-00001">
+            <label for="source_voucher_number">Source {{ source_label }} Voucher:</label>
+            <input type="text" id="source_voucher_number" autocomplete="off"
+                placeholder="{{ 'e.g., FY26-SAL-000001' if voucher_type == 'Sales Return'
+                                else 'e.g., FY26-PUR-000001' }}">
             <button type="button" class="btn" onclick="loadReturnItems()">Load Items</button>
         </div>
         {% endif %}
@@ -458,7 +513,7 @@ Charges on Purchase Voucher
             <input type="text" id="order_number_input" placeholder="Order number - optional"
                 style="width: 200px;">
             <button type="button" class="btn" onclick="loadOrderItems()"
-                style="background-color:#2563ab; color:#fff;">Load Order</button>
+                class="btn-primary">Load Order</button>
             <span id="orderPullStatus" style="margin-left:10px; font-weight:600;"></span>
         </div>
         {% endif %}
@@ -786,13 +841,13 @@ Charges on Purchase Voucher
     {% endif %}
 
     <div style="margin-top: 20px;">
-        <button type="button" class="btn" onclick="previewJournal()" style="background-color: #8e44ad; color: white;">
+        <button type="button" class="btn" onclick="previewJournal()" class="btn-accent">
             Preview Journal
         </button>
-        <button type="submit" class="btn" style="background-color: #4CAF50; color: white;">
+        <button type="submit" class="btn btn-success" >
             Submit
         </button>
-        <button type="button" class="btn" onclick="submitAndPrint()" style="background-color: #2563AB; color: white;">
+        <button type="button" class="btn" onclick="submitAndPrint()" class="btn-primary">
             Submit &amp; Print
         </button>
         <span id="voucherMessageDynamic" class="alert"
@@ -800,7 +855,7 @@ Charges on Purchase Voucher
         <a href="/vouchers"><button type="button" class="btn">Cancel</button></a>
         {% if voucher_type not in ['Sales Return', 'Purchase Return'] %}
         <button type="button" class="btn" onclick="showImportSection()"
-            style="background-color: #3498db; color: white;">Import Excel</button>
+            class="btn-primary">Import Excel</button>
         {% endif %}
     </div>
 
@@ -3696,6 +3751,53 @@ Charges on Purchase Voucher
             initGrid('itemGridWrap');
             initGrid('ledgerGridWrap');
 
+            // A new voucher arrived with an empty ledger grid, so the first
+            // thing anyone did was click "Add Ledger Entry" before they could
+            // type. Open the rows the voucher actually needs, on the side it
+            // needs them.
+            //
+            // An accounting voucher is a plain double entry, so it opens with
+            // one of each. An inventory voucher gets its other side from the
+            // item lines, so only the party line is opened - debited on a sale
+            // or a purchase return, credited on a purchase or a sales return.
+            const PARTY_SIDE = {
+                'Sales': 'Debit',
+                'Purchase Return': 'Debit',
+                'Purchase': 'Credit',
+                'Sales Return': 'Credit'
+            };
+
+            // The item grid started empty too, so the same first click was
+            // needed there before anything could be scanned or typed.
+            const ITEM_VOUCHERS = ['Sales', 'Sales Return', 'Purchase', 'Purchase Return'];
+            const itemBody = document.querySelector('#itemTable tbody');
+            if (itemBody && !itemBody.querySelector('tr')
+                && ITEM_VOUCHERS.indexOf(voucherType) !== -1
+                && typeof addItemRow === 'function') {
+                try { addItemRow(); } catch (e) { }
+            }
+
+            const ledgerBody = document.querySelector('#ledgerTable tbody');
+            if (ledgerBody && !ledgerBody.querySelector('tr')
+                && typeof addLedgerRow === 'function') {
+                const partySide = PARTY_SIDE[voucherType];
+                const sides = partySide ? [partySide] : ['Debit', 'Credit'];
+                try {
+                    sides.forEach(function (side) {
+                        addLedgerRow();
+                        const rows = ledgerBody.querySelectorAll('tr');
+                        const select = rows[rows.length - 1]
+                            .querySelector('.ledger-type-select');
+                        if (select && select.value !== side) {
+                            select.value = side;
+                            // onLedgerTypeChange narrows the ledger list to the
+                            // side, so it has to hear about this.
+                            select.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    });
+                } catch (e) { }
+            }
+
             // After picking a value in a Select2 cell, advance to the next cell.
             if (window.jQuery) {
                 $('#itemTable, #ledgerTable').on('select2:select', 'select', function () {
@@ -3713,6 +3815,94 @@ Charges on Purchase Voucher
     })();
 </script>
 <script>
+    // ---- the date starts at today ---------------------------------------
+    // Almost every voucher is dated the day it is entered, and an empty date
+    // is a required field the operator had to fill on every single one.
+    // Edit mode already carries the voucher's own date, so leave that alone.
+    (function () {
+        const input = document.getElementById('date');
+        if (!input || input.value) return;
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        input.value = pad(d.getDate()) + '-' + pad(d.getMonth() + 1) + '-' + d.getFullYear();
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    })();
+
+    // ---- live debit / credit totals -------------------------------------
+    // Mirrors the server's check exactly, including the VAT ledger it injects
+    // for Expense and Service Income - without that the strip would report a
+    // difference of the VAT on every such voucher, which is worse than none.
+    (function () {
+        const strip = document.getElementById('balanceStrip');
+        if (!strip) return;                       // item vouchers: see note below
+        const VOUCHER_TYPE = {{ voucher_type | tojson }};
+        const money = n => Number(n).toLocaleString(undefined,
+            { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        function injectedVat() {
+            // Expense: VAT on debit lines is added as a debit.
+            // Service Income: VAT on credit lines is added as a credit.
+            // Service Income Return: VAT on debit lines is added as a debit.
+            let side = null, want = null;
+            if (VOUCHER_TYPE === 'Expense') { side = 'Debit'; want = 'Debit'; }
+            else if (VOUCHER_TYPE === 'Service Income') { side = 'Credit'; want = 'Credit'; }
+            else if (VOUCHER_TYPE === 'Service Income Return') { side = 'Debit'; want = 'Debit'; }
+            if (!side) return { amount: 0, side: null };
+
+            let amount = 0;
+            document.querySelectorAll('#ledgerTable tbody tr').forEach(row => {
+                const box = row.querySelector('.vat-applicable-checkbox');
+                const type = row.querySelector('.ledger-type-select');
+                const vat = row.querySelector('.vat-amount-input');
+                if (box && box.checked && type && type.value === side && vat) {
+                    amount += parseFloat(vat.value) || 0;
+                }
+            });
+            return { amount: amount, side: want };
+        }
+
+        function recalcBalance() {
+            let debit = 0, credit = 0;
+            document.querySelectorAll('#ledgerTable tbody tr').forEach(row => {
+                const amt = parseFloat((row.querySelector('.ledger-amount-input') || {}).value) || 0;
+                const type = (row.querySelector('.ledger-type-select') || {}).value;
+                if (type === 'Credit') credit += amt; else debit += amt;
+            });
+
+            const vat = injectedVat();
+            if (vat.side === 'Debit') debit += vat.amount;
+            else if (vat.side === 'Credit') credit += vat.amount;
+
+            if (!debit && !credit) { strip.hidden = true; return; }
+            strip.hidden = false;
+            document.getElementById('totalDebit').textContent = money(debit);
+            document.getElementById('totalCredit').textContent = money(credit);
+
+            const note = document.getElementById('balanceNote');
+            const diff = Math.abs(debit - credit);
+            let text = '', cls = '';
+            if (diff > 0.01) { text = 'Difference ' + money(diff); cls = 'off'; }
+            else if (!debit || !credit) { text = 'Needs both a debit and a credit'; cls = 'off'; }
+            else { text = 'Balanced'; cls = 'ok'; }
+            if (vat.amount) {
+                text += ' · includes ' + money(vat.amount) + ' VAT added on saving';
+            }
+            note.textContent = text;
+            note.className = cls;
+        }
+
+        const table = document.getElementById('ledgerTable');
+        if (table) {
+            table.addEventListener('input', recalcBalance);
+            table.addEventListener('change', recalcBalance);
+        }
+        // Select2 and the row helpers fire their own events, so recheck on a
+        // short delay after any click inside the section too.
+        document.addEventListener('click', () => setTimeout(recalcBalance, 60));
+        window.recalcBalance = recalcBalance;
+        recalcBalance();
+    })();
+
     function reverseVoucher(voucherNumber) {
         const date = new Date().toISOString().slice(0, 10);
         fetch('/reverse_voucher', {

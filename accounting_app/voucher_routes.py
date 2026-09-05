@@ -180,6 +180,118 @@ def _cost_center_name(center_code, company_id):
         return None
 
 
+def _voucher_form_context(voucher_type, company_id):
+    """Everything voucher.html needs to draw an entry form.
+
+    Lifted out of the GET route so a rejected save can render the same form
+    again with what the operator typed still in it. Redirecting instead - as
+    every error path used to - throws the entry away, and a redirect cannot
+    carry it back.
+    """
+    from database.selling_price_db import get_selling_price_map
+
+    ledgers = get_ledgers(company_id=company_id)
+    items = get_items(company_id=company_id)
+    cost_centers = get_cost_centers(active_only=True, company_id=company_id)
+    inventory_details = get_inventory_details(company_id=company_id)
+    company = get_company_settings(company_id=company_id) or {}
+
+    multiple_locations_enabled = bool(company.get("multiple_locations_applicable"))
+    cost_center_applicable = bool(company.get("cost_center_applicable"))
+    cost_center_mandatory = bool(company.get("cost_center_mandatory")
+                                 and cost_center_applicable)
+    locations = get_locations(company_id=company_id) if multiple_locations_enabled else []
+
+    items_dict = {}
+    try:
+        items_dict = {i["name"]: i for i in (inventory_details or [])}
+    except Exception:
+        items_dict = {}
+
+    try:
+        from database.voucher_config_db import get_allowed_ledgers
+        allowed_dr = get_allowed_ledgers(voucher_type, "Debit", company_id=company_id)
+        allowed_cr = get_allowed_ledgers(voucher_type, "Credit", company_id=company_id)
+    except Exception:
+        allowed_dr, allowed_cr = [], []
+
+    return {
+        "voucher_type": voucher_type,
+        "ledgers": ledgers,
+        "items": items,
+        "items_dict": items_dict,
+        "cost_centers": cost_centers,
+        "sales_group_code": get_sales_group_code(company_id=company_id),
+        "purchase_group_code": get_purchase_group_code(company_id=company_id),
+        "edit_mode": False,
+        "multiple_locations_enabled": multiple_locations_enabled,
+        "cost_center_applicable": cost_center_applicable,
+        "cost_center_mandatory": cost_center_mandatory,
+        "locations": locations,
+        "selected_location_name": None,
+        "purchase_vouchers": [],
+        "allowed_ledgers_dr": allowed_dr,
+        "allowed_ledgers_cr": allowed_cr,
+        "username": current_user.username,
+    }
+
+
+def _submitted_ledger_entries():
+    """The ledger rows as posted, shaped the way the template draws them."""
+    names = request.form.getlist("ledger_name[]")
+    amounts = request.form.getlist("ledger_amount[]")
+    types = request.form.getlist("ledger_type[]")
+    centres = request.form.getlist("ledger_cost_center[]")
+    vat_app = request.form.getlist("ledger_vat_applicable[]")
+    vat_pct = request.form.getlist("ledger_vat_percent[]")
+    vat_amt = request.form.getlist("ledger_vat_amount[]")
+
+    def at(seq, i, default=""):
+        return seq[i] if i < len(seq) else default
+
+    rows = []
+    for i, name in enumerate(names):
+        rows.append({
+            "ledger_name": name,
+            "amount": at(amounts, i),
+            "type": at(types, i, "Debit"),
+            "cost_center_name": at(centres, i, None) or None,
+            "vat_applicable": at(vat_app, i) in ("1", "Yes", "Y", "true", "True", "on"),
+            "vat_percent": at(vat_pct, i, 5),
+            "vat_amount": at(vat_amt, i, 0),
+        })
+    return rows
+
+
+def _reject_voucher(message, voucher_type):
+    """Draw the form again with the error and everything that was typed."""
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({"success": False, "message": message}), 400
+
+    company_id = get_current_company_id()
+    try:
+        context = _voucher_form_context(voucher_type, company_id)
+    except Exception as exc:
+        # If even the form cannot be rebuilt, fall back to the old behaviour
+        # rather than showing a stack trace.
+        print(f"Could not re-render the voucher form: {exc}")
+        flash(message, "error")
+        return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+
+    flash(message, "error")
+    context.update({
+        "ledger_entries": _submitted_ledger_entries(),
+        "edit_date": request.form.get("date") or "",
+        "edit_narration": request.form.get("narration") or "",
+        "edit_cost_center_name": request.form.get("cost_center_name") or None,
+        "edit_voucher_number": None,
+        "original_invoice_ref": request.form.get("original_invoice_ref") or "",
+        "original_invoice_date": request.form.get("original_invoice_date") or "",
+        "result_message": None,
+    })
+    return render_template("voucher.html", **context), 400
+
+
 @voucher_bp.route("/voucher/<voucher_type>")
 @login_required
 def voucher(voucher_type):
@@ -589,21 +701,18 @@ def add_voucher_route():
             if is_ajax:
                 return jsonify({"success": True, "message": "Voucher added successfully", "voucher_number": v_no})
             flash(f"Voucher {v_no} added successfully", "success")
-            return redirect(url_for("voucher_bp.vouchers"))
+            # Back to a fresh form of the same type, as every other voucher
+            # type already does. This one alone returned to the dashboard,
+            # which cost two clicks and a page load on every charge entered.
+            return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
             
         except Exception as e:
             print(f"Error adding Additional Charge voucher: {str(e)}")
-            if is_ajax:
-                return jsonify({"success": False, "message": str(e)}), 400
-            flash(str(e), "error")
-            return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+            return _reject_voucher(str(e), voucher_type)
 
     if voucher_type == "Inventory Transfer" and (not from_location_name_form or not to_location_name_form):
         msg = "Both From Location and To Location are required for Inventory Transfer"
-        if is_ajax:
-            return jsonify({"success": False, "message": msg}), 400
-        flash(msg, "error")
-        return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+        return _reject_voucher(msg, voucher_type)
 
     company = get_company_settings(company_id=company_id)
     multiple_locations_enabled = bool(
@@ -639,12 +748,7 @@ def add_voucher_route():
 
     if not ledger_names and voucher_type not in ("Physical Stock", "Inventory Transfer", "Stock Adjustment"):
         print(f"No ledger entries for {voucher_type}")
-        if is_ajax:
-            return jsonify({"success": False, "message": "At least one ledger entry is required"}), 400
-        flash("At least one ledger entry is required", "error")
-        return redirect(
-            url_for("voucher_bp.voucher", voucher_type=voucher_type)
-        )
+        return _reject_voucher("At least one ledger entry is required", voucher_type)
 
     try:
         # Pad cost centers if they are missing (e.g. if not applicable)
@@ -670,20 +774,12 @@ def add_voucher_route():
         print(f"Error in ledger entries: {str(e)}")
         if is_ajax:
             return jsonify({"success": False, "message": f"Invalid amount in ledger entries: {str(e)}"}), 400
-        flash("Invalid amount in ledger entries", "error")
-        return redirect(
-            url_for("voucher_bp.voucher", voucher_type=voucher_type)
-        )
+        return _reject_voucher("Invalid amount in ledger entries", voucher_type)
 
     is_valid, err = validate_voucher_ledger_groups(voucher_type, ledger_entries, company_id=company_id)
     if voucher_type != "Stock Adjustment" and not is_valid:
         print(f"Voucher validation failed: {err}")
-        if is_ajax:
-            return jsonify({"success": False, "message": err}), 400
-        flash(err, "error")
-        return redirect(
-            url_for("voucher_bp.voucher", voucher_type=voucher_type)
-        )
+        return _reject_voucher(err, voucher_type)
 
     # Item entries (exclude Service Income)
     item_entries = []
@@ -787,10 +883,7 @@ def add_voucher_route():
                 for entry in item_entries:
                     if voucher_type in ["Sales Return", "Purchase Return"] and not entry.get("_ref_voucher_number"):
                         msg = f"Source voucher number is required for {voucher_type} item '{entry['item_name']}'"
-                        if is_ajax:
-                            return jsonify({"success": False, "message": msg}), 400
-                        flash(msg, "error")
-                        return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+                        return _reject_voucher(msg, voucher_type)
 
                     if entry.get("_ref_voucher_number"):
                         valid, msg = validate_return_quantity(
@@ -799,10 +892,7 @@ def add_voucher_route():
                             entry["quantity"]
                         )
                         if not valid:
-                            if is_ajax:
-                                return jsonify({"success": False, "message": msg}), 400
-                            flash(msg, "error")
-                            return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+                            return _reject_voucher(msg, voucher_type)
 
                 if voucher_type == "Inventory Transfer":
                     # Compute WAP per item and create mirrored entries for from/to locations
@@ -894,10 +984,7 @@ def add_voucher_route():
                 print(f"Error in item entries: {str(e)}")
                 if is_ajax:
                     return jsonify({"success": False, "message": f"Invalid amount or quantity in item entries: {str(e)}"}), 400
-                flash("Invalid amount or quantity in item entries", "error")
-                return redirect(
-                    url_for("voucher_bp.voucher", voucher_type=voucher_type)
-                )
+                return _reject_voucher("Invalid amount or quantity in item entries", voucher_type)
 
     # Field-level validation — kept in sync with the Excel import validation
     # (_validate_required_columns in import_routes/queue_routes.py)
@@ -923,10 +1010,7 @@ def add_voucher_route():
     if validation_errors:
         msg = "; ".join(dict.fromkeys(validation_errors))  # dedupe, keep order
         print(f"Manual entry validation failed for {voucher_type}: {msg}")
-        if is_ajax:
-            return jsonify({"success": False, "message": msg}), 400
-        flash(msg, "error")
-        return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+        return _reject_voucher(msg, voucher_type)
 
     # Mandatory Cost Center Check
     if company.get("cost_center_applicable") and company.get("cost_center_mandatory") and voucher_type in COST_CENTER_ALLOWED_TYPES:
@@ -950,10 +1034,7 @@ def add_voucher_route():
             if missing_cc:
                 msg = "Cost Center is mandatory. Please select a Cost Center in the Header or for every Line."
                 print(f"Mandatory CC check failed for {voucher_type}")
-                if is_ajax:
-                    return jsonify({"success": False, "message": msg}), 400
-                flash(msg, "error")
-                return redirect(url_for("voucher_bp.voucher", voucher_type=voucher_type))
+                return _reject_voucher(msg, voucher_type)
 
     # VAT injection
     try:
@@ -1050,12 +1131,7 @@ def add_voucher_route():
                 f"Debit {total_debit:.2f} and Credit {total_credit:.2f} not matching"
             )
             print(f"Balance check failed: {msg}")
-            if is_ajax:
-                return jsonify({"success": False, "message": msg}), 400
-            flash(msg, "error")
-            return redirect(
-                url_for("voucher_bp.voucher", voucher_type=voucher_type)
-            )
+            return _reject_voucher(msg, voucher_type)
 
     # --- NEW LOGIC: Fetch Credit Days from Master ---
     if voucher_type in ["Sales", "Purchase", "Expense"] and not request.form.get("credit_days"):
@@ -1154,10 +1230,7 @@ def add_voucher_route():
         print(f"Error adding voucher: {str(e)}")
         if is_ajax:
             return jsonify({"success": False, "message": str(e)}), 500
-        flash(str(e), "error")
-        return redirect(
-            url_for("voucher_bp.voucher", voucher_type=voucher_type)
-        )
+        return _reject_voucher(str(e), voucher_type)
 
 
 
