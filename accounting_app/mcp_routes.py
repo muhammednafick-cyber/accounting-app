@@ -267,7 +267,6 @@ def _reject_foreign_origin():
 def _unauthorised(message="A valid bearer token is required."):
     response = jsonify({"error": "unauthorized", "message": message})
     response.status_code = 401
-    response.headers["WWW-Authenticate"] = 'Bearer realm="prodata-accounts"'
     return response
 
 
@@ -364,6 +363,29 @@ def _log_call(tool_name, company_id, started, outcome):
 
 
 # ---------------------------------------------------------------- the route
+
+@mcp_bp.route("/.well-known/oauth-protected-resource",
+               defaults={"path": ""}, methods=["GET"])
+@mcp_bp.route("/.well-known/oauth-protected-resource/<path:path>",
+               methods=["GET"])
+@mcp_bp.route("/.well-known/oauth-authorization-server",
+               defaults={"path": ""}, methods=["GET"], endpoint="no_as_metadata")
+def no_oauth_metadata(path):
+    """There is no OAuth flow here; this endpoint takes a token header.
+
+    Without these routes the probes reached the sign-in guard and were
+    answered with a redirect to a login page, which a client cannot read as
+    a refusal and so retries.
+    """
+    response = jsonify({
+        "error": "not_found",
+        "message": "This server does not use OAuth. Configure the connector "
+                   "without sign-in and send the token as an Authorization "
+                   "or X-API-Key header.",
+    })
+    response.status_code = 404
+    return response
+
 
 @mcp_bp.route("/mcp", methods=["GET", "DELETE"])
 def mcp_method_not_allowed():

@@ -47,7 +47,14 @@ class AuthenticationTests(unittest.TestCase):
         with patch.object(mcp_routes, "_caller", return_value=None):
             response = rpc(self.client, "tools/list", token=None)
         self.assertEqual(response.status_code, 401)
-        self.assertIn("Bearer", response.headers.get("WWW-Authenticate", ""))
+
+    def test_the_refusal_does_not_advertise_an_oauth_flow(self):
+        # A client reads any Bearer challenge as "this server has OAuth", goes
+        # looking for a discovery document, and never falls back to the token
+        # the operator configured by hand.
+        with patch.object(mcp_routes, "_caller", return_value=None):
+            response = rpc(self.client, "tools/list", token=None)
+        self.assertIsNone(response.headers.get("WWW-Authenticate"))
 
     def test_an_unknown_token_is_refused(self):
         with patch.object(mcp_routes, "_caller", return_value=None):
@@ -411,3 +418,26 @@ class TransportComplianceTests(unittest.TestCase):
                 "Authorization": "Bearer good-token",
                 "Origin": "http://localhost"})
         self.assertEqual(response.status_code, 200)
+
+
+class OAuthProbeTests(unittest.TestCase):
+    """A client that probes for OAuth must get a plain no, not a login page."""
+
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+
+    def test_the_protected_resource_document_is_a_clean_404(self):
+        for path in ("/.well-known/oauth-protected-resource",
+                     "/.well-known/oauth-protected-resource/mcp",
+                     "/.well-known/oauth-authorization-server"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 404, path)
+            self.assertNotIn("signin", response.headers.get("Location", ""),
+                             f"{path} redirected instead of refusing")
+
+    def test_the_404_explains_what_to_do_instead(self):
+        body = self.client.get(
+            "/.well-known/oauth-protected-resource/mcp").get_json()
+        self.assertIn("without sign-in", body["message"])
+        self.assertIn("X-API-Key", body["message"])
