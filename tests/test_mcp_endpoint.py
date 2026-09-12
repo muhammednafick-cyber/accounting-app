@@ -645,3 +645,15 @@ class CapabilityHonestyTests(unittest.TestCase):
     def test_discover_agrees(self):
         caps = rpc(self.client, "server/discover").get_json()["result"]["capabilities"]
         self.assertNotIn("listChanged", caps.get("tools", {}))
+
+
+class ToolDescriptionRoutingTests(unittest.TestCase):
+    """A model follows a tool's description literally, so it must route right."""
+
+    def test_the_voucher_tool_sends_purchases_to_propose_purchase(self):
+        # It used to say purchases "cannot be proposed here - say so and point
+        # the user at the purchase screen", and Claude did exactly that while
+        # holding propose_purchase the whole time.
+        description = mcp_routes.PROPOSE_TOOL["description"]
+        self.assertIn("propose_purchase", description)
+        self.assertNotIn("point the user at the purchase", description)

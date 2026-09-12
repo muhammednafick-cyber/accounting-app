@@ -137,9 +137,10 @@ PROPOSE_TOOL = {
         "for their approval. Amounts must balance - total debits equal total "
         "credits - and ledger names must match exactly (use list_ledgers). "
         "Only money-only vouchers: Payment, Receipt, Contra, Journal, Expense, "
-        "Service Income, Service Income Return. Purchases and sales also move "
-        "stock and cannot be proposed here - say so and point the user at the "
-        "purchase or sales screen, or the import queue for a whole invoice."
+        "Service Income, Service Income Return. For a purchase invoice - goods "
+        "bought from a supplier - do not use this tool: call propose_purchase "
+        "instead, which carries the item lines. Sales vouchers cannot be "
+        "proposed at all; point the user at the sales screen for those."
     ),
     "inputSchema": {
         "type": "object",
