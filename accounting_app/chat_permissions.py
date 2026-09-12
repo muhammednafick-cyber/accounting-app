@@ -167,6 +167,22 @@ def _load_user(user_id):
     return user
 
 
+def _unidentified_is_allowed():
+    """Whether a caller nobody could identify may run tools anyway.
+
+    Outside a request there is no network caller at all - a CLI harness, a
+    test, a migration script - and refusing there would break tooling for no
+    security gain.
+
+    Inside a request, nobody being identified means the caller never proved who
+    they are: an MCP client with an expired token, a stray request, a bug in an
+    authentication path. Allowing that would let anyone on the internet read
+    another company's books, so it is refused. This used to return True in both
+    cases, which was safe only while nothing but the browser could reach it.
+    """
+    return not has_request_context()
+
+
 def can_use(tool_name):
     """True when the current user may run this tool."""
     permission = permission_for(tool_name)
@@ -174,10 +190,7 @@ def can_use(tool_name):
         return True
     user = _user()
     if user is None:
-        # No identified user means no request context to trust (a script, a
-        # test). The tools are read-only, so this is not a data leak, and
-        # refusing here would break the CLI harnesses.
-        return True
+        return _unidentified_is_allowed()
     return user.can_access(permission)
 
 
@@ -191,7 +204,7 @@ def can_use_ai_sql():
     """True when the current user may use the free-form AI database query."""
     user = _user()
     if user is None:
-        return True
+        return _unidentified_is_allowed()
     return user.can_access(AI_SQL_PERMISSION)
 
 

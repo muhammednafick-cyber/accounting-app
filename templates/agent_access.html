@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}Agent Access{% endblock %}
+
+{% block extra_head %}
+<style>
+    .agent-intro { max-width: 62ch; color: var(--ink-muted); margin-bottom: 22px; }
+    .token-reveal {
+        border: 1px solid #1f5f4a; border-left-width: 3px; border-radius: 10px;
+        background: #f2f8f5; padding: 20px 22px; margin-bottom: 24px;
+    }
+    .token-reveal h3 { margin: 0 0 6px; color: #1f5f4a; font-size: 16px; }
+    .token-reveal p { margin: 0 0 14px; font-size: 13px; color: #3c4a46; }
+    .token-value {
+        display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+        background: #fff; border: 1px solid #cfdad4; border-radius: 8px;
+        padding: 12px 14px; margin-bottom: 16px;
+    }
+    .token-value code {
+        flex: 1 1 340px; font-family: ui-monospace, "Courier New", monospace;
+        font-size: 13px; word-break: break-all; color: #16211f;
+    }
+    .setup-steps { font-size: 13px; color: #3c4a46; }
+    .setup-steps dt { font-weight: 600; margin-top: 10px; }
+    .setup-steps dd { margin: 2px 0 0 0; }
+    .setup-steps code {
+        background: #eceff0; padding: 1px 6px; border-radius: 3px;
+        font-family: ui-monospace, "Courier New", monospace; font-size: 12.5px;
+    }
+    .token-table td.muted { color: var(--ink-muted); font-size: 12.5px; }
+    .prefix {
+        font-family: ui-monospace, "Courier New", monospace; font-size: 12.5px;
+    }
+    .agent-note {
+        border: 1px solid #ead6ae; background: #fff9ee; border-radius: 10px;
+        padding: 16px 20px; margin-top: 26px; font-size: 12.5px; color: #714b19;
+        max-width: 70ch;
+    }
+    .agent-note strong { display: block; margin-bottom: 4px; font-size: 13px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content">
+    <h1>Agent Access</h1>
+
+    <p class="agent-intro">
+        Connect an AI assistant such as Claude to your accounts. It can read
+        ledgers, balances, stock and reports — exactly what you can open yourself,
+        and nothing in another company. It cannot create, change or reverse
+        anything.
+    </p>
+
+    {% if issued %}
+    <div class="token-reveal" role="status">
+        <h3>Your token for “{{ issued.label }}”</h3>
+        <p>
+            This is the only time it is shown. Copy it now — if you lose it,
+            revoke it below and create another.
+        </p>
+        <div class="token-value">
+            <code id="issuedToken">{{ issued.token }}</code>
+            <button type="button" class="btn" onclick="copyToken(this)">Copy</button>
+        </div>
+        <dl class="setup-steps">
+            <dt>1. In Claude, open Settings → Connectors → Add custom connector.</dt>
+            <dd>On a free plan you may add one connector; paid plans allow more.</dd>
+            <dt>2. Enter this address</dt>
+            <dd><code>{{ endpoint_url }}</code></dd>
+            <dt>3. Enter the token above as the bearer token.</dt>
+            <dd>Valid until {{ issued.expires.strftime('%d-%m-%Y') }}.</dd>
+        </dl>
+    </div>
+    {% endif %}
+
+    <div class="section">
+        <h3>Create a token</h3>
+        <form method="POST" action="{{ url_for('agent_access_bp.agent_access') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="hidden" name="action" value="create" />
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="label">What is it for?</label>
+                    <input type="text" id="label" name="label" maxlength="60"
+                           placeholder="My laptop" required>
+                </div>
+                <div class="form-group">
+                    <label for="company_id">Company</label>
+                    <select id="company_id" name="company_id" required>
+                        {% for company in companies %}
+                        <option value="{{ company.id }}"
+                            {% if company.id == active_company_id %}selected{% endif %}>
+                            {{ company.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="align-self:flex-end">
+                    <button type="submit" class="btn">Create token</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <div class="section">
+        <h3>Your tokens</h3>
+        {% if tokens %}
+        <table class="token-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Company</th>
+                    <th>Starts with</th>
+                    <th>Last used</th>
+                    <th>Expires</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for token in tokens %}
+                <tr>
+                    <td>{{ token.label }}</td>
+                    <td>{{ token.company }}</td>
+                    <td class="prefix">{{ token.prefix }}…</td>
+                    <td class="muted">
+                        {% if token.last_used %}
+                            {{ token.last_used.strftime('%d-%m-%Y %H:%M') }}
+                        {% else %}
+                            never
+                        {% endif %}
+                    </td>
+                    <td class="muted">{{ token.expires_at.strftime('%d-%m-%Y') }}</td>
+                    <td>
+                        <form method="POST"
+                              action="{{ url_for('agent_access_bp.agent_access') }}"
+                              onsubmit="return confirm('Revoke “{{ token.label }}”? Any agent using it stops working immediately.');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                            <input type="hidden" name="action" value="revoke" />
+                            <input type="hidden" name="token_id" value="{{ token.id }}" />
+                            <button type="submit" class="btn btn-danger">Revoke</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="agent-intro">No tokens yet. Create one above to connect an assistant.</p>
+        {% endif %}
+    </div>
+
+    <div class="agent-note">
+        <strong>What the person who holds a token can see</strong>
+        A token carries your own access. If your permissions change, what the
+        agent can read changes with them. Anyone holding the token can read that
+        company's accounts until it is revoked, so treat it like a password —
+        and revoke it if a device is lost.
+    </div>
+</div>
+
+<script>
+    function copyToken(button) {
+        const token = document.getElementById('issuedToken').textContent.trim();
+        const done = () => {
+            const original = button.textContent;
+            button.textContent = 'Copied';
+            setTimeout(() => { button.textContent = original; }, 2000);
+        };
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(token).then(done, selectInstead);
+        } else {
+            selectInstead();
+        }
+        // Clipboard access can be refused; selecting the text still lets the
+        // person copy it rather than leaving them with a button that did nothing.
+        function selectInstead() {
+            const range = document.createRange();
+            range.selectNodeContents(document.getElementById('issuedToken'));
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            button.textContent = 'Press Ctrl+C';
+        }
+    }
+</script>
+{% endblock %}

@@ -142,6 +142,12 @@ def create_app():
         # token and answers with JSON rather than a redirect.
         if (request.endpoint or '').startswith('mobile_bp.'):
             return None
+
+        # The MCP endpoint authenticates the same way and for the same reason:
+        # an agent carries a bearer token and speaks JSON-RPC, so a redirect to
+        # the sign-in page would be an unreadable answer to a valid request.
+        if (request.endpoint or '').startswith('mcp_bp.'):
+            return None
         
         # 2. Check Authentication
         if not current_user.is_authenticated:
@@ -360,6 +366,15 @@ def create_app():
     # request to forge.
     app.register_blueprint(mobile_bp)
     csrf.exempt(mobile_bp)
+    # The MCP endpoint an agent connects to. Exempt from CSRF for the
+    # same reason as the phone app: it carries a bearer token, not a
+    # cookie, so there is no cross-site request to forge.
+    # Where a person creates the token their own agent connects with.
+    from .agent_access_routes import agent_access_bp
+    app.register_blueprint(agent_access_bp)
+    from .mcp_routes import mcp_bp
+    app.register_blueprint(mcp_bp)
+    csrf.exempt(mcp_bp)
     try:
         init_token_table()
     except Exception as e:

@@ -84,9 +84,52 @@ class TestChecks(unittest.TestCase):
         with FakeUser(self, user("reports.registers")):
             self.assertTrue(P.can_use_ai_sql())
 
-    def test_no_identified_user_is_allowed(self):
+    def test_a_script_outside_any_request_still_works(self):
+        # No request context means no network caller - a CLI harness or a
+        # migration script. Refusing there would break tooling for no gain.
         with FakeUser(self, None):
             self.assertTrue(P.can_use("list_users"))
+            self.assertTrue(P.can_use_ai_sql())
+
+    def test_an_unidentified_caller_inside_a_request_gets_nothing(self):
+        # This is the one that matters once anything but the browser can reach
+        # the tools: an MCP client with an expired token, or a bug in an
+        # authentication path, must not be handed another company's books.
+        from flask import Flask
+
+        app = Flask(__name__)
+        with app.test_request_context("/mcp"):
+            with FakeUser(self, None):
+                self.assertFalse(P.can_use("list_users"))
+                self.assertFalse(P.can_use("trial_balance"))
+                self.assertFalse(P.can_use_ai_sql())
+
+    def test_an_unidentified_caller_inside_a_request_is_refused_by_name(self):
+        from flask import Flask
+
+        app = Flask(__name__)
+        with app.test_request_context("/mcp"):
+            with FakeUser(self, None):
+                with self.assertRaises(P.PermissionDenied):
+                    P.check("list_users")
+
+    def test_an_identified_user_inside_a_request_is_unaffected(self):
+        from flask import Flask
+
+        app = Flask(__name__)
+        with app.test_request_context("/mcp"):
+            with FakeUser(self, user("reports")):
+                self.assertTrue(P.can_use("trial_balance"))
+                self.assertFalse(P.can_use("list_users"))
+
+    def test_the_catalogue_is_empty_for_an_unidentified_caller(self):
+        # tools/list must not advertise what the caller cannot run.
+        from flask import Flask
+
+        app = Flask(__name__)
+        with app.test_request_context("/mcp"):
+            with FakeUser(self, None):
+                self.assertEqual(P.allowed_tool_names(), [])
 
 
 class TestRefusals(unittest.TestCase):

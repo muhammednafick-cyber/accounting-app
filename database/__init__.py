@@ -18,6 +18,7 @@ from .analysis_db import *
 from .settlement_db import *
 from .unified_db import init_unified_db
 from .app_state_db import init_app_state_tables
+from .mcp_log_db import init_mcp_log_table, recent_mcp_calls
 from .import_history_db import (
     init_import_history_table,
     content_fingerprint,
@@ -83,6 +84,9 @@ def _initialize_db_unlocked():
     # Which imports have actually been posted, so the same file is not posted
     # twice.
     init_import_history_table()
+
+    # What an agent asked the books, and when.
+    init_mcp_log_table()
     
     # Post-initialization checks or seeding if needed (Global)
     # Most seeding should happen per-company (e.g., default groups/ledgers)
