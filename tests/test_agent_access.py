@@ -172,3 +172,41 @@ class ScreenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NavigationTests(unittest.TestCase):
+    """A page nobody can find is a page that does not exist."""
+
+    def setUp(self):
+        from accounting_app import create_app
+        with patch("accounting_app.initialize_db"):
+            self.app = create_app()
+        self.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+
+    def test_the_sidebar_links_to_agent_access(self):
+        import io, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "templates", "base.html"),
+                     encoding="utf-8") as handle:
+            base = handle.read()
+        self.assertIn("agent_access_bp.agent_access", base,
+                      "the page is only reachable by typing its URL")
+
+    def test_the_link_is_not_hidden_behind_a_permission(self):
+        # A token carries only its owner's access, so managing one is not a
+        # privilege. A user without 'setup' must still be able to reach it.
+        import io, os, re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "templates", "base.html"),
+                     encoding="utf-8") as handle:
+            base = handle.read()
+        line = next(l for l in base.splitlines()
+                    if "agent_access_bp.agent_access" in l)
+        index = base.index(line)
+        # Walk back to the nearest open conditional and make sure the link is
+        # not inside a can_access(...) or is_admin block.
+        preceding = base[:index]
+        last_if = preceding.rfind("{% if")
+        last_endif = preceding.rfind("{% endif %}")
+        self.assertGreater(last_endif, last_if,
+                           "the Agent Access link sits inside a conditional block")

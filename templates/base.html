@@ -208,6 +208,11 @@
             </li>
             {% endif %}
 
+            {# Everyone manages their own agent tokens: one can only ever carry
+               the access its owner already has, so it sits outside Setup, which
+               not every user can open. #}
+            <li><a href="{{ url_for('agent_access_bp.agent_access') }}">Agent Access</a></li>
+
             <li class="global-search">
                 <input type="search" id="globalSearch" placeholder="Search menus…  Ctrl+K"
                        autocomplete="off" aria-label="Search screens and menus">
