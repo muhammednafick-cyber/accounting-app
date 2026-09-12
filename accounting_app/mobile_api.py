@@ -169,8 +169,12 @@ def login():
     companies = get_user_companies(user["id"]) or []
     company_id = data.get("company_id")
     if company_id:
-        company_id = int(company_id)
-        if companies and company_id not in [c["id"] for c in companies]:
+        try:
+            company_id = int(company_id)
+        except (TypeError, ValueError):
+            return jsonify({"success": False,
+                            "message": "Choose a valid company."}), 400
+        if company_id not in [c["id"] for c in companies]:
             return jsonify({"success": False,
                             "message": "You do not have access to that "
                                        "company."}), 403

@@ -32,6 +32,7 @@ from .models import (
 from database.voucher_config_db import get_voucher_config, get_allowed_ledgers
 
 from . import get_db_connection
+from .idempotency import guard_duplicate_submission
 
 voucher_bp = Blueprint("voucher_bp", __name__)
 
@@ -651,6 +652,7 @@ def api_item_available_qty():
 
 @voucher_bp.route("/add_voucher", methods=["POST"])
 @login_required
+@guard_duplicate_submission
 def add_voucher_route():
     company_id = get_current_company_id()
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -1314,6 +1316,7 @@ def edit_voucher_search():
 
 @voucher_bp.route("/update_voucher", methods=["POST"])
 @login_required
+@guard_duplicate_submission
 def update_voucher_route():
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     try:

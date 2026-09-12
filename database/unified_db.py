@@ -523,8 +523,18 @@ def init_unified_db():
             missing_ledger TEXT,
             failure_reason TEXT,
             missing_item TEXT,
+            -- How many rows of this entry are already posted. A voucher import
+            -- commits in batches, so an interrupted one can carry on from here
+            -- instead of posting everything twice.
+            processed_rows INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
         )
+    """)
+
+    # Older databases predate the resume column.
+    cursor.execute("""
+        ALTER TABLE import_queue
+        ADD COLUMN IF NOT EXISTS processed_rows INTEGER NOT NULL DEFAULT 0
     """)
 
     # Settlements

@@ -3,6 +3,9 @@
 {% block title %}Error{% endblock %}
 
 {% block content %}
-  <h1>Error</h1>
-  <p>{{ error or "An unexpected error occurred." }}</p>
+  <section class="auth-card" role="alert">
+    <h1>Something went wrong</h1>
+    <p>{{ error or "We couldn’t complete that request. Please try again." }}</p>
+    <a class="btn btn-primary" href="{{ url_for('dashboard_bp.dashboard') }}">Return to dashboard</a>
+  </section>
 {% endblock %}

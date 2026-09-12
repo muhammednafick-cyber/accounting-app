@@ -6,11 +6,17 @@ import {
 } from 'recharts';
 import { LayoutDashboard, TrendingUp, AlertTriangle, Package, DollarSign, Wallet, Users, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
+const money = value => Number(value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const displayDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value.split('-').reverse().join('-') : value;
+
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
 function App() {
     const [activeTab, setActiveTab] = useState('overview');
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [trendError, setTrendError] = useState(null);
+    const [trendLoading, setTrendLoading] = useState(true);
     const [kpi, setKpi] = useState(null);
     const [salesTrend, setSalesTrend] = useState([]);
     const [financials, setFinancials] = useState([]);
@@ -18,7 +24,19 @@ function App() {
     const [topCustomers, setTopCustomers] = useState([]);
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     const [legacyData, setLegacyData] = useState(null);
-    const [currency, setCurrency] = useState('$');
+    const [currency, setCurrency] = useState('AED');
+    const [recent, setRecent] = useState(null);
+    const [recentError, setRecentError] = useState(false);
+    const canViewVouchers = document.getElementById('root')?.dataset.canVouchers === 'true';
+
+    useEffect(() => {
+        if (!canViewVouchers) return;
+        const controller = new AbortController();
+        axios.get('/api/dashboard/recent-vouchers', { signal: controller.signal })
+            .then(response => { if (!Array.isArray(response.data)) throw new Error('Invalid response'); setRecent(response.data); })
+            .catch(() => { if (!controller.signal.aborted) setRecentError(true); });
+        return () => controller.abort();
+    }, [canViewVouchers]);
 
     // Generate years for dropdown (e.g., current year - 4 to current year + 1)
     const currentYear = new Date().getFullYear();
@@ -37,6 +55,11 @@ function App() {
                     axios.get('/api/company-settings')
                 ]);
 
+                if ([kpiRes, finRes, invRes, custRes, legacyRes, settingsRes]
+                    .some(response => !response.data || typeof response.data !== 'object')) {
+                    throw new Error('The server returned an unexpected response.');
+                }
+
                 setKpi(kpiRes.data);
                 setFinancials(finRes.data);
                 setInventory(invRes.data);
@@ -47,6 +70,7 @@ function App() {
                 }
             } catch (error) {
                 console.error("Error fetching dashboard data", error);
+                setError('Unable to load the dashboard. Check your connection and sign-in, then try again.');
             } finally {
                 setLoading(false);
             }
@@ -57,43 +81,66 @@ function App() {
 
     // Fetch sales trend when year changes
     useEffect(() => {
+        const controller = new AbortController();
+        setTrendError(null);
+        setTrendLoading(true);
+        setSalesTrend([]);
         const fetchSalesTrend = async () => {
             try {
-                const response = await axios.get(`/api/analysis/sales-trend?year=${selectedYear}`);
+                const response = await axios.get(`/api/analysis/sales-trend?year=${selectedYear}`, {
+                    signal: controller.signal,
+                });
+                if (!Array.isArray(response.data)) throw new Error('Invalid sales trend response.');
                 setSalesTrend(response.data);
             } catch (error) {
+                if (controller.signal.aborted) return;
                 console.error("Error fetching sales trend", error);
+                setTrendError('Unable to load sales for this year. Please try again.');
+            } finally {
+                if (!controller.signal.aborted) setTrendLoading(false);
             }
         };
 
         fetchSalesTrend();
+        return () => controller.abort();
     }, [selectedYear]);
 
     if (loading) return (
-        <div className="flex items-center justify-center h-screen bg-gray-50 flex-col gap-4">
+        <div className="dashboard-loading flex items-center justify-center bg-gray-50 flex-col gap-4" role="status" aria-live="polite">
             <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             <div className="text-xl text-gray-600 font-medium">Loading Analysis...</div>
+        </div>
+    );
+
+    if (error) return (
+        <div className="min-h-screen bg-gray-50 p-6 flex flex-col items-center justify-center gap-4" role="alert">
+            <p className="text-red-700">{error}</p>
+            <button className="rounded bg-blue-600 px-4 py-2 text-white" onClick={() => window.location.reload()}>
+                Try again
+            </button>
         </div>
     );
 
     return (
         <div className="min-h-screen bg-gray-50 p-6 font-sans">
             <div className="max-w-7xl mx-auto space-y-8">
+                {trendError && <p role="alert" className="text-red-700">{trendError}</p>}
 
                 {/* Header */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
                             <LayoutDashboard className="w-8 h-8 text-blue-600" />
-                            Analysis Dashboard
+                            Business overview
                         </h1>
-                        <p className="text-gray-500 mt-1">Real-time financial insights and performance metrics</p>
+                        <p className="text-gray-500 mt-1">Your balances, performance and the items that need attention.</p>
                     </div>
 
-                    <div className="flex bg-white rounded-lg p-1 shadow-sm border border-gray-200">
+                    <div className="dashboard-tabs flex bg-white rounded-lg p-1 shadow-sm border border-gray-200" role="group" aria-label="Dashboard views">
                         {['Overview', 'Financials', 'Vouchers', 'Inventory'].map(tab => (
                             <button
                                 key={tab}
+                                aria-pressed={activeTab === tab.toLowerCase()}
                                 onClick={() => setActiveTab(tab.toLowerCase())}
                                 className={`px-6 py-2 rounded-md text-sm font-medium transition-all duration-200 ${activeTab === tab.toLowerCase()
                                     ? 'bg-blue-600 text-white shadow-md transform scale-105'
@@ -107,7 +154,7 @@ function App() {
                 </div>
 
                 {/* KPI Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="dashboard-kpis grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <KpiCard
                         title="Cash Balance"
                         value={legacyData?.cash_balance}
@@ -138,6 +185,15 @@ function App() {
                     />
                 </div>
 
+                {activeTab === 'overview' && legacyData && (
+                    <section className="dashboard-attention" aria-label="Inventory attention">
+                        <div><strong>Needs attention</strong><span> Inventory snapshot</span></div>
+                        <span><b>{legacyData.negative_stock || 0}</b> negative-stock items</span>
+                        <span><b>{legacyData.zero_stock || 0}</b> items at or below zero</span>
+                        <span><b>{inventory?.slow_moving_count || 0}</b> slow-moving items</span>
+                        <button type="button" onClick={() => setActiveTab('inventory')}>Review inventory →</button>
+                    </section>
+                )}
                 {/* Overview Tab Content */}
                 {activeTab === 'overview' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -150,6 +206,7 @@ function App() {
                                 </h2>
                                 <select
                                     className="border border-gray-300 rounded-md px-3 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    aria-label="Sales trend year"
                                     value={selectedYear}
                                     onChange={(e) => setSelectedYear(Number(e.target.value))}
                                 >
@@ -158,7 +215,9 @@ function App() {
                                     ))}
                                 </select>
                             </div>
-                            <div className="h-80 w-full">
+                            {trendLoading && <p role="status">Loading sales for {selectedYear}…</p>}
+                            {!trendLoading && !trendError && !salesTrend.some(row => Number(row.value)) && <p className="ui-empty">No sales recorded for {selectedYear}. Choose another year to compare.</p>}
+                            <div className="h-80 w-full" role="img" aria-label={`Sales trend for ${selectedYear}, total ${currency} ${money(salesTrend.reduce((total, row) => total + Number(row.value || 0), 0))}`}>
                                 <ResponsiveContainer width="100%" height="100%">
                                     <AreaChart data={salesTrend}>
                                         <defs>
@@ -172,19 +231,20 @@ function App() {
                                         <YAxis axisLine={false} tickLine={false} tick={{ fill: '#9ca3af', fontSize: 12 }} tickFormatter={(value) => `${currency}${value / 1000}k`} />
                                         <Tooltip
                                             contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
-                                            formatter={(value) => [`${currency} ${value.toLocaleString()}`, 'Sales']}
+                                            formatter={(value) => [`${currency} ${money(value)}`, 'Sales']}
                                         />
                                         <Area type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
                                     </AreaChart>
                                 </ResponsiveContainer>
                             </div>
+                            <ChartData title={`Sales by month · ${selectedYear}`} columns={['Month', `Sales (${currency})`]} rows={salesTrend.map(row => [row.name, money(row.value)])} />
                         </div>
 
                         {/* Top Customers */}
                         <div className="lg:col-span-1 bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
                             <h2 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
                                 <Users className="w-5 h-5 text-purple-500" />
-                                Top Customers
+                                Top customers
                             </h2>
                             <div className="flex-1 overflow-auto pr-2 space-y-4">
                                 {topCustomers.map((customer, index) => (
@@ -197,17 +257,26 @@ function App() {
                                                 {customer.name}
                                             </span>
                                         </div>
-                                        <span className="font-bold text-gray-900">{currency} {customer.value.toLocaleString()}</span>
+                                        <span className="font-bold text-gray-900">{currency} {money(customer.value)}</span>
                                     </div>
                                 ))}
                                 {topCustomers.length === 0 && (
-                                    <div className="text-center text-gray-400 py-10">No customer data available</div>
+                                    <div className="text-center text-gray-400 py-10">No customer sales yet. Customers will appear here after sales are recorded.</div>
                                 )}
                             </div>
                         </div>
                     </div>
                 )}
 
+                {activeTab === 'overview' && canViewVouchers && (
+                    <section className="recent-activity" aria-labelledby="recent-title">
+                        <div className="recent-heading"><div><h2 id="recent-title">Recent vouchers</h2><p>Latest dated entries for the selected company and location.</p></div></div>
+                        {recentError ? <p role="alert" className="ui-empty">Recent vouchers could not be loaded. Refresh the page to try again.</p>
+                            : recent === null ? <p role="status">Loading recent vouchers…</p>
+                            : recent.length === 0 ? <p className="ui-empty">No vouchers yet. Use Create voucher above to record your first entry.</p>
+                            : <div className="ui-table-scroll" role="region" aria-label="Recent vouchers" tabIndex="0"><table><thead><tr><th scope="col">Voucher</th><th scope="col">Date</th><th scope="col">Type</th><th scope="col" className="ui-number">Amount ({currency})</th></tr></thead><tbody>{recent.map(voucher => <tr key={voucher.number}><td>{voucher.number}</td><td>{displayDate(voucher.date)}</td><td>{voucher.type}</td><td className={`ui-number ${voucher.amount < 0 ? 'ui-negative' : ''}`}>{money(voucher.amount)}</td></tr>)}</tbody></table></div>}
+                    </section>
+                )}
                 {/* Financials Tab Content */}
                 {activeTab === 'financials' && (
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -215,7 +284,7 @@ function App() {
                             <DollarSign className="w-5 h-5 text-green-500" />
                             Income vs Expenses
                         </h2>
-                        <div className="h-96 w-full">
+                        <div className="h-96 w-full" role="img" aria-label="Monthly income and expense comparison">
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={financials}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
@@ -231,6 +300,7 @@ function App() {
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
+                        <ChartData title="Income and expenses by month" columns={['Month', `Income (${currency})`, `Expense (${currency})`]} rows={financials.map(row => [row.month, money(row.Income), money(row.Expense)])} />
                     </div>
                 )}
 
@@ -248,13 +318,13 @@ function App() {
                             { title: 'Sales Return', count: legacyData.sales_return_count, amount: legacyData.sales_return_amount, color: 'pink' },
                             { title: 'Purchase Return', count: legacyData.purchase_return_count, amount: legacyData.purchase_return_amount, color: 'teal' },
                         ].map((item) => (
-                            <div key={item.title} className={`bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-${item.color}-500`}>
+                            <div key={item.title} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-blue-500">
                                 <div className="flex justify-between items-start">
                                     <h3 className="font-semibold text-gray-700">{item.title}</h3>
                                     <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">{item.count} Vouchers</span>
                                 </div>
                                 <div className="mt-4">
-                                    <p className="text-2xl font-bold text-gray-900">{currency} {(item.amount || 0).toLocaleString()}</p>
+                                    <p className="text-2xl font-bold text-gray-900">{currency} {money(item.amount)}</p>
                                 </div>
                             </div>
                         ))}
@@ -286,11 +356,12 @@ function App() {
                                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                             ))}
                                         </Pie>
-                                        <Tooltip formatter={(value) => `${currency} ${value.toLocaleString()}`} />
+                                        <Tooltip formatter={(value) => `${currency} ${money(value)}`} />
                                         <Legend />
                                     </PieChart>
                                 </ResponsiveContainer>
                             </div>
+                            <ChartData title="Inventory by category" columns={['Category', `Value (${currency})`]} rows={(inventory?.category_distribution || []).map(row => [row.name, money(row.value)])} />
                         </div>
 
                         <div className="space-y-6">
@@ -318,7 +389,7 @@ function App() {
                                     <div>
                                         <h3 className="text-gray-500 font-medium text-sm uppercase tracking-wider">Total Inventory Value</h3>
                                         <div className="mt-4">
-                                            <span className="text-3xl font-extrabold text-gray-800">{currency} {(inventory?.total_stock_value || 0).toLocaleString()}</span>
+                                            <span className="text-3xl font-extrabold text-gray-800">{currency} {money(inventory?.total_stock_value)}</span>
                                         </div>
                                     </div>
                                     <Wallet className="w-8 h-8 text-blue-500 opacity-80" />
@@ -341,6 +412,15 @@ function App() {
             </div>
         </div>
     );
+}
+
+function ChartData({ title, columns, rows }) {
+    return <details className="chart-data"><summary>View chart data</summary>
+        {rows.length ? <div className="ui-table-scroll" role="region" aria-label={title} tabIndex="0"><table><caption>{title}</caption>
+            <thead><tr>{columns.map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>
+            <tbody>{rows.map((row, i) => <tr key={i}>{row.map((value, j) => <td className={j ? 'ui-number' : undefined} key={j}>{value}</td>)}</tr>)}</tbody>
+        </table></div> : <p>No data available for this chart.</p>}
+    </details>;
 }
 
 function KpiCard({ title, value, icon: Icon, color, trend, currency }) {
@@ -368,7 +448,7 @@ function KpiCard({ title, value, icon: Icon, color, trend, currency }) {
             <div>
                 <h3 className="text-gray-500 font-medium text-sm">{title}</h3>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                    {currency || '$'} {(value || 0).toLocaleString()}
+                    {currency || '$'} {money(value)}
                 </p>
             </div>
         </div>

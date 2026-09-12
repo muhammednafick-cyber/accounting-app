@@ -289,8 +289,13 @@ Charges on Purchase Voucher
 </div>
 {% endif %}
 
-<form id="voucherForm" method="post" action="{% if edit_mode %}/update_voucher{% else %}/add_voucher{% endif %}">
+<form id="voucherForm" method="post"
+      action="{% if edit_mode %}/update_voucher{% else %}/add_voucher{% endif %}"
+      data-validate-hook="voucherFormProblems"
+      {% if not edit_mode %}data-autosave="voucher.{{ session.get('company_id') or 0 }}.{{ voucher_type }}"
+      data-autosave-rows="voucherDraftRows"{% endif %}>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <input type="hidden" name="submission_token" id="submissionToken" value="{{ submission_token() }}" />
     <input type="hidden" name="voucher_type" value="{{ voucher_type }}">
 
     <div class="form-section">
@@ -1146,6 +1151,11 @@ Charges on Purchase Voucher
             });
         }
 
+        // One-time token, so a retried assistant post cannot record the voucher
+        // twice. It is rotated once this one is accepted.
+        const tokenField = document.getElementById('submissionToken');
+        if (tokenField && tokenField.value) params.append('submission_token', tokenField.value);
+
         const res = await fetch('/add_voucher', {
             method: 'POST',
             headers: {
@@ -1155,6 +1165,8 @@ Charges on Purchase Voucher
             body: params.toString()
         });
         const data = await res.json().catch(() => ({}));
+        if (res.ok && data.success && tokenField && window.AppForms)
+            AppForms.rotateSubmissionToken(tokenField);
         if (!res.ok || !data.success) {
             const msg = (data && data.message) ? data.message : `Failed with status ${res.status}`;
             throw new Error(msg);
@@ -3921,6 +3933,100 @@ Charges on Purchase Voucher
             })
             .catch(err => alert('Error: ' + err));
     }
+</script>
+
+<script>
+    // ---- inline validation and recoverable drafts -------------------------
+    // The checks below mirror what /add_voucher and /update_voucher already
+    // refuse. They are here so the operator sees the problem beside the field
+    // instead of losing a screen of entry to a round trip.
+    (function () {
+        const ITEM_TYPES = ['Sales', 'Sales Return', 'Purchase', 'Purchase Return',
+                            'Stock Adjustment', 'Inventory Transfer', 'Physical Stock'];
+        const STOCK_ONLY = ['Physical Stock', 'Inventory Transfer', 'Stock Adjustment'];
+        const INVOICE_DATE_TYPES = ['Purchase', 'Purchase Return', 'Expense'];
+
+        function problem(field, message, fieldMessage) {
+            return { field: field, message: message, fieldMessage: fieldMessage || message };
+        }
+
+        window.voucherFormProblems = function (form) {
+            const problems = [];
+            const date = form.querySelector('#date');
+            if (date && !date.value.trim())
+                problems.push(problem(date, 'Voucher date is required', 'Enter the voucher date'));
+
+            if (INVOICE_DATE_TYPES.includes(voucherType)) {
+                const invoiceDate = form.querySelector('#original_invoice_date');
+                if (invoiceDate && !invoiceDate.value.trim())
+                    problems.push(problem(invoiceDate,
+                        `Invoice date is required for ${voucherType} vouchers`,
+                        'Enter the invoice date'));
+            }
+
+            if (voucherType === 'Inventory Transfer') {
+                ['from_location_name', 'to_location_name'].forEach(id => {
+                    const select = form.querySelector('#' + id);
+                    if (select && !select.value)
+                        problems.push(problem(select,
+                            'Both From Location and To Location are required',
+                            'Select a location'));
+                });
+            }
+
+            // Ledger rows: a name without an amount, or an amount without a
+            // name, is the mistake the server rejects as an invalid entry.
+            const rows = Array.from(form.querySelectorAll('#ledgerTable tbody tr'));
+            let named = 0, debit = 0, credit = 0;
+            rows.forEach((row, index) => {
+                const nameField = row.querySelector('[name="ledger_name[]"]');
+                const amountField = row.querySelector('.ledger-amount-input');
+                const name = (nameField && nameField.value || '').trim();
+                const raw = (amountField && amountField.value || '').trim();
+                const amount = parseFloat(raw);
+                if (!name && !raw) return;            // an untouched spare row
+                if (!name) {
+                    problems.push(problem(nameField, `Row ${index + 1}: select a ledger`,
+                                          'Select a ledger'));
+                    return;
+                }
+                named += 1;
+                if (!raw || isNaN(amount) || amount <= 0) {
+                    problems.push(problem(amountField,
+                        `Row ${index + 1} (${name}): enter an amount greater than zero`,
+                        'Enter an amount greater than zero'));
+                    return;
+                }
+                const side = (row.querySelector('.ledger-type-select') || {}).value;
+                if (side === 'Credit') credit += amount; else debit += amount;
+            });
+
+            if (!named && !STOCK_ONLY.includes(voucherType))
+                problems.push(problem(rows[0]?.querySelector('[name="ledger_name[]"]'),
+                    'At least one ledger entry is required', 'Select a ledger'));
+
+            // Item vouchers balance against lines the server builds on saving,
+            // so only a ledger-only voucher can be checked here.
+            if (named && !ITEM_TYPES.includes(voucherType) && Math.abs(debit - credit) > 0.05)
+                problems.push(problem(null,
+                    `Debit ${debit.toFixed(2)} and Credit ${credit.toFixed(2)} do not match`));
+
+            return problems;
+        };
+
+        // Rebuild the rows a recovered draft needs before its values go back in.
+        window.voucherDraftRows = function (counts) {
+            const need = {
+                '#ledgerTable tbody tr': [counts['ledger_name[]'] || 0, window.addLedgerRow],
+                '#itemTable tbody tr': [counts['item_name[]'] || 0, window.addItemRow],
+            };
+            Object.entries(need).forEach(([selector, [wanted, add]]) => {
+                if (typeof add !== 'function') return;
+                let guard = 0;
+                while (document.querySelectorAll(selector).length < wanted && guard++ < 200) add();
+            });
+        };
+    })();
 </script>
 
 {% endblock %}

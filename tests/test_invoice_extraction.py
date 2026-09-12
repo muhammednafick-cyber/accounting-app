@@ -10,6 +10,7 @@ import os
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -417,7 +418,8 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIsInstance(content, str)          # not a vision payload
         self.assertIn("HAYAT SPAGHETTI PASTA 500GM", content)
 
-    def test_the_spreadsheet_carries_the_invoice_values(self):
+    @patch.object(S, 'get_item_mapping', return_value=None)
+    def test_the_spreadsheet_carries_the_invoice_values(self, _mapping):
         data = S.extract_invoice_data_vision(text_pdf(SAMPLE_INVOICE),
                                              "invoice.pdf", "Purchase")
         frame = pd.read_excel(S.generate_purchase_excel(data))

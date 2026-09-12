@@ -20,6 +20,7 @@ export default defineConfig({
     // Proxy API requests to Flask backend during development
     proxy: {
       '/api': 'http://127.0.0.1:5000',
+      '/dashboard_data': 'http://127.0.0.1:5000',
     },
   },
 })

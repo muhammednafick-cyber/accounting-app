@@ -1,3 +1,4 @@
+from database.request_cache import memoize
 """
 Reports module: Trial Balance, P&L, Balance Sheet, Stock Reports
 """
@@ -133,6 +134,7 @@ def verify_closing_balances(cursor, conn, company_id):
         return 0
 
 
+@memoize
 def get_trial_balance_data(as_of_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -267,6 +269,7 @@ def get_trial_balance_data(as_of_date=None, company_id=None, location_name=None)
     finally:
         conn.close()
 
+@memoize
 def get_ledger_transactions(ledger_name, from_date=None, to_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -365,6 +368,7 @@ def get_ledger_transactions(ledger_name, from_date=None, to_date=None, company_i
     finally:
         conn.close()
 
+@memoize
 def get_coa_balances(from_date=None, to_date=None, company_id=None):
     """Return per-ledger net change and balance-at-date for the Chart of Accounts."""
     if company_id is None:
@@ -436,6 +440,7 @@ def get_coa_balances(from_date=None, to_date=None, company_id=None):
         conn.close()
 
 
+@memoize
 def get_negative_stock_items(company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -453,6 +458,7 @@ def get_negative_stock_items(company_id=None):
     finally:
         conn.close()
 
+@memoize
 def get_voucher_register_data(voucher_type, from_date=None, to_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -570,6 +576,7 @@ def get_voucher_register_data(voucher_type, from_date=None, to_date=None, compan
     finally:
         conn.close()
 
+@memoize
 def get_sales_summary_data(from_date=None, to_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -604,6 +611,7 @@ def get_sales_summary_data(from_date=None, to_date=None, company_id=None):
     finally:
         conn.close()
 
+@memoize
 def get_purchase_summary_data(from_date=None, to_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -638,6 +646,7 @@ def get_purchase_summary_data(from_date=None, to_date=None, company_id=None):
     finally:
         conn.close()
 
+@memoize
 def get_vat_summary_data(from_date=None, to_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -698,6 +707,7 @@ def get_vat_summary_data(from_date=None, to_date=None, company_id=None):
     finally:
         conn.close()
 
+@memoize
 def get_slow_moving_items(days_threshold=90, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -762,6 +772,7 @@ def _ageing_bucket(days):
         return '2_3y'
     return '3y_plus'
 
+@memoize
 def get_ageing_report_data(group_code, as_of_date=None, company_id=None, age_by='due_date'):
     """Ageing per party ledger. age_by='due_date' ages from the voucher's due
     date (falling back to voucher date + the ledger's credit days);
@@ -886,6 +897,7 @@ def get_ageing_report_data(group_code, as_of_date=None, company_id=None, age_by=
     finally:
         conn.close()
 
+@memoize
 def get_party_matching_data(ledger_name, from_date=None, to_date=None, company_id=None):
     """Statement of all debits and credits for a Debtor/Creditor ledger with a
     'matched reference' per row: the settlement number(s) the entry was matched
@@ -968,6 +980,7 @@ def get_party_matching_data(ledger_name, from_date=None, to_date=None, company_i
     finally:
         conn.close()
 
+@memoize
 def get_inventory_ageing_data(as_of_date=None, company_id=None, location_name=None):
     """Age each item's closing stock into buckets by acquisition date (FIFO:
     remaining stock is attributed to the most recent receipts). Opening stock
@@ -1090,6 +1103,7 @@ def get_inventory_ageing_data(as_of_date=None, company_id=None, location_name=No
     finally:
         conn.close()
 
+@memoize
 def get_cash_flow_data(from_date, to_date, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -1310,6 +1324,7 @@ def get_cash_flow_data(from_date, to_date, company_id=None):
     finally:
         conn.close()
 
+@memoize
 def get_vat_detailed_report_data(from_date=None, to_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -1445,6 +1460,7 @@ def get_vat_detailed_report_data(from_date=None, to_date=None, company_id=None):
         conn.close()
 
 
+@memoize
 def get_stock_movement_data(item_name, from_date=None, to_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -1990,6 +2006,7 @@ def replay_movements_by_location(item_name, start_date=None, end_date=None, comp
     finally:
         conn.close()
 
+@memoize
 def get_inventory_stock(item_name, start_date=None, end_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -2094,6 +2111,7 @@ def get_inventory_stock(item_name, start_date=None, end_date=None, company_id=No
     finally:
         conn.close()
 
+@memoize
 def get_balance_sheet_data(as_of_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -2249,6 +2267,7 @@ def get_balance_sheet_data(as_of_date=None, company_id=None, location_name=None)
     finally:
         conn.close()
 
+@memoize
 def get_profit_and_loss_data(from_date=None, to_date=None, company_id=None, location_name=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -2562,6 +2581,7 @@ def get_profit_and_loss_data(from_date=None, to_date=None, company_id=None, loca
     finally:
         conn.close()
 
+@memoize
 def get_item_closing_stock(item_name, as_of_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -2602,6 +2622,7 @@ def get_item_closing_stock(item_name, as_of_date=None, company_id=None):
     finally:
         conn.close()
 
+@memoize
 def get_closing_inventory_data(as_of_date=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -2769,6 +2790,7 @@ def get_closing_inventory_data(as_of_date=None, company_id=None):
         conn.close()
 
 
+@memoize
 def get_gl_dump_data(from_date=None, to_date=None, company_id=None):
     """
     GL Dump: all ledger entries for the selected period,
@@ -2867,6 +2889,7 @@ def _profit_period(from_date, to_date, params):
     return clause
 
 
+@memoize
 def get_profit_by_item_data(from_date=None, to_date=None, company_id=None):
     """Quantity, revenue, cost and gross profit for every item sold."""
     if company_id is None:
@@ -2901,6 +2924,7 @@ def get_profit_by_item_data(from_date=None, to_date=None, company_id=None):
         conn.close()
 
 
+@memoize
 def get_profit_by_customer_data(from_date=None, to_date=None, company_id=None):
     """Revenue, cost and gross profit for every customer sold to.
 

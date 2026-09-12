@@ -22,6 +22,12 @@ if __name__ == "__main__":
         Timer(1.5, open_browser).start()
         app.run(host="0.0.0.0", port=port, debug=False)
     else:
-        # Debug defaults to on for local development; set FLASK_DEBUG=0 in .env for production
-        debug_mode = os.environ.get("FLASK_DEBUG", "1") not in ("0", "false", "False")
+        # Debug is opt-in. It was on unless FLASK_DEBUG said otherwise, which
+        # meant a deployment that simply forgot the variable served the Werkzeug
+        # debugger - a remote console onto the accounting database - to the
+        # internet. Local development sets FLASK_DEBUG=1 (run_app.bat does).
+        debug_mode = os.environ.get("FLASK_DEBUG", "0").lower() in ("1", "true", "yes")
+        if debug_mode:
+            print("FLASK_DEBUG is on: interactive debugger enabled. Never use "
+                  "this on a public server.")
         app.run(host="0.0.0.0", port=port, debug=debug_mode)

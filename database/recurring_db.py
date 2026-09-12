@@ -1,5 +1,7 @@
 # import sqlite3 - removed
 from datetime import datetime
+from math import isfinite
+from calendar import monthrange
 from .config import get_connection, execute_insert_returning_id
 from .company_db import get_current_company_id
 
@@ -29,7 +31,7 @@ def validate_ledger_entries(entries):
             amount = float(entry.get("amount") or 0)
         except (TypeError, ValueError):
             raise ValueError(f"Row {row}: '{entry.get('amount')}' is not an amount.")
-        if amount <= 0:
+        if not isfinite(amount) or amount <= 0:
             raise ValueError(f"Row {row}: the amount must be more than zero.")
 
         side = entry.get("type")
@@ -195,76 +197,78 @@ def process_recurring_entry(template_id, posting_date, company_id=None):
     from .vouchers_db import add_voucher
     import json
     from datetime import timedelta
-    
+
     conn = get_connection()
     # conn.row_factory = sqlite3.Row - Removed
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM recurring_templates WHERE id = %s AND company_id = %s", (template_id, company_id))
-    template = cursor.fetchone()
-    if not template:
-        conn.close()
-        raise ValueError("Template not found")
-        
-    # Parse data
-    ledgers = json.loads(template['ledger_details_json'])
-
-    # add_voucher only logs an imbalance, so an older template saved before the
-    # form checked would post a one-sided voucher and quietly break the books.
-    # Refuse it here and name the template, so it can be corrected.
     try:
-        validate_ledger_entries(ledgers)
-    except ValueError as exc:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM recurring_templates WHERE id = %s AND company_id = %s", (template_id, company_id))
+        template = cursor.fetchone()
+        if not template:
+            raise ValueError("Template not found")
+
+        # Parse data
+        ledgers = json.loads(template['ledger_details_json'])
+
+        # add_voucher only logs an imbalance, so an older template saved before the
+        # form checked would post a one-sided voucher and quietly break the books.
+        # Refuse it here and name the template, so it can be corrected.
+        try:
+            validate_ledger_entries(ledgers)
+        except ValueError as exc:
+            raise ValueError(
+                f"'{template['template_name']}' does not balance, so it cannot be "
+                f"posted: {exc} Edit the template and try again.")
+
+        # Create Voucher
+        voucher_no = add_voucher(
+            voucher_type=template['voucher_type'],
+            date=posting_date,
+            ledger_entries=ledgers,
+            item_entries=[], # Recurring usually is for Expenses/Journals (no items) for now
+            narration=(template['narration'] or '') + f" (Recurring {template['frequency']})",
+            company_id=company_id,
+            db_connection=conn
+        )
+
+        # Update Next Due Date
+        if isinstance(template['next_due_date'], str):
+            current_due = datetime.strptime(template['next_due_date'], "%Y-%m-%d")
+        else:
+            current_due = template['next_due_date'] # Postgres might return datetime
+
+        next_due = current_due
+
+        if template['frequency'] == 'Monthly':
+            # Add month (naive implementation)
+            month = current_due.month + 1
+            year = current_due.year
+            if month > 12:
+                month = 1
+                year += 1
+            # Clamp to the target month; adding 30 days can skip February entirely.
+            day = min(current_due.day, monthrange(year, month)[1])
+            next_due = current_due.replace(year=year, month=month, day=day)
+
+        elif template['frequency'] == 'Weekly':
+            next_due = current_due + timedelta(days=7)
+        elif template['frequency'] == 'Daily':
+            next_due = current_due + timedelta(days=1)
+        elif template['frequency'] == 'Yearly':
+            try:
+                next_due = current_due.replace(year=current_due.year + 1)
+            except ValueError:
+                 next_due = current_due + timedelta(days=365)
+
+        cursor.execute("UPDATE recurring_templates SET next_due_date = %s WHERE id = %s AND company_id = %s",
+                       (next_due.strftime("%Y-%m-%d"), template_id, company_id))
+
+        conn.commit()
+
+        return voucher_no
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
         conn.close()
-        raise ValueError(
-            f"'{template['template_name']}' does not balance, so it cannot be "
-            f"posted: {exc} Edit the template and try again.")
-
-    # Create Voucher
-    voucher_no = add_voucher(
-        voucher_type=template['voucher_type'],
-        date=posting_date,
-        ledger_entries=ledgers,
-        item_entries=[], # Recurring usually is for Expenses/Journals (no items) for now
-        narration=template['narration'] + f" (Recurring {template['frequency']})",
-        company_id=company_id
-    )
-    
-    # Update Next Due Date
-    if isinstance(template['next_due_date'], str):
-        current_due = datetime.strptime(template['next_due_date'], "%Y-%m-%d")
-    else:
-        current_due = template['next_due_date'] # Postgres might return datetime
-        
-    next_due = current_due
-    
-    if template['frequency'] == 'Monthly':
-        # Add month (naive implementation)
-        month = current_due.month + 1
-        year = current_due.year
-        if month > 12:
-            month = 1
-            year += 1
-        # Handle end of month days (e.g. Jan 31 -> Feb 28)
-        try:
-            next_due = current_due.replace(year=year, month=month)
-        except ValueError:
-            next_due = current_due + timedelta(days=30)
-            
-    elif template['frequency'] == 'Weekly':
-        next_due = current_due + timedelta(days=7)
-    elif template['frequency'] == 'Daily':
-        next_due = current_due + timedelta(days=1)
-    elif template['frequency'] == 'Yearly':
-        try:
-            next_due = current_due.replace(year=current_due.year + 1)
-        except ValueError:
-             next_due = current_due + timedelta(days=365)
-
-    cursor.execute("UPDATE recurring_templates SET next_due_date = %s WHERE id = %s AND company_id = %s", 
-                   (next_due.strftime("%Y-%m-%d"), template_id, company_id))
-    
-    conn.commit()
-    conn.close()
-    
-    return voucher_no

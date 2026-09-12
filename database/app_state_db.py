@@ -26,6 +26,7 @@ CHAT_SESSION_TTL_HOURS = 12
 CHAT_EXPORT_TTL_HOURS = 6
 RATE_LIMIT_TTL_HOURS = 2
 JOB_TTL_HOURS = 24
+SUBMISSION_TTL_HOURS = 24
 
 
 def init_app_state_tables():
@@ -84,6 +85,88 @@ def init_app_state_tables():
             CREATE INDEX IF NOT EXISTS idx_background_jobs_created
             ON background_jobs (created_at)
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS submission_claims (
+                token TEXT PRIMARY KEY,
+                identity TEXT NOT NULL,
+                endpoint TEXT,
+                status TEXT NOT NULL,
+                outcome_json TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_submission_claims_created
+            ON submission_claims (created_at)
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------- submission claims
+
+def submission_claim(token, identity, endpoint):
+    """Claim a one-time submission token. Returns (state, outcome).
+
+    state is 'won' for the first caller to claim the token, 'pending' while
+    that caller is still posting, and 'done' once it finished - in which case
+    `outcome` is what it produced. The insert decides the winner in the
+    database, so two workers handling a double-click cannot both post.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO submission_claims (token, identity, endpoint, status)
+            VALUES (%s, %s, %s, 'in_progress')
+            ON CONFLICT (token) DO NOTHING
+        """, (token, str(identity), endpoint))
+        if cursor.rowcount:
+            cursor.execute("""
+                DELETE FROM submission_claims
+                WHERE created_at < CURRENT_TIMESTAMP - (%s * INTERVAL '1 hour')
+            """, (SUBMISSION_TTL_HOURS,))
+            conn.commit()
+            return "won", None
+        cursor.execute(
+            "SELECT status, outcome_json FROM submission_claims WHERE token = %s",
+            (token,))
+        row = cursor.fetchone()
+        conn.commit()
+        if not row:
+            # Expired between the insert and the read: let the post through
+            # rather than refusing work the user is waiting on.
+            return "won", None
+        status, outcome = row[0], row[1]
+        if status == "done":
+            return "done", (json.loads(outcome) if outcome else None)
+        return "pending", None
+    finally:
+        conn.close()
+
+
+def submission_finish(token, outcome):
+    """Record what the claimed submission produced, for replay."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE submission_claims
+               SET status = 'done', outcome_json = %s
+             WHERE token = %s
+        """, (json.dumps(outcome, default=str), token))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def submission_release(token):
+    """Drop a claim whose submission failed, so the user can correct and retry."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM submission_claims WHERE token = %s", (token,))
         conn.commit()
     finally:
         conn.close()

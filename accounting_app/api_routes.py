@@ -19,6 +19,40 @@ from .models import format_date
 
 api_bp = Blueprint("api_bp", __name__)
 
+
+@api_bp.route('/api/dashboard/recent-vouchers')
+@login_required
+def api_recent_vouchers():
+    """Small, company-scoped list for the dashboard's recent activity panel."""
+    from flask import session
+    if not current_user.can_access('vouchers'):
+        return jsonify({'error': 'Voucher access is required.'}), 403
+    company_id = session.get('company_id')
+    if not company_id:
+        return jsonify({'error': 'Select a company.'}), 400
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        query = ('SELECT voucher_number, date, voucher_type, amount FROM vouchers '
+                 'WHERE company_id = %s')
+        params = [company_id]
+        if not current_user.is_admin:
+            from database.company_db import get_user_locations
+            allowed_locations = get_user_locations(current_user.id, company_id=company_id)
+            if allowed_locations:
+                query += ' AND location_name = ANY(%s)'
+                params.append(allowed_locations)
+        if session.get('active_location'):
+            query += ' AND location_name = %s'
+            params.append(session['active_location'])
+        query += ' ORDER BY date DESC, voucher_id DESC LIMIT 5'
+        cursor.execute(query, params)
+        return jsonify([{'number': row[0], 'date': str(row[1])[:10],
+                         'type': row[2], 'amount': float(row[3] or 0)}
+                        for row in cursor.fetchall()])
+    finally:
+        conn.close()
+
 @api_bp.route("/api/company-settings")
 @login_required
 def api_company_settings():

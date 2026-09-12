@@ -18,6 +18,12 @@ from .analysis_db import *
 from .settlement_db import *
 from .unified_db import init_unified_db
 from .app_state_db import init_app_state_tables
+from .import_history_db import (
+    init_import_history_table,
+    content_fingerprint,
+    find_completed_import,
+    record_completed_import,
+)
 from .report_builder_db import (
     init_report_builder_tables,
     list_reports as list_custom_reports,
@@ -35,7 +41,36 @@ from .master_db import (
 )
 
 # Initialize database function
+# Every gunicorn worker runs this on boot, and "CREATE TABLE IF NOT EXISTS" is
+# not safe to run concurrently: two workers can both find a table missing and
+# both try to create it, and the loser dies on a duplicate pg_type entry rather
+# than a friendly "already exists". One arbitrary constant, shared by every
+# process that initialises this schema.
+_SCHEMA_LOCK_KEY = 8412739
+
+
 def initialize_db():
+    """Build the schema, one process at a time.
+
+    Held under a PostgreSQL advisory lock so workers starting together
+    initialise in turn. The lock belongs to this connection, so a process that
+    dies part-way through releases it automatically.
+    """
+    lock_conn = get_connection()
+    try:
+        lock_cursor = lock_conn.cursor()
+        lock_cursor.execute("SELECT pg_advisory_lock(%s)", (_SCHEMA_LOCK_KEY,))
+        lock_conn.commit()
+        try:
+            return _initialize_db_unlocked()
+        finally:
+            lock_cursor.execute("SELECT pg_advisory_unlock(%s)", (_SCHEMA_LOCK_KEY,))
+            lock_conn.commit()
+    finally:
+        lock_conn.close()
+
+
+def _initialize_db_unlocked():
     """Initialize all tables with unified schema"""
     
     # Initialize Unified Schema
@@ -44,6 +79,10 @@ def initialize_db():
     # Shared runtime state (chat context, export tokens, rate limits, jobs).
     # These used to be per-process dicts, which only worked on one worker.
     init_app_state_tables()
+
+    # Which imports have actually been posted, so the same file is not posted
+    # twice.
+    init_import_history_table()
     
     # Post-initialization checks or seeding if needed (Global)
     # Most seeding should happen per-company (e.g., default groups/ledgers)

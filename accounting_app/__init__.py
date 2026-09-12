@@ -30,8 +30,8 @@ def create_app():
         data_path = os.path.dirname(sys.executable)
     else:
         # Running from source
-        resource_path = os.path.abspath(".")
-        data_path = os.path.abspath(".")
+        resource_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        data_path = resource_path
     
     app = Flask(
         __name__,
@@ -43,7 +43,7 @@ def create_app():
     # persist it locally so sessions survive restarts without a hardcoded value.
     secret = os.environ.get("SECRET_KEY")
     if not secret:
-        key_file = os.path.join(resource_path, ".secret_key")
+        key_file = os.path.join(data_path, ".secret_key")
         try:
             if os.path.exists(key_file):
                 with open(key_file, "r") as f:
@@ -56,6 +56,8 @@ def create_app():
         except OSError:
             import secrets as _secrets
             secret = _secrets.token_hex(32)
+    from .performance import init_app as init_performance
+    init_performance(app)
     app.secret_key = secret
     # Keep the cookie lifetime in step with the idle timeout above, so the two
     # cannot disagree about when a session has expired.
@@ -63,12 +65,23 @@ def create_app():
         seconds=IDLE_TIMEOUT_SECONDS or 3600)
     
     # Session cookie hardening. Secure requires HTTPS, so it follows the
-    # deployment: Render (and any other host that sets this) serves TLS.
+    # deployment: any host terminating TLS should set SESSION_COOKIE_SECURE=1
+    # (or BEHIND_HTTPS_PROXY=1, which also turns on HSTS and ProxyFix).
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     if os.environ.get('SESSION_COOKIE_SECURE', '').lower() in ('1', 'true') \
+            or os.environ.get('BEHIND_HTTPS_PROXY', '').lower() in ('1', 'true') \
             or os.environ.get('RENDER'):
         app.config['SESSION_COOKIE_SECURE'] = True
+
+    # An upload is buffered before a view ever sees it, so an unbounded one
+    # is a way to exhaust a small server. Invoices and import spreadsheets
+    # are well under this; raise MAX_UPLOAD_MB if a real file is refused.
+    try:
+        _max_upload_mb = float(os.environ.get("MAX_UPLOAD_MB", "25"))
+    except ValueError:
+        _max_upload_mb = 25
+    app.config["MAX_CONTENT_LENGTH"] = int(_max_upload_mb * 1024 * 1024)
 
     app.config["BASE_PATH"] = resource_path
     
@@ -77,8 +90,24 @@ def create_app():
     # Use blueprint endpoint for login view
     login_manager.login_view = "auth_bp.signin"
     
+    # Behind nginx every request otherwise looks like it came from 127.0.0.1
+    # over plain HTTP: address-based throttling collapses onto one identity
+    # and external URLs come out as http://. This is opt-in because trusting
+    # these headers while exposed directly would let a client claim any
+    # address it liked.
+    if os.environ.get('BEHIND_HTTPS_PROXY', '').lower() in ('1', 'true') \
+            or os.environ.get('TRUST_PROXY_HEADERS', '').lower() in ('1', 'true') \
+            or os.environ.get('RENDER'):
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
     # Initialize CSRF Protection
     csrf.init_app(app)
+
+    # Forms that post accounting records carry a one-time token, so a retried
+    # or double-clicked submission is recognised instead of posted twice.
+    from .idempotency import new_token as _new_submission_token
+    app.jinja_env.globals["submission_token"] = _new_submission_token
 
     @app.after_request
     def add_security_headers(response):
@@ -87,8 +116,9 @@ def create_app():
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['X-XSS-Protection'] = '1; mode=block'
         # HSTS only where TLS actually exists (Render, or explicitly enabled)
-        if os.environ.get('RENDER') or \
-                os.environ.get('ENABLE_HSTS', '').lower() in ('1', 'true'):
+        if os.environ.get('RENDER') \
+                or os.environ.get('ENABLE_HSTS', '').lower() in ('1', 'true') \
+                or os.environ.get('BEHIND_HTTPS_PROXY', '').lower() in ('1', 'true'):
             response.headers['Strict-Transport-Security'] = \
                 'max-age=31536000; includeSubDomains'
         return response
@@ -191,10 +221,26 @@ def create_app():
         
         return None
     
+    @app.errorhandler(413)
+    def handle_upload_too_large(e):
+        """A file over the limit gets a plain explanation, not a bare 413."""
+        limit_mb = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
+        message = (f"That file is larger than the {limit_mb:.0f} MB upload "
+                   "limit. Split it, or ask an administrator to raise "
+                   "MAX_UPLOAD_MB.")
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            from flask import jsonify
+            return jsonify({"success": False, "message": message}), 413
+        return message, 413
+
     @app.errorhandler(Exception)
     def handle_uncaught_exception(e):
         """AJAX callers always get a JSON error instead of a broken response."""
         from werkzeug.exceptions import HTTPException
+        from database.config import PoolBusy
+        if isinstance(e, PoolBusy):
+            from flask import jsonify
+            return jsonify(success=False, message=str(e)), 503, {"Retry-After": "2"}
         if isinstance(e, HTTPException):
             return e
         app.logger.exception("Unhandled exception")

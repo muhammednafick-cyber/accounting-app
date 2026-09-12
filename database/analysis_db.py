@@ -1,8 +1,10 @@
+from database.request_cache import memoize
 import pandas as pd
 from datetime import datetime
 from .config import get_connection, DB_TYPE
 from .company_db import get_current_company_id
 
+@memoize
 def get_monthly_sales_trend(year=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -37,6 +39,7 @@ def get_monthly_sales_trend(year=None, company_id=None):
     
     return result
 
+@memoize
 def get_monthly_purchase_trend(year=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -70,6 +73,7 @@ def get_monthly_purchase_trend(year=None, company_id=None):
     
     return result
 
+@memoize
 def get_top_customers(limit=5, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -94,6 +98,7 @@ def get_top_customers(limit=5, company_id=None):
     
     return [{"name": row[0], "value": row[1]} for row in data]
 
+@memoize
 def get_top_suppliers(limit=5, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -118,6 +123,7 @@ def get_top_suppliers(limit=5, company_id=None):
     
     return [{"name": row[0], "value": row[1]} for row in data]
 
+@memoize
 def get_stock_category_summary(company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -159,6 +165,7 @@ def get_stock_category_summary(company_id=None):
         conn.close()
         return []
 
+@memoize
 def get_financial_comparison(year=None, company_id=None):
     if company_id is None:
         company_id = get_current_company_id()
@@ -213,6 +220,7 @@ def get_financial_comparison(year=None, company_id=None):
         
     return {"income": income_dict, "expense": expense_dict}
 
+@memoize
 def get_kpi_summary(company_id=None):
     if company_id is None:
         company_id = get_current_company_id()

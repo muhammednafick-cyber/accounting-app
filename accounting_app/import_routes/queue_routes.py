@@ -1,3 +1,4 @@
+import contextvars
 import io
 import json
 from datetime import datetime
@@ -29,6 +30,41 @@ from database import (
     get_cost_centers,
     get_current_company_id,
 )
+
+
+# An import of any size used to be done inside the HTTP request. A 30,000-row
+# purchase file takes about twenty minutes, which no browser, proxy or patience
+# will wait for: nginx returned its own timeout page while the server carried on
+# working, so the screen showed a failure for an import that actually succeeded -
+# and invited the operator to upload it a second time.
+#
+# Anything at or above this many rows is handed to a background worker and
+# followed by polling. Smaller files still run inline, where the immediate
+# answer is the nicer behaviour.
+BACKGROUND_IMPORT_ROWS = 200
+
+# A voucher import used to run as one transaction from the first row to the
+# last. At a hundred thousand rows that is half an hour holding locks on the
+# ledger tables, during which no other import can queue - one upload wedged
+# every other. Committing in batches holds those locks for seconds instead.
+#
+# The cost is that a failure part-way leaves earlier batches posted, so the
+# queue entry keeps its place and says how far it got; uploading it again
+# carries on from there rather than repeating what is already in.
+VOUCHER_COMMIT_BATCH = 500
+
+# The job this thread is working for, so the posting loop can report progress
+# without every function in the chain having to carry a job id.
+_import_job = contextvars.ContextVar("import_job_id", default=None)
+
+
+def _report_progress(done, total):
+    """Note how far the import has got, if it is running as a job."""
+    job_id = _import_job.get()
+    if not job_id:
+        return
+    from accounting_app import jobs
+    jobs.set_progress(job_id, f"Posted {done:,} of {total:,} rows")
 
 
 def _import_active_location(company_id):
@@ -809,6 +845,39 @@ def delete_import(id):
         ), 500
 
 
+def _partial_failure_reason(queue_id, company_id, rows_committed,
+                            total_rows, error):
+    """Say what is already posted, so nobody has to guess.
+
+    A batched import that fails leaves earlier batches in the ledger. The
+    worst possible message here is a bare error: it invites re-uploading the
+    whole file and posting the first part twice.
+    """
+    failed_row = rows_committed + 1
+    if not rows_committed:
+        return "Row 1 failed: %s. Nothing was posted." % error
+
+    posted = (rows_committed // VOUCHER_COMMIT_BATCH) * VOUCHER_COMMIT_BATCH
+    _save_resume_point(queue_id, company_id, posted)
+
+    if not posted:
+        return ("Row %d failed: %s. Nothing was posted - the rows before it had "
+                "not yet been committed, so the whole entry was rolled back."
+                % (failed_row, error))
+
+    # The failing row and the point to resume from are rarely the same. Rows
+    # between the last commit and the failure were rolled back, so sending
+    # anyone to inspect the resume point would send them to a row that is fine.
+    rolled_back = ""
+    if failed_row > posted + 1:
+        rolled_back = (" Rows %d to %d were not posted; they are rolled back and "
+                       "will be tried again." % (posted + 1, failed_row - 1))
+    return ("Row %d of %d failed: %s. Rows 1 to %d are posted and this entry has "
+            "kept its place - uploading it again continues from row %d rather "
+            "than repeating them.%s"
+            % (failed_row, total_rows, error, posted, posted + 1, rolled_back))
+
+
 def _mark_queue_failed(queue_id, reason, missing_ledger=None):
     """Record an upload failure on the queue row so the Import Queue page shows
     the real reason (and missing ledgers stay downloadable)."""
@@ -834,14 +903,204 @@ def _mark_queue_failed(queue_id, reason, missing_ledger=None):
 @import_bp.route("/upload_import/<int:id>", methods=["POST"])
 @login_required
 def upload_import(id):
+    """Post a queued import - in the background when it is large enough to
+    outlive the request."""
+    from flask import current_app, session
+    from accounting_app import jobs
+
+    company_id = get_current_company_id()
+    rows = _queued_row_count(id, company_id)
+
+    # An import whose content has already been posted, offered again.
+    # Almost always this is an operator who saw a timeout and cannot tell
+    # whether the first attempt worked. Say what went in and when, and let
+    # them decide rather than silently posting it all a second time.
+    already = _previously_posted(id, company_id)
+    if already and not _duplicate_confirmed():
+        return jsonify({
+            "success": False,
+            "duplicate": True,
+            "message": _duplicate_message(already),
+        }), 409
+
+    if rows < BACKGROUND_IMPORT_ROWS or jobs.busy():
+        # Small enough to answer directly, or every worker slot is taken and
+        # waiting inline beats refusing the upload.
+        return _perform_upload_import(id)
+
+    # Resolve everything that needs the session now: the worker thread has no
+    # request of its own, and the location must still respect this user's
+    # permitted locations.
+    active_location = _import_active_location(company_id)
+    job_id = jobs.create(f"Importing {rows:,} rows")
+    jobs.run(job_id, _run_import_job, current_app._get_current_object(),
+             id, company_id, active_location, job_id)
+    return jsonify({
+        "success": True,
+        "background": True,
+        "job_id": job_id,
+        "rows": rows,
+        "message": f"Importing {rows:,} rows in the background.",
+    }), 202
+
+
+def _save_resume_point(queue_id, company_id, rows_done):
+    """Record how many rows are committed, on a connection of its own.
+
+    It must not share the import's transaction: the whole point is that this
+    survives a rollback of the batch that follows it.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.cursor().execute(
+            "UPDATE import_queue SET processed_rows = ? "
+            "WHERE id = ? AND company_id = ?",
+            (rows_done, queue_id, company_id))
+        conn.commit()
+    except Exception as exc:
+        # Losing the marker costs a repeat of one batch on resume, which the
+        # voucher-number check catches; it must never stop the import.
+        print("Could not save the import resume point: %s" % exc)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _resume_point(queue_id, company_id):
+    """How many rows of this entry are already posted."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT processed_rows FROM import_queue WHERE id = ? AND company_id = ?",
+            (queue_id, company_id))
+        row = cursor.fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _duplicate_confirmed():
+    """Did the operator say to post it anyway?"""
+    if request.args.get("confirm_duplicate") in ("1", "true", "yes"):
+        return True
+    if request.is_json:
+        body = request.get_json(silent=True) or {}
+        return bool(body.get("confirm_duplicate"))
+    return request.form.get("confirm_duplicate") in ("1", "true", "yes")
+
+
+def _duplicate_message(previous):
+    """Say exactly what was posted before, so the decision is informed."""
+    when = previous.get("completed_at")
+    when_text = ""
+    if hasattr(when, "strftime"):
+        when_text = when.strftime(" on %d-%m-%Y at %H:%M")
+    detail = "%s rows" % (previous.get("row_count") or "?")
+    if previous.get("file_name"):
+        detail += ", %s" % previous["file_name"]
+    return ("The same import has already been posted%s (%s). Posting it "
+            "again would duplicate every voucher in it. Check the voucher "
+            "list before continuing." % (when_text, detail))
+
+
+def _queued_content(queue_id, company_id):
+    """The queued JSON and its fingerprint, or (None, None)."""
+    from database.import_history_db import content_fingerprint
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT json_data FROM import_queue WHERE id = ? AND company_id = ?",
+            (queue_id, company_id))
+        row = cursor.fetchone()
+        if not row:
+            return None, None
+        return row[0], content_fingerprint(row[0])
+    except Exception:
+        return None, None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _previously_posted(queue_id, company_id):
+    """A record of this exact content having been posted before, or None."""
+    try:
+        from database.import_history_db import find_completed_import
+        _, fingerprint = _queued_content(queue_id, company_id)
+        return find_completed_import(company_id, fingerprint)
+    except Exception:
+        # The duplicate check is a safeguard, never a blocker.
+        return None
+
+
+def _queued_row_count(queue_id, company_id):
+    """How many rows this queue entry holds, without loading its JSON twice."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT json_data FROM import_queue WHERE id = ? AND company_id = ?",
+            (queue_id, company_id))
+        row = cursor.fetchone()
+        if not row:
+            return 0
+        data = json.loads(row[0])
+        return len(data) if isinstance(data, list) else 1
+    except Exception:
+        # Never let the size check be the reason an import cannot start; fall
+        # back to running it inline.
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _run_import_job(app, queue_id, company_id, active_location, job_id):
+    """Run an import on a worker thread.
+
+    The work itself is unchanged - it simply runs inside a request context
+    built for it, carrying the company and location resolved from the real
+    request, so nothing in the import has to know it is off-request.
+    """
+    from flask import session
+
+    _import_job.set(job_id)
+    with app.test_request_context():
+        session["company_id"] = company_id
+        if active_location:
+            session["active_location"] = active_location
+        response = _perform_upload_import(queue_id)
+        body = response[0] if isinstance(response, tuple) else response
+        status = response[1] if isinstance(response, tuple) else 200
+        payload = body.get_json()
+        if not payload.get("success"):
+            # A failed import is a failed job, so the screen reports it as one.
+            raise RuntimeError(payload.get("message") or "The import failed.")
+        payload["status_code"] = status
+        return payload
+
+
+def _perform_upload_import(id):
     company_id = get_current_company_id()
     conn = None
+    # How far a batched voucher import got, so a failure can say so exactly.
+    rows_committed = 0
+    total_rows = 0
     try:
         # 1. Get Queue Entry
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT json_data, voucher_type, validation_status FROM import_queue WHERE id = ? AND company_id = ?",
+            "SELECT json_data, voucher_type, validation_status, file_name FROM import_queue WHERE id = ? AND company_id = ?",
             (id, company_id),
         )
         result = cursor.fetchone()
@@ -853,7 +1112,7 @@ def upload_import(id):
                 {"success": False, "message": "Queue entry not found"}
             ), 404
 
-        json_data, import_type, validation_status = result
+        json_data, import_type, validation_status, file_name_for_history = result
         print(
             f"Uploading queue entry id={id}: "
             f"json_data_len={len(json_data)}, import_type={import_type}, status={validation_status}"
@@ -1340,7 +1599,36 @@ def upload_import(id):
                 
                 from database import calculate_weighted_average_price, recalculate_running_balance_for_item, recompute_ledger_closing_balances
 
-                for voucher in import_data:
+                total_rows = len(import_data)
+                # An interrupted import left its place here. Those rows are
+                # already committed, so posting them again would duplicate
+                # them.
+                already_done = _resume_point(id, company_id)
+                if already_done >= total_rows:
+                    already_done = 0            # nothing left to skip
+                if already_done:
+                    print(f'Resuming import {id} after row {already_done}')
+                    _report_progress(already_done, total_rows)
+
+                # The recalculation below has to cover the whole file, not only
+                # the part posted in this run: a resumed import's earlier rows
+                # were committed by a run that failed before it could recalculate
+                # anything, so their items still need it.
+                for _v in import_data:
+                    _d = _v.get('date')
+                    if _d and (not earliest_date or _d < earliest_date):
+                        earliest_date = _d
+                    for _ie in _v.get('item_entries', []):
+                        if _ie.get('item_name'):
+                            affected_items.add(_ie['item_name'])
+
+                for row_index, voucher in enumerate(import_data, start=1):
+                    if row_index <= already_done:
+                        continue
+                    # Often enough to watch, rarely enough that the status write
+                    # is not a cost of its own.
+                    if row_index % 100 == 0 or row_index == total_rows:
+                        _report_progress(row_index, total_rows)
                     # Collect items for batch recalculation
                     v_date = voucher.get("date")
                     if not earliest_date or v_date < earliest_date:
@@ -1427,8 +1715,31 @@ def upload_import(id):
                         db_connection=conn # SHARED CONNECTION
                     )
                     success_count += 1
+                    rows_committed = row_index
+
+                    # Release the ledger locks regularly. Held for the whole
+                    # file they block every other import for as long as this
+                    # one runs.
+                    if row_index % VOUCHER_COMMIT_BATCH == 0:
+                        conn.commit()
+                        _save_resume_point(id, company_id, row_index)
 
                 message = f"Uploaded {success_count} vouchers successfully!"
+
+        # Remember what was posted, in the same transaction as the vouchers,
+        # so the history cannot claim an import that was rolled back.
+        try:
+            from database.import_history_db import (content_fingerprint,
+                                                    record_completed_import)
+            record_completed_import(
+                company_id, content_fingerprint(json_data),
+                file_name_for_history, import_type,
+                len(import_data) if isinstance(import_data, list) else 1,
+                cursor=cursor)
+        except Exception as history_error:
+            # Losing the note weakens the next check; it must not roll back
+            # work that is already correct.
+            print("Could not record the import in history: %s" % history_error)
 
         # Delete queue entry INSIDE transaction
         cursor.execute("DELETE FROM import_queue WHERE id = ? AND company_id = ?", (id, company_id))
@@ -1482,18 +1793,47 @@ def upload_import(id):
         if conn:
             conn.rollback()
             conn.close()
-        _mark_queue_failed(id, f"Upload error: {str(e)}")
-        return jsonify(
-            {"success": False, "message": f"Error uploading: {str(e)}"}
-        ), 500
+        reason = _partial_failure_reason(id, company_id, rows_committed,
+                                         total_rows, e)
+        _mark_queue_failed(id, reason)
+        return jsonify({"success": False, "message": reason}), 500
 
     except Exception as e:
         print(f"Error uploading id={id}: {str(e)}")
         if conn:
             conn.rollback()
             conn.close()
-        _mark_queue_failed(id, f"Upload error: {str(e)}")
-        return jsonify({"success": False, "message": str(e)}), 400
+        reason = _partial_failure_reason(id, company_id, rows_committed,
+                                         total_rows, e)
+        _mark_queue_failed(id, reason)
+        return jsonify({"success": False, "message": reason}), 400
+
+
+@import_bp.route("/api/import_job/<job_id>")
+@login_required
+def import_job_status(job_id):
+    """How a background import is getting on."""
+    from accounting_app import jobs
+
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({
+            "success": False,
+            "message": "That import job is no longer being tracked. Check the "
+                       "import queue and the voucher list before uploading the "
+                       "file again - it may already have been posted.",
+        }), 404
+
+    if job["status"] == "failed":
+        return jsonify({"success": False, "status": "failed",
+                        "message": job["error"] or "The import failed."}), 400
+
+    payload = {"success": True, "status": job["status"],
+               "progress": job["progress"], "description": job["description"]}
+    if job["status"] == "done":
+        payload["message"] = (job["result"] or {}).get(
+            "message", "The import finished.")
+    return jsonify(payload)
 
 
 @import_bp.route("/repair_stock_gl", methods=["POST"])

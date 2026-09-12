@@ -95,53 +95,121 @@ function uploadEntry(id, btnElement) {
         return;
     }
 
-    // UI Feedback
     const originalText = btnElement.innerText;
     btnElement.innerText = "Processing...";
     btnElement.disabled = true;
-    // Optional: Add a spinning cursor or class
     document.body.style.cursor = 'wait';
-
-    // Block UI
-    if (typeof blockUI === 'function') {
-        blockUI("Processing Upload...");
-    }
-
-    // Show instruction
+    if (typeof blockUI === 'function') blockUI("Processing Upload...");
     const instructionDiv = document.getElementById('uploadInstruction');
     if (instructionDiv) instructionDiv.style.display = 'block';
 
-    fetch(`/upload_import/${id}`, {
-        method: "POST",
-    })
-    .then(response => response.json())
-    .then(data => {
+    function finish(ok, message) {
         document.body.style.cursor = 'default';
         if (typeof unblockUI === 'function') unblockUI();
-        
-        console.log("Upload response for id", id, JSON.stringify(data));
-        if (data.success) {
-            alert(data.message);
+        setImportProgress(id, null);
+        if (ok) {
+            alert(message);
             location.reload();
-        } else {
-            alert("Upload failed: " + data.message);
-            // Reset button state
-            btnElement.innerText = originalText;
-            btnElement.disabled = false;
-            if (instructionDiv) instructionDiv.style.display = 'none';
+            return;
         }
-    })
-    .catch(error => {
-        document.body.style.cursor = 'default';
-        if (typeof unblockUI === 'function') unblockUI();
-
-        console.error("Error uploading id", id, error);
-        alert("Error: " + error);
-        // Reset button state
+        alert("Upload failed: " + message);
         btnElement.innerText = originalText;
         btnElement.disabled = false;
         if (instructionDiv) instructionDiv.style.display = 'none';
-    });
+    }
+
+    post(false);
+
+    function post(confirmDuplicate) {
+    fetch(`/upload_import/${id}` + (confirmDuplicate ? '?confirm_duplicate=1' : ''),
+          { method: "POST" })
+        .then(response => response.json().then(data => ({ ok: response.ok, data })))
+        .then(({ ok, data }) => {
+            // The same content has been posted before. Ask rather than either
+            // silently duplicating it or refusing a genuine re-import.
+            if (data.duplicate) {
+                document.body.style.cursor = 'default';
+                if (typeof unblockUI === 'function') unblockUI();
+                if (confirm(data.message + "\n\nPost it again anyway?")) {
+                    if (typeof blockUI === 'function') blockUI("Processing Upload...");
+                    post(true);
+                } else {
+                    finish(false, "Import cancelled - nothing was posted.");
+                }
+                return;
+            }
+            if (!ok && !data.background) { finish(false, data.message || "Unknown error"); return; }
+            // A large import outlives the request: the server answers with a job
+            // to follow rather than making the browser hold the connection open
+            // for the whole run.
+            if (data.background && data.job_id) {
+                if (typeof unblockUI === 'function') unblockUI();
+                document.body.style.cursor = 'default';
+                btnElement.innerText = "Importing...";
+                followImportJob(data.job_id, id, finish);
+                return;
+            }
+            finish(!!data.success, data.message || "Unknown error");
+        })
+        .catch(error => {
+            console.error("Error uploading id", id, error);
+            finish(false, String(error));
+        });
+    }
+}
+
+// Show progress on the row itself, so the rest of the screen stays usable.
+function setImportProgress(id, text) {
+    const row = document.querySelector(`tr[data-id="${id}"]`);
+    let cell = document.getElementById(`import-progress-${id}`);
+    if (!text) { if (cell) cell.remove(); return; }
+    if (!cell) {
+        cell = document.createElement('div');
+        cell.id = `import-progress-${id}`;
+        cell.className = 'import-progress';
+        cell.setAttribute('role', 'status');
+        const anchor = row || document.querySelector('main') || document.body;
+        (row ? row.lastElementChild || anchor : anchor).appendChild(cell);
+    }
+    cell.textContent = text;
+}
+
+function followImportJob(jobId, id, finish) {
+    let misses = 0;
+    setImportProgress(id, "Starting...");
+    const timer = setInterval(() => {
+        fetch(`/api/import_job/${jobId}`)
+            .then(r => r.json().then(data => ({ status: r.status, data })))
+            .then(({ status, data }) => {
+                if (status === 404) {
+                    // Losing track of the job does not mean the import failed -
+                    // say so plainly rather than inviting a second upload.
+                    clearInterval(timer);
+                    finish(false, data.message);
+                    return;
+                }
+                misses = 0;
+                if (data.status === 'failed' || data.success === false) {
+                    clearInterval(timer);
+                    finish(false, data.message || "The import failed.");
+                    return;
+                }
+                if (data.status === 'done') {
+                    clearInterval(timer);
+                    finish(true, data.message || "The import finished.");
+                    return;
+                }
+                setImportProgress(id, data.progress || "Working...");
+            })
+            .catch(() => {
+                // A blip in the network must not be read as a failed import.
+                if (++misses >= 10) {
+                    clearInterval(timer);
+                    finish(false, "Lost contact with the server while importing. "
+                        + "Check the voucher list before uploading again.");
+                }
+            });
+    }, 3000);
 }
 </script>
 

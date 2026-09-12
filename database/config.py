@@ -1,6 +1,7 @@
 import os
 import atexit
 import threading
+import time
 
 import psycopg2
 from psycopg2 import pool as pg_pool
@@ -40,16 +41,28 @@ class PGCursorWrapper:
         self.cursor = cursor
 
     def execute(self, query, vars=None):
-        if vars:
-            query = query.replace('?', '%s')
-            return self.cursor.execute(query, vars)
-        return self.cursor.execute(query)
+        from accounting_app.performance import record_query
+        from database.request_cache import clear
+        if not query.lstrip().upper().startswith(('SELECT', 'SHOW', 'EXPLAIN')):
+            clear()
+        started = time.perf_counter()
+        try:
+            if vars is not None:
+                return self.cursor.execute(query.replace('?', '%s'), vars)
+            return self.cursor.execute(query)
+        finally:
+            record_query(query, time.perf_counter() - started)
 
     def executemany(self, query, vars_list):
-        if vars_list:
-            query = query.replace('?', '%s')
-            return self.cursor.executemany(query, vars_list)
-        return self.cursor.executemany(query)
+        from psycopg2.extras import execute_batch
+        from accounting_app.performance import record_query
+        from database.request_cache import clear
+        clear()
+        started = time.perf_counter()
+        try:
+            return execute_batch(self.cursor, query.replace('?', '%s'), vars_list, page_size=200)
+        finally:
+            record_query(query, time.perf_counter() - started)
 
     def fetchone(self):
         return self.cursor.fetchone()
@@ -58,7 +71,7 @@ class PGCursorWrapper:
         return self.cursor.fetchall()
 
     def fetchmany(self, size=None):
-        return self.cursor.fetchmany(size)
+        return self.cursor.fetchmany() if size is None else self.cursor.fetchmany(size)
 
     @property
     def rowcount(self):
@@ -107,7 +120,11 @@ class PGConnectionWrapper:
         mid-transaction would carry that transaction into whoever borrows it
         next.
         """
-        release_connection(self.conn)
+        conn = self.conn
+        if conn is None:
+            return
+        self.conn = None
+        release_connection(conn)
 
     def execute(self, query, vars=None):
         # Helper for direct connection execution (shorthand)
@@ -136,13 +153,16 @@ def _pool_size(name, default):
 
 
 DB_POOL_MIN = _pool_size("DB_POOL_MIN", 1)
-DB_POOL_MAX = _pool_size("DB_POOL_MAX", 10)
+DB_POOL_MAX = max(DB_POOL_MIN, _pool_size("DB_POOL_MAX", 10))
 
 _pool = None
 _pool_lock = threading.Lock()
 
 
 def _connect_kwargs():
+    if _database_url:
+        # Let libpq decode credentials and preserve URL options such as sslmode.
+        return dict(dsn=_database_url, cursor_factory=DictCursor)
     return dict(host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER,
                 password=DB_PASSWORD, cursor_factory=DictCursor)
 
@@ -200,30 +220,27 @@ def close_pool():
 atexit.register(close_pool)
 
 
+class PoolBusy(RuntimeError):
+    pass
+
+
 def get_connection():
-    """Get a PostgreSQL connection from the pool."""
-    try:
-        conn = _get_pool().getconn()
-        # A pooled connection can have died since it was last used (idle
-        # timeout, server restart). Swap it for a fresh one rather than
-        # handing back something that will fail on first use.
-        if getattr(conn, "closed", 0):
-            try:
-                _get_pool().putconn(conn, close=True)
-            except Exception:
-                pass
-            conn = psycopg2.connect(**_connect_kwargs())
-        return PGConnectionWrapper(conn)
-    except pg_pool.PoolError as e:
-        # Pool exhausted: fall back to a direct connection so a burst of
-        # traffic degrades in speed rather than failing outright.
-        print(f"[DB CONFIG] pool exhausted ({e}) - opening a direct connection")
+    """Bounded acquisition; never open an untracked overflow connection."""
+    deadline = time.monotonic() + 2.0
+    while True:
         try:
-            return PGConnectionWrapper(psycopg2.connect(**_connect_kwargs()))
+            pool = _get_pool()
+            conn = pool.getconn()
+            if getattr(conn, 'closed', 0):
+                pool.putconn(conn, close=True)
+                conn = pool.getconn()
+            return PGConnectionWrapper(conn)
+        except pg_pool.PoolError as exc:
+            if time.monotonic() >= deadline:
+                raise PoolBusy('The database is busy. Please retry shortly.') from exc
+            time.sleep(0.02)
         except psycopg2.Error as exc:
             raise RuntimeError(_connect_error(exc)) from exc
-    except psycopg2.Error as e:
-        raise RuntimeError(_connect_error(e)) from e
 
 
 def _connect_error(e):

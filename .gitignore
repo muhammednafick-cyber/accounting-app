@@ -57,3 +57,10 @@ sales_by_customer_*.xlsx
 parsed_invoice_*.xlsx
 static/generated/
 data/
+
+# Deployment runbook: contains the live server's address and access details.
+# It lives on the machine and on the server, not in a public repository.
+DEPLOYMENT.md
+
+# Test runner cache
+.pytest_cache/

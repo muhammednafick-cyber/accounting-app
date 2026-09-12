@@ -15,30 +15,38 @@
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     {% block extra_head %}{% endblock %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}?v=20260912_3">
 </head>
 
-<body>
+<body class="{% if current_user.is_authenticated %}app-shell{% else %}public-shell{% endif %}" data-company-id="{{ session.get('company_id', '') }}" data-user-id="{{ current_user.id if current_user.is_authenticated else '' }}" data-currency="{{ company.currency_code if company and company.currency_code else 'AED' }}">
+    <a href="#main-content" class="skip-link">Skip to content</a>
     <!-- Global Overlay -->
-    <div id="uploadOverlay">
+    <div id="uploadOverlay" role="status" aria-live="polite" aria-label="Operation in progress">
         <div class="spinner"></div>
         <div class="message">Uploading in progress...</div>
         <div class="sub-message">Please wait. Do not close or refresh this tab.<br>You can open a new tab to continue
             working.</div>
     </div>
 
-    <nav class="navbar">
+    {% if current_user.is_authenticated %}
+    <header class="app-topbar">
+        <button type="button" id="sidebarToggle" class="icon-button" aria-label="Toggle navigation" aria-controls="appSidebar" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <div class="topbar-title">{{ self.title() }}</div>
+        <a class="company-link" href="{{ url_for('company_bp.company_gateway') }}">{{ session.get('company_name', 'Select company') }} <span aria-hidden="true">↗</span></a>
+    </header>
+    <button class="sidebar-backdrop" id="sidebarBackdrop" type="button" aria-label="Close navigation" hidden></button>
+    {% endif %}
+    <nav class="navbar app-sidebar" id="appSidebar" aria-label="Main navigation">
         <div class="nav-brand">
-            <h1>📊 Accounting App</h1>
+            <a class="brand-link" href="{{ url_for('dashboard_bp.dashboard') }}"><span class="brand-mark" aria-hidden="true">P</span><span>Prodata<small>Accounting workspace</small></span></a>
             {% if session.get('company_name') %}
             <span class="company-badge">{{ session.get('company_name') }}</span>
             {% endif %}
             {% if current_user.is_authenticated and switcher_locations %}
-            <form method="POST" action="{{ url_for('company_bp.set_active_location') }}" class="location-switcher"
-                style="display:inline-flex; align-items:center; gap:5px; margin-left:12px;">
+            <form method="POST" action="{{ url_for('company_bp.set_active_location') }}" class="location-switcher">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-                <span title="Active Location" style="font-size:14px;">📍</span>
-                <select name="location_name" onchange="this.form.submit()" title="Switch Active Location"
-                    style="max-width:180px; padding:2px 6px; border-radius:4px; font-size:13px;">
+                <label for="activeLocationSelect">Active location</label>
+                <select id="activeLocationSelect" name="location_name" onchange="this.form.submit()">
                     {% for loc in switcher_locations %}
                     <option value="{{ loc.location_name }}" {% if loc.location_name == active_location %}selected{% endif %}>
                         {{ loc.location_name }}</option>
@@ -55,9 +63,9 @@
             {% endif %}
 
             {% if can_access('accounting_master') %}
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle">Accounting Master</a>
-                <ul class="dropdown-menu">
+            <li class="sidebar-group">
+                <button type="button" class="sidebar-toggle" aria-expanded="false">Accounting Master<span aria-hidden="true">⌄</span></button>
+                <ul class="sidebar-children">
                     {% if can_access('accounting_master.chart_of_accounts') %}
                     <li><a href="{{ url_for('master_bp.chart_of_accounts') }}">Chart of Accounts</a></li>
                     {% endif %}
@@ -83,14 +91,14 @@
             {% endif %}
 
             {% if can_access('modules') %}
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle">Modules</a>
-                <ul class="dropdown-menu">
+            <li class="sidebar-group">
+                <button type="button" class="sidebar-toggle" aria-expanded="false">Modules<span aria-hidden="true">⌄</span></button>
+                <ul class="sidebar-children">
                     <!-- Fixed Assets Submenu -->
                     {% if can_access('modules.fixed_assets') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Fixed Assets</a>
-                        <ul class="dropdown-menu">
+                    <li class="sidebar-group">
+                        <button type="button" class="sidebar-toggle" aria-expanded="false">Fixed Assets<span aria-hidden="true">⌄</span></button>
+                        <ul class="sidebar-children">
                             <li><a href="{{ url_for('fixed_asset_bp.assets') }}">Asset Register</a></li>
                             <li><a href="{{ url_for('fixed_asset_bp.add_asset') }}">New Asset</a></li>
                             <li><a href="{{ url_for('fixed_asset_bp.run_depreciation') }}">Run Depreciation</a></li>
@@ -100,9 +108,9 @@
 
                     <!-- Recurring Entries Submenu -->
                     {% if can_access('modules.recurring') %}
-                    <li class="dropdown-submenu">
-                        <a href="#" class="dropdown-toggle">Recurring</a>
-                        <ul class="dropdown-menu">
+                    <li class="sidebar-group">
+                        <button type="button" class="sidebar-toggle" aria-expanded="false">Recurring<span aria-hidden="true">⌄</span></button>
+                        <ul class="sidebar-children">
                             <li><a href="{{ url_for('recurring_bp.templates') }}">Templates</a></li>
                             <li><a href="{{ url_for('recurring_bp.add_template') }}">New Template</a></li>
                             <li><a href="{{ url_for('recurring_bp.process_entries') }}">Process Due Entries</a></li>
@@ -120,9 +128,9 @@
             {% endif %}
 
             {% if company and company.inventory_applicable == 1 and can_access('inventory_master') %}
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle">Inventory Master</a>
-                <ul class="dropdown-menu">
+            <li class="sidebar-group">
+                <button type="button" class="sidebar-toggle" aria-expanded="false">Inventory Master<span aria-hidden="true">⌄</span></button>
+                <ul class="sidebar-children">
                     {% if can_access('inventory_master.inventory_groups') %}
                     <li><a href="{{ url_for('master_bp.manage_inventory_groups') }}">Manage Inventory Groups</a></li>
                     {% endif %}
@@ -151,9 +159,9 @@
             {% endif %}
 
             {% if can_access('print') %}
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle">Print</a>
-                <ul class="dropdown-menu">
+            <li class="sidebar-group">
+                <button type="button" class="sidebar-toggle" aria-expanded="false">Print<span aria-hidden="true">⌄</span></button>
+                <ul class="sidebar-children">
                     <li><a href="{{ url_for('print_bp.print_documents') }}">Print Documents</a></li>
                     {% if can_access('print.jv_print') %}
                     <li><a href="{{ url_for('print_bp.print_jv') }}">JV print</a></li>
@@ -167,9 +175,9 @@
             {% endif %}
 
             {% if can_access('setup') %}
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle">Setup</a>
-                <ul class="dropdown-menu">
+            <li class="sidebar-group">
+                <button type="button" class="sidebar-toggle" aria-expanded="false">Setup<span aria-hidden="true">⌄</span></button>
+                <ul class="sidebar-children">
                     {% if can_access('setup.company_settings') %}
                     <li><a href="{{ url_for('company_bp.company_settings') }}">Company Settings</a></li>
                     {% endif %}
@@ -191,9 +199,9 @@
             {% endif %}
 
             {% if current_user.is_admin %}
-            <li class="dropdown">
-                <a href="#" class="dropdown-toggle">Admin</a>
-                <ul class="dropdown-menu">
+            <li class="sidebar-group">
+                <button type="button" class="sidebar-toggle" aria-expanded="false">Admin<span aria-hidden="true">⌄</span></button>
+                <ul class="sidebar-children">
                     <li><a href="{{ url_for('ai_settings_bp.ai_settings') }}">AI Settings</a></li>
                     <li><a href="{{ url_for('auth_bp.admin_management') }}">Admin Management</a></li>
                 </ul>
@@ -291,12 +299,12 @@
         {% endif %}
     </nav>
 
-    <main class="main-content">
+    <main class="main-content" id="main-content" tabindex="-1">
         {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         <div class="flash-messages">
             {% for category, message in messages %}
-            <div class="alert alert-{{ 'success' if category == 'success' else 'danger' }}">
+            <div role="{{ 'alert' if category in ['error', 'danger'] else 'status' }}" class="alert alert-{{ category if category in ['success', 'warning', 'info'] else 'danger' }}">
                 {{ message }}
             </div>
             {% endfor %}
@@ -388,7 +396,7 @@
     {% endif %}
 
     <footer class="footer">
-        <p>&copy; 2025 Accounting App. All rights reserved.</p>
+        <p>Prodata · Accounting workspace</p>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -398,6 +406,9 @@
          app - including rows added later - without each page opting in.
          Does nothing on pages that do not use Select2. -->
     <script src="{{ url_for('static', filename='select2_keyboard.js') }}?v=20260829"></script>
+<div id="uiStatus" class="ui-status" role="status" aria-live="polite" hidden></div>
+    <script src="{{ url_for('static', filename='ui.js') }}?v=20260911" defer></script>
+    <script src="{{ url_for('static', filename='forms.js') }}?v=20260912" defer></script>
 </body>
 
 </html>

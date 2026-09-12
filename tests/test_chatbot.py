@@ -23,14 +23,11 @@ class TestChatbotIntents(unittest.TestCase):
         self.assertIn("1000.00", result['response'])
         mock_get_ledgers.assert_called_with(group_code='G005', company_id=1)
 
-    @patch('accounting_app.chatbot_service.get_stock_movement_data')
+    @patch('accounting_app.chatbot_service.get_item_closing_stock')
     @patch('accounting_app.chatbot_service.get_items')
-    def test_get_stock_status(self, mock_items, mock_movement):
+    def test_get_stock_status(self, mock_items, mock_closing):
         mock_items.return_value = [{'item_code': 'I001', 'name': 'Item A'}]
-        # mock movement: date, vn, vt, in, out, run_qty, wap, run_val
-        mock_movement.return_value = [
-            ('2023-01-01', 'VN1', 'Purchase', 10, 0, 10, 100, 1000)
-        ]
+        mock_closing.return_value = (10, 1000)
         
         parsed_data = {
             "intent": "get_stock_status",
@@ -38,7 +35,9 @@ class TestChatbotIntents(unittest.TestCase):
             "explanation": "test"
         }
         result = execute_intent(parsed_data, company_id=1)
-        self.assertIn("Current stock of Item A is 10", result['response'])
+        self.assertIn("Stock of Item A: Qty: 10", result['response'])
+        self.assertIn("WAP: 100.00, Total Value: 1000.00", result['response'])
+        mock_closing.assert_called_once_with('Item A', as_of_date=None, company_id=1)
 
     @patch('accounting_app.chatbot_service.get_ledger_transactions')
     @patch('accounting_app.chatbot_service.get_ledgers')

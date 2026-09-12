@@ -44,6 +44,10 @@ echo   Starting the app at http://localhost:5000
 echo ============================================================
 echo.
 
+rem Local development: the auto-reloader and debugger are opt-in now, so
+rem that a server which forgets this variable cannot expose them.
+set FLASK_DEBUG=1
+
 python app.py
 if %ERRORLEVEL% NEQ 0 (
     echo.
