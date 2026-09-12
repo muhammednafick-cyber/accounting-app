@@ -142,8 +142,13 @@ class CatalogueTests(unittest.TestCase):
             return rpc(self.client, "tools/list").get_json()["result"]["tools"]
 
     def test_an_administrator_sees_every_tool(self):
+        # Every read-only question, plus the one tool that suggests a voucher.
         from accounting_app.chat_toolkit import TOOLS
-        self.assertEqual(len(self._tools_for(user(admin=True))), len(TOOLS))
+        names = {t[chr(34)+'name'+chr(34)] if False else t['name']
+                 for t in self._tools_for(user(admin=True))}
+        self.assertEqual(len(names), len(TOOLS) + 1)
+        self.assertIn('propose_voucher', names)
+        self.assertTrue(set(TOOLS) <= names)
 
     def test_a_reports_only_user_does_not_see_user_management(self):
         names = {t["name"] for t in self._tools_for(user("reports"))}
@@ -553,3 +558,67 @@ class RefusalLogSafetyTests(unittest.TestCase):
     def test_the_length_is_still_reported(self):
         written = self._logged_for("Bearer abc")
         self.assertIn("10 chars", written)
+
+
+class ProposeToolTests(unittest.TestCase):
+    """The only tool that is not a question, and the permission around it."""
+
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+        for target, value in (("_caller", (7, 1)),):
+            p = patch.object(mcp_routes, target, return_value=value)
+            p.start(); self.addCleanup(p.stop)
+        p = patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0))
+        p.start(); self.addCleanup(p.stop)
+        p = patch.object(mcp_routes, "_log_call")
+        p.start(); self.addCleanup(p.stop)
+
+    def _tools_for(self, u):
+        from accounting_app import chat_permissions as permissions
+        with patch.object(permissions, "_user", return_value=u):
+            return {t["name"] for t in
+                    rpc(self.client, "tools/list").get_json()["result"]["tools"]}
+
+    def test_a_voucher_user_is_offered_the_propose_tool(self):
+        self.assertIn("propose_voucher", self._tools_for(user("vouchers")))
+
+    def test_a_reports_only_user_is_not_offered_it(self):
+        # An agent must not become a way to post for someone who cannot.
+        self.assertNotIn("propose_voucher", self._tools_for(user("reports")))
+
+    def test_a_user_with_nothing_is_not_offered_it(self):
+        self.assertNotIn("propose_voucher", self._tools_for(user()))
+
+    def test_calling_it_without_the_permission_is_refused(self):
+        from accounting_app import chat_permissions as permissions
+        with patch.object(permissions, "_user", return_value=user("reports")):
+            body = rpc(self.client, "tools/call", {
+                "name": "propose_voucher", "arguments": {}}).get_json()
+        self.assertTrue(body["result"]["isError"])
+        self.assertIn("permission", body["result"]["content"][0]["text"].lower())
+
+    def test_a_valid_proposal_says_nothing_was_posted(self):
+        from accounting_app import chat_permissions as permissions
+        with patch.object(permissions, "_user", return_value=user("vouchers")), \
+             patch("accounting_app.agent_proposals.propose_voucher",
+                   return_value=(42, "Payment dated 2026-03-01, 100.00")):
+            body = rpc(self.client, "tools/call", {
+                "name": "propose_voucher",
+                "arguments": {"voucher_type": "Payment", "date": "2026-03-01",
+                              "ledger_entries": []}}).get_json()
+        text = body["result"]["content"][0]["text"]
+        self.assertIn("#42", text)
+        self.assertIn("Nothing has been posted", text)
+        self.assertNotIn("isError", str(body["result"].get("isError", "")))
+
+    def test_a_malformed_proposal_explains_itself_to_the_agent(self):
+        from accounting_app import chat_permissions as permissions
+        from accounting_app.agent_proposals import ProposalRejected
+        with patch.object(permissions, "_user", return_value=user("vouchers")), \
+             patch("accounting_app.agent_proposals.propose_voucher",
+                   side_effect=ProposalRejected("The entry does not balance.")):
+            body = rpc(self.client, "tools/call", {
+                "name": "propose_voucher", "arguments": {}}).get_json()
+        self.assertTrue(body["result"]["isError"])
+        self.assertIn("does not balance", body["result"]["content"][0]["text"])

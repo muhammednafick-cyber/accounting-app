@@ -370,6 +370,9 @@ def create_app():
     # same reason as the phone app: it carries a bearer token, not a
     # cookie, so there is no cross-site request to forge.
     # Where a person creates the token their own agent connects with.
+    # Vouchers an agent suggested, waiting for a person to approve.
+    from .agent_proposal_routes import agent_proposal_bp
+    app.register_blueprint(agent_proposal_bp)
     from .agent_access_routes import agent_access_bp
     app.register_blueprint(agent_access_bp)
     from .mcp_routes import mcp_bp

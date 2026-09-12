@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Agent Proposals{% endblock %}
+
+{% block extra_head %}
+<style>
+    .proposal-intro { max-width: 64ch; color: var(--ink-muted); margin-bottom: 22px; }
+    .proposal {
+        border: 1px solid var(--border, #d8ded9); border-radius: 10px;
+        background: #fff; padding: 18px 20px; margin-bottom: 16px;
+    }
+    .proposal-head {
+        display: flex; justify-content: space-between; align-items: baseline;
+        gap: 16px; flex-wrap: wrap; margin-bottom: 12px;
+    }
+    .proposal-head strong { font-size: 15px; }
+    .proposal-when { font-size: 12px; color: var(--ink-muted); }
+    .proposal table { width: 100%; font-size: 13.5px; margin-bottom: 12px; }
+    .proposal th {
+        text-align: left; font-size: 10.5px; letter-spacing: .06em;
+        text-transform: uppercase; color: var(--ink-muted); font-weight: 600;
+        border-bottom: 1px solid #e3e8e4; padding: 6px 8px;
+    }
+    .proposal td { padding: 7px 8px; border-bottom: 1px solid #f0f3f1; }
+    .proposal td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .proposal tfoot td {
+        font-weight: 600; border-bottom: 0; border-top: 1px solid #cfdad4;
+    }
+    .proposal-narration {
+        font-size: 13px; color: #3c4a46; margin-bottom: 14px;
+        padding: 10px 12px; background: #f6f8f7; border-radius: 6px;
+    }
+    .proposal-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .proposal-actions input[type=text] { flex: 1 1 220px; }
+    .decided { font-size: 13px; }
+    .decided td { padding: 8px 10px; border-bottom: 1px solid #f0f3f1; }
+    .pill {
+        display: inline-block; padding: 2px 8px; border-radius: 3px;
+        font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase;
+        font-weight: 600;
+    }
+    .pill-approved { background: #e4efe9; color: #1f5f4a; }
+    .pill-rejected { background: #eceff0; color: #5d6b66; }
+    .pill-failed { background: #fbeae8; color: #9d2a20; }
+    .warn-note {
+        border: 1px solid #ead6ae; background: #fff9ee; border-radius: 10px;
+        padding: 16px 20px; margin-bottom: 24px; font-size: 12.5px;
+        color: #714b19; max-width: 74ch;
+    }
+    .warn-note strong { display: block; margin-bottom: 4px; font-size: 13px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content">
+    <h1>Agent Proposals</h1>
+
+    <p class="proposal-intro">
+        Vouchers an AI assistant has suggested. Nothing here has been posted.
+        Read each one, and approve it only if it is exactly what you want in the
+        books.
+    </p>
+
+    <div class="warn-note">
+        <strong>Check these as carefully as a voucher someone handed you</strong>
+        An assistant can misunderstand what you asked for, and it reads
+        narrations and party names that came from suppliers' own files. Approving
+        posts the entry for real, through the same rules as typing it yourself.
+    </div>
+
+    <div class="section">
+        <h3>Waiting for you{% if pending %} ({{ pending|length }}){% endif %}</h3>
+
+        {% if not pending %}
+        <p class="proposal-intro">Nothing waiting.</p>
+        {% endif %}
+
+        {% for proposal in pending %}
+        <div class="proposal">
+            <div class="proposal-head">
+                <strong>#{{ proposal.id }} · {{ proposal.payload.voucher_type }}
+                    dated {{ proposal.payload.date }}</strong>
+                <span class="proposal-when">
+                    suggested {{ proposal.created_at.strftime('%d-%m-%Y %H:%M') }}
+                </span>
+            </div>
+
+            {% if proposal.payload.narration %}
+            <div class="proposal-narration">{{ proposal.payload.narration }}</div>
+            {% endif %}
+
+            <table>
+                <thead>
+                    <tr><th>Ledger</th><th style="text-align:right">Debit</th>
+                        <th style="text-align:right">Credit</th></tr>
+                </thead>
+                <tbody>
+                    {% for line in proposal.payload.ledger_entries %}
+                    <tr>
+                        <td>{{ line.ledger_name }}</td>
+                        <td class="num">
+                            {% if line.type == 'Debit' %}{{ '%.2f'|format(line.amount) }}{% endif %}
+                        </td>
+                        <td class="num">
+                            {% if line.type == 'Credit' %}{{ '%.2f'|format(line.amount) }}{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td>Total</td>
+                        <td class="num">{{ '%.2f'|format(proposal.payload.totals.debit) }}</td>
+                        <td class="num">{{ '%.2f'|format(proposal.payload.totals.credit) }}</td>
+                    </tr>
+                </tfoot>
+            </table>
+
+            {# A submit button carries its own name and value, so which button
+               was pressed arrives in the form data without any script. Setting
+               it from JavaScript would have needed form.elements['action'] -
+               form.action is the URL, not the field. #}
+            <form method="POST" class="proposal-actions"
+                  action="{{ url_for('agent_proposal_bp.decide', proposal_id=proposal.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                <input type="text" name="note" maxlength="300"
+                       placeholder="Note (optional, kept with the decision)">
+                <button type="submit" name="action" value="approve" class="btn"
+                        onclick="return confirm('Post this voucher to the books for real?');">
+                    Approve and post
+                </button>
+                <button type="submit" name="action" value="reject" class="btn btn-danger">
+                    Reject
+                </button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if decided %}
+    <div class="section">
+        <h3>Recently decided</h3>
+        <table class="decided">
+            <thead>
+                <tr><th>#</th><th>What</th><th>Outcome</th><th>Posted as</th><th>When</th></tr>
+            </thead>
+            <tbody>
+                {% for proposal in decided %}
+                <tr>
+                    <td>{{ proposal.id }}</td>
+                    <td>{{ proposal.summary }}</td>
+                    <td>
+                        <span class="pill pill-{{ proposal.status }}">{{ proposal.status }}</span>
+                        {% if proposal.decision_note %}
+                        <div class="proposal-when">{{ proposal.decision_note }}</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ proposal.voucher_number or '—' }}</td>
+                    <td class="proposal-when">
+                        {{ proposal.decided_at.strftime('%d-%m-%Y %H:%M') if proposal.decided_at else '' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

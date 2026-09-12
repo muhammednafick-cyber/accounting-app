@@ -124,6 +124,63 @@ def _describe(tool):
     }
 
 
+# The only tool that is not a question. It writes a suggestion to a queue,
+# never to the books, and needs the same permission as entering a voucher by
+# hand - an agent must not become a way to post for someone who could not.
+PROPOSE_TOOL = {
+    "name": "propose_voucher",
+    "description": (
+        "Suggest a voucher for a person to review and approve. This does NOT "
+        "post anything: it files a proposal that a human must approve in the "
+        "application before any entry reaches the books. Use it when the user "
+        "asks you to record something; then tell them a proposal is waiting "
+        "for their approval. Amounts must balance - total debits equal total "
+        "credits - and ledger names must match exactly (use list_ledgers)."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "voucher_type": {
+                "type": "string",
+                "description": "Payment, Receipt, Journal, Contra, Sales, "
+                               "Purchase, or another type this company uses.",
+            },
+            "date": {"type": "string", "description": "The date, as YYYY-MM-DD."},
+            "narration": {
+                "type": "string",
+                "description": "A short note explaining the entry.",
+            },
+            "ledger_entries": {
+                "type": "array",
+                "description": "The lines. Debits must equal credits.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ledger_name": {"type": "string"},
+                        "type": {"type": "string",
+                                 "description": "Debit or Credit."},
+                        "amount": {"type": "number"},
+                    },
+                    "required": ["ledger_name", "type", "amount"],
+                },
+            },
+        },
+        "required": ["voucher_type", "date", "ledger_entries"],
+    },
+}
+
+PROPOSE_PERMISSION = "vouchers"
+
+
+def _may_propose():
+    from . import chat_permissions as permissions
+
+    user = permissions._user()
+    if user is None:
+        return False
+    return user.can_access(PROPOSE_PERMISSION)
+
+
 def _visible_tools():
     """Every tool this caller may actually run.
 
@@ -134,7 +191,10 @@ def _visible_tools():
     from .chat_toolkit import TOOLS
     from . import chat_permissions as permissions
 
-    return [_describe(TOOLS[name]) for name in permissions.allowed_tool_names()]
+    tools = [_describe(TOOLS[name]) for name in permissions.allowed_tool_names()]
+    if _may_propose():
+        tools.append(PROPOSE_TOOL)
+    return tools
 
 
 _TAG = re.compile(r"<[^>]+>")
@@ -362,6 +422,8 @@ def _call_tool(params, request_id, company_id):
     arguments = params.get("arguments") or {}
     if not name:
         return _error(request_id, INVALID_PARAMS, "A tool name is required.")
+    if name == PROPOSE_TOOL["name"]:
+        return _propose(arguments, request_id, company_id)
     if name not in TOOLS:
         return _error(request_id, INVALID_PARAMS, f"No such tool: {name}")
 
@@ -389,6 +451,44 @@ def _call_tool(params, request_id, company_id):
 
     _log_call(name, company_id, started, "ok")
     return _result(request_id, _render(result))
+
+
+def _propose(arguments, request_id, company_id):
+    """File a suggested voucher. Nothing is posted here."""
+    from .agent_proposals import ProposalRejected, propose_voucher
+
+    started = time.perf_counter()
+    if not _may_propose():
+        _log_call("propose_voucher", company_id, started, "denied")
+        return _result(request_id, {
+            "content": [{"type": "text", "text":
+                         "You do not have permission to enter vouchers, so an "
+                         "agent acting for you cannot propose one either."}],
+            "isError": True,
+        })
+
+    try:
+        proposal_id, summary = propose_voucher(
+            arguments, company_id, getattr(request, "mcp_user_id", None))
+    except ProposalRejected as rejected:
+        _log_call("propose_voucher", company_id, started, "invalid")
+        return _result(request_id, {
+            "content": [{"type": "text", "text": str(rejected)}],
+            "isError": True,
+        })
+    except Exception as exc:
+        _log_call("propose_voucher", company_id, started, "failed")
+        current_app.logger.exception("Could not file a proposal")
+        return _result(request_id, {
+            "content": [{"type": "text", "text": f"That did not work: {exc}"}],
+            "isError": True,
+        })
+
+    _log_call("propose_voucher", company_id, started, "ok")
+    return _result(request_id, {"content": [{"type": "text", "text":
+        f"Proposal #{proposal_id} filed and waiting for approval: {summary}.\n\n"
+        "Nothing has been posted. Open Agent Proposals in the application to "
+        "review and approve it."}]})
 
 
 def _log_call(tool_name, company_id, started, outcome):

@@ -212,6 +212,9 @@
                the access its owner already has, so it sits outside Setup, which
                not every user can open. #}
             <li><a href="{{ url_for('agent_access_bp.agent_access') }}">Agent Access</a></li>
+            {% if can_access('vouchers') %}
+            <li><a href="{{ url_for('agent_proposal_bp.agent_proposals') }}">Agent Proposals</a></li>
+            {% endif %}
 
             <li class="global-search">
                 <input type="search" id="globalSearch" placeholder="Search menus…  Ctrl+K"
