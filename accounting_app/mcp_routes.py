@@ -397,7 +397,12 @@ def _handle(method, params, request_id, company_id):
         version = asked if asked in SUPPORTED_VERSIONS else SUPPORTED_VERSIONS[0]
         return _result(request_id, {
             "protocolVersion": version,
-            "capabilities": {"tools": {"listChanged": False}},
+            # Not "listChanged: false" - that told clients the list was
+            # frozen and invited them to cache it for good. It is not
+            # frozen: it is filtered per token, and it grows when this
+            # server gains a tool. Claiming neither is the honest answer
+            # on a transport with no way to push a notification.
+            "capabilities": {"tools": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             "instructions": INSTRUCTIONS,
         })

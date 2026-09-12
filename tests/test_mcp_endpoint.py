@@ -622,3 +622,25 @@ class ProposeToolTests(unittest.TestCase):
                 "name": "propose_voucher", "arguments": {}}).get_json()
         self.assertTrue(body["result"]["isError"])
         self.assertIn("does not balance", body["result"]["content"][0]["text"])
+
+
+class CapabilityHonestyTests(unittest.TestCase):
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+        for t, v in (("_caller", (7, 1)),):
+            p = patch.object(mcp_routes, t, return_value=v); p.start(); self.addCleanup(p.stop)
+        p = patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0))
+        p.start(); self.addCleanup(p.stop)
+
+    def test_the_tool_list_is_not_declared_frozen(self):
+        # Declaring listChanged false told clients to cache the list for good,
+        # so a tool added later never appeared. The list is filtered per token
+        # and grows on deployment; it was never frozen.
+        caps = rpc(self.client, "initialize",
+                   {"protocolVersion": "2025-11-25"}).get_json()["result"]["capabilities"]
+        self.assertNotIn("listChanged", caps.get("tools", {}))
+
+    def test_discover_agrees(self):
+        caps = rpc(self.client, "server/discover").get_json()["result"]["capabilities"]
+        self.assertNotIn("listChanged", caps.get("tools", {}))
