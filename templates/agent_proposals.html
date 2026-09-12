@@ -89,6 +89,40 @@
             <div class="proposal-narration">{{ proposal.payload.narration }}</div>
             {% endif %}
 
+            {# The goods. A purchase approved without these records the cost and
+               receives none of the stock, so they are shown before the money. #}
+            {% if proposal.payload.item_entries %}
+            <table>
+                <thead>
+                    <tr><th>Item</th><th style="text-align:right">Quantity</th>
+                        <th style="text-align:right">Rate</th>
+                        <th style="text-align:right">Amount</th></tr>
+                </thead>
+                <tbody>
+                    {% for line in proposal.payload.item_entries %}
+                    <tr>
+                        <td>{{ line.item_name }}</td>
+                        <td class="num">{{ '%g'|format(line.quantity) }}</td>
+                        <td class="num">{{ '%.2f'|format(line.unit_price) }}</td>
+                        <td class="num">{{ '%.2f'|format(line.amount) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3">Goods</td>
+                        <td class="num">{{ '%.2f'|format(proposal.payload.totals.goods) }}</td>
+                    </tr>
+                    {% if proposal.payload.totals.vat %}
+                    <tr>
+                        <td colspan="3">VAT</td>
+                        <td class="num">{{ '%.2f'|format(proposal.payload.totals.vat) }}</td>
+                    </tr>
+                    {% endif %}
+                </tfoot>
+            </table>
+            {% endif %}
+
             <table>
                 <thead>
                     <tr><th>Ledger</th><th style="text-align:right">Debit</th>

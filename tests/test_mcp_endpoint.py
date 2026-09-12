@@ -146,8 +146,9 @@ class CatalogueTests(unittest.TestCase):
         from accounting_app.chat_toolkit import TOOLS
         names = {t[chr(34)+'name'+chr(34)] if False else t['name']
                  for t in self._tools_for(user(admin=True))}
-        self.assertEqual(len(names), len(TOOLS) + 1)
+        self.assertEqual(len(names), len(TOOLS) + 2)
         self.assertIn('propose_voucher', names)
+        self.assertIn('propose_purchase', names)
         self.assertTrue(set(TOOLS) <= names)
 
     def test_a_reports_only_user_does_not_see_user_management(self):

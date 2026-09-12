@@ -173,6 +173,57 @@ PROPOSE_TOOL = {
     },
 }
 
+PURCHASE_TOOL = {
+    "name": "propose_purchase",
+    "description": (
+        "Suggest a purchase invoice - goods bought from a supplier - for a "
+        "person to review and approve. This does NOT post anything. Give what "
+        "the invoice says: the supplier, its invoice number and date, and each "
+        "item with its quantity and unit price. The double entry is built for "
+        "you (Inventory debited, input VAT, supplier credited), so do not "
+        "supply ledger entries. Item and supplier names must match the system "
+        "exactly - use list_items and search_ledger first. If an item or "
+        "supplier does not exist, say so: they must be created in the "
+        "application, not invented here."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "supplier": {"type": "string",
+                         "description": "The supplier's exact ledger name."},
+            "date": {"type": "string", "description": "Posting date, YYYY-MM-DD."},
+            "invoice_number": {"type": "string",
+                               "description": "The supplier's invoice number."},
+            "invoice_date": {"type": "string",
+                             "description": "Date on the invoice, YYYY-MM-DD."},
+            "vat_percent": {"type": "number",
+                            "description": "VAT rate, default 5."},
+            "invoice_total": {
+                "type": "number",
+                "description": "The total printed on the invoice. Give it when "
+                               "you can read it: the lines are checked against "
+                               "it and a mismatch is refused.",
+            },
+            "narration": {"type": "string"},
+            "items": {
+                "type": "array",
+                "description": "One entry per line on the invoice.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "item_name": {"type": "string"},
+                        "quantity": {"type": "number"},
+                        "rate": {"type": "number",
+                                 "description": "Unit price before VAT."},
+                    },
+                    "required": ["item_name", "quantity", "rate"],
+                },
+            },
+        },
+        "required": ["supplier", "date", "invoice_number", "items"],
+    },
+}
+
 PROPOSE_PERMISSION = "vouchers"
 
 
@@ -198,6 +249,7 @@ def _visible_tools():
     tools = [_describe(TOOLS[name]) for name in permissions.allowed_tool_names()]
     if _may_propose():
         tools.append(PROPOSE_TOOL)
+        tools.append(PURCHASE_TOOL)
     return tools
 
 
@@ -431,8 +483,8 @@ def _call_tool(params, request_id, company_id):
     arguments = params.get("arguments") or {}
     if not name:
         return _error(request_id, INVALID_PARAMS, "A tool name is required.")
-    if name == PROPOSE_TOOL["name"]:
-        return _propose(arguments, request_id, company_id)
+    if name in (PROPOSE_TOOL["name"], PURCHASE_TOOL["name"]):
+        return _propose(arguments, request_id, company_id, kind=name)
     if name not in TOOLS:
         return _error(request_id, INVALID_PARAMS, f"No such tool: {name}")
 
@@ -462,13 +514,16 @@ def _call_tool(params, request_id, company_id):
     return _result(request_id, _render(result))
 
 
-def _propose(arguments, request_id, company_id):
-    """File a suggested voucher. Nothing is posted here."""
-    from .agent_proposals import ProposalRejected, propose_voucher
+def _propose(arguments, request_id, company_id, kind="propose_voucher"):
+    """File a suggestion. Nothing is posted here."""
+    from .agent_proposals import (ProposalRejected, propose_purchase,
+                                  propose_voucher)
+
+    file_it = propose_purchase if kind == "propose_purchase" else propose_voucher
 
     started = time.perf_counter()
     if not _may_propose():
-        _log_call("propose_voucher", company_id, started, "denied")
+        _log_call(kind, company_id, started, "denied")
         return _result(request_id, {
             "content": [{"type": "text", "text":
                          "You do not have permission to enter vouchers, so an "
@@ -477,23 +532,23 @@ def _propose(arguments, request_id, company_id):
         })
 
     try:
-        proposal_id, summary = propose_voucher(
+        proposal_id, summary = file_it(
             arguments, company_id, getattr(request, "mcp_user_id", None))
     except ProposalRejected as rejected:
-        _log_call("propose_voucher", company_id, started, "invalid")
+        _log_call(kind, company_id, started, "invalid")
         return _result(request_id, {
             "content": [{"type": "text", "text": str(rejected)}],
             "isError": True,
         })
     except Exception as exc:
-        _log_call("propose_voucher", company_id, started, "failed")
+        _log_call(kind, company_id, started, "failed")
         current_app.logger.exception("Could not file a proposal")
         return _result(request_id, {
             "content": [{"type": "text", "text": f"That did not work: {exc}"}],
             "isError": True,
         })
 
-    _log_call("propose_voucher", company_id, started, "ok")
+    _log_call(kind, company_id, started, "ok")
     return _result(request_id, {"content": [{"type": "text", "text":
         f"Proposal #{proposal_id} filed and waiting for approval: {summary}.\n\n"
         "Nothing has been posted. Open Agent Proposals in the application to "

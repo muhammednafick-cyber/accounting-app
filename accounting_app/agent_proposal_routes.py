@@ -103,18 +103,31 @@ def decide(proposal_id):
 
 
 def _post(proposal, company_id):
-    """Post through the ordinary path, so every ordinary rule applies."""
+    """Post through the ordinary path, so every ordinary rule applies.
+
+    The item lines travel with the voucher. Passing an empty list here is what
+    put two purchases in the books that recorded the cost and received none of
+    the goods; a purchase without its items is not a purchase.
+    """
     from database import add_voucher
     from .models import parse_date
 
     payload = proposal["payload"]
+    items = payload.get("item_entries") or []
+    if payload["voucher_type"] == "Purchase" and not items:
+        raise ValueError("This purchase carries no item lines and would record "
+                         "the cost without receiving the goods.")
+
     return add_voucher(
         payload["voucher_type"],
         parse_date(payload["date"]),
         payload["ledger_entries"],
-        [],
+        items,
         None,
         narration=payload.get("narration", ""),
+        original_invoice_ref=payload.get("invoice_number"),
+        original_invoice_date=(parse_date(payload["invoice_date"])
+                               if payload.get("invoice_date") else None),
         company_id=company_id,
     )
 

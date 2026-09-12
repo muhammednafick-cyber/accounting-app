@@ -146,3 +146,146 @@ def propose_voucher(payload, company_id, user_id):
     summary = describe(checked)
     proposal_id = create_proposal(company_id, user_id, "voucher", summary, checked)
     return proposal_id, summary
+
+# ---------------------------------------------------------------- purchases
+
+# A purchase moves stock as well as money, and the two must agree. Rather than
+# ask an agent to assemble the accounting - Inventory debit, VAT line, party
+# credit, in the right directions - it supplies only what an invoice actually
+# says: who sold what, how many, at what price. The double entry is built here,
+# the same shape the import queue builds, so it cannot be got wrong.
+
+MAX_ITEM_LINES = 100
+DEFAULT_VAT_PERCENT = 5.0
+INVENTORY_LEDGER = "Inventory"
+INPUT_VAT_LEDGER = "Input VAT 5%"
+
+
+def _items_for(company_id):
+    try:
+        from database import get_items
+        return {row["name"] for row in (get_items(company_id=company_id) or [])}
+    except Exception:
+        return set()
+
+
+def _ledger_names(company_id):
+    return {row["ledger_name"] for row in _ledgers(company_id)}
+
+
+def validate_purchase_proposal(payload, company_id):
+    """Turn what an invoice says into the voucher it should become."""
+    supplier = (payload.get("supplier") or "").strip()
+    if not supplier:
+        raise ProposalRejected("The supplier's ledger name is required.")
+
+    known_ledgers = _ledger_names(company_id)
+    if known_ledgers and supplier not in known_ledgers:
+        raise ProposalRejected(
+            f"There is no ledger called {supplier!r}. Use search_ledger to find "
+            "the supplier's exact name, and if they are new, create them in the "
+            "application first - an agent must not invent a supplier.")
+
+    date = (payload.get("date") or "").strip()
+    if not date:
+        raise ProposalRejected("The purchase date is required, as YYYY-MM-DD.")
+    invoice_date = (payload.get("invoice_date") or "").strip() or date
+    invoice_ref = (payload.get("invoice_number") or "").strip()
+    if not invoice_ref:
+        raise ProposalRejected(
+            "The supplier's invoice number is required on a purchase.")
+
+    rows = payload.get("items") or []
+    if not isinstance(rows, list) or not rows:
+        raise ProposalRejected(
+            "At least one item line is required. A purchase with no items "
+            "records the cost but receives none of the goods.")
+    if len(rows) > MAX_ITEM_LINES:
+        raise ProposalRejected(
+            f"{len(rows)} item lines is more than this accepts "
+            f"({MAX_ITEM_LINES}). Use the import queue for an invoice that "
+            "large, where it can be reviewed as a whole.")
+
+    known_items = _items_for(company_id)
+    items, goods_total = [], 0.0
+    for index, row in enumerate(rows, start=1):
+        name = (row.get("item_name") or "").strip()
+        if not name:
+            raise ProposalRejected(f"Item line {index} has no item name.")
+        if known_items and name not in known_items:
+            raise ProposalRejected(
+                f"Item line {index}: there is no stock item called {name!r}. "
+                "Use list_items to find the exact name. If it is genuinely new, "
+                "create it in the application first - an agent must not add "
+                "items to the master.")
+        quantity = _number(row.get("quantity"), f"Item line {index} quantity")
+        if not quantity:
+            raise ProposalRejected(f"Item line {index} has no quantity.")
+        rate = _number(row.get("rate"), f"Item line {index} rate")
+        amount = round(quantity * rate, 2)
+        goods_total += amount
+        items.append({
+            "item_name": name,
+            "quantity": quantity,
+            "unit_price": rate,
+            "amount": amount,
+            # A purchase debits Inventory; the agent does not get to choose.
+            "ledger_name": INVENTORY_LEDGER,
+            "type": "Debit",
+        })
+
+    goods_total = round(goods_total, 2)
+    vat_percent = payload.get("vat_percent")
+    vat_percent = (DEFAULT_VAT_PERCENT if vat_percent is None
+                   else _number(vat_percent, "VAT percent"))
+    vat_amount = round(goods_total * vat_percent / 100.0, 2)
+    total = round(goods_total + vat_amount, 2)
+
+    # If the invoice total is known, it is the authority: a mismatch means the
+    # lines were misread, and posting it would put a wrong figure in the books.
+    stated = payload.get("invoice_total")
+    if stated is not None:
+        stated = _number(stated, "Invoice total")
+        if abs(stated - total) > 0.05:
+            raise ProposalRejected(
+                f"The lines come to {total:,.2f} ({goods_total:,.2f} plus "
+                f"{vat_amount:,.2f} VAT) but the invoice total given is "
+                f"{stated:,.2f}. Re-read the invoice rather than posting a "
+                "figure that does not match it.")
+
+    ledger_entries = []
+    if vat_amount:
+        ledger_entries.append({"ledger_name": INPUT_VAT_LEDGER,
+                               "type": "Debit", "amount": vat_amount})
+    ledger_entries.append({"ledger_name": supplier, "type": "Credit",
+                           "amount": total})
+
+    return {
+        "voucher_type": "Purchase",
+        "date": date,
+        "supplier": supplier,
+        "invoice_number": invoice_ref,
+        "invoice_date": invoice_date,
+        "narration": (payload.get("narration")
+                      or f"Purchase Invoice {invoice_ref} from {supplier}")[:500],
+        "item_entries": items,
+        "ledger_entries": ledger_entries,
+        "totals": {"goods": goods_total, "vat": vat_amount, "debit": total,
+                   "credit": total},
+    }
+
+
+def describe_purchase(proposal):
+    lines = len(proposal["item_entries"])
+    return (f"Purchase {proposal['invoice_number']} from "
+            f"{proposal['supplier']} dated {proposal['date']}, "
+            f"{proposal['totals']['debit']:,.2f} across {lines} "
+            f"item line{'s' if lines != 1 else ''}")
+
+
+def propose_purchase(payload, company_id, user_id):
+    """File a suggested purchase, items included. Posts nothing."""
+    checked = validate_purchase_proposal(payload, company_id)
+    summary = describe_purchase(checked)
+    proposal_id = create_proposal(company_id, user_id, "purchase", summary, checked)
+    return proposal_id, summary

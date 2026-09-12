@@ -295,3 +295,133 @@ class StockVoucherTests(unittest.TestCase):
             checked = proposals.validate_voucher_proposal(
                 balanced(voucher_type="payment"), company_id=1)
         self.assertEqual(checked["voucher_type"], "Payment")
+
+
+ITEMS = {"Widget", "Gadget"}
+SUPPLIERS = [{"ledger_name": "Acme Supplies"}]
+
+
+def purchase(**overrides):
+    payload = {
+        "supplier": "Acme Supplies",
+        "date": "2026-09-12",
+        "invoice_number": "INV-900",
+        "items": [{"item_name": "Widget", "quantity": 10, "rate": 2.5}],
+    }
+    payload.update(overrides)
+    return payload
+
+
+class PurchaseProposalTests(unittest.TestCase):
+    """The agent supplies what the invoice says; the accounting is built here."""
+
+    def _check(self, payload):
+        with patch.object(proposals, "_items_for", return_value=ITEMS), \
+             patch.object(proposals, "_ledgers", return_value=SUPPLIERS):
+            return proposals.validate_purchase_proposal(payload, company_id=1)
+
+    def _reject(self, payload):
+        with self.assertRaises(ProposalRejected) as caught:
+            self._check(payload)
+        return str(caught.exception)
+
+    def test_the_double_entry_is_built_not_supplied(self):
+        # The agent never chooses which ledgers move, so it cannot put the cost
+        # in a purchase account instead of Inventory - which is what happened.
+        out = self._check(purchase())
+        self.assertEqual(out["item_entries"][0]["ledger_name"], "Inventory")
+        self.assertEqual(out["item_entries"][0]["type"], "Debit")
+        ledgers = {(l["ledger_name"], l["type"]) for l in out["ledger_entries"]}
+        self.assertIn(("Input VAT 5%", "Debit"), ledgers)
+        self.assertIn(("Acme Supplies", "Credit"), ledgers)
+
+    def test_vat_and_totals_are_computed(self):
+        out = self._check(purchase())
+        self.assertEqual(out["totals"]["goods"], 25.0)
+        self.assertEqual(out["totals"]["vat"], 1.25)
+        self.assertEqual(out["totals"]["debit"], 26.25)
+
+    def test_a_purchase_must_carry_items(self):
+        message = self._reject(purchase(items=[]))
+        self.assertIn("receives none of the goods", message)
+
+    def test_an_unknown_item_is_refused_rather_than_created(self):
+        message = self._reject(purchase(
+            items=[{"item_name": "Nonesuch", "quantity": 1, "rate": 1}]))
+        self.assertIn("Nonesuch", message)
+        self.assertIn("must not add", message)
+
+    def test_an_unknown_supplier_is_refused_rather_than_created(self):
+        message = self._reject(purchase(supplier="Some New Vendor"))
+        self.assertIn("Some New Vendor", message)
+        self.assertIn("must not invent", message)
+
+    def test_an_invoice_number_is_required(self):
+        self.assertIn("invoice number", self._reject(purchase(invoice_number="")))
+
+    def test_a_total_that_does_not_match_the_lines_is_refused(self):
+        # Reading the lines wrongly is the likeliest failure; the printed total
+        # is the check against it.
+        message = self._reject(purchase(invoice_total=999))
+        self.assertIn("does not match", message.replace("do not match", "does not match"))
+
+    def test_a_matching_total_passes(self):
+        out = self._check(purchase(invoice_total=26.25))
+        self.assertEqual(out["totals"]["debit"], 26.25)
+
+    def test_a_zero_rated_purchase_has_no_vat_line(self):
+        out = self._check(purchase(vat_percent=0))
+        self.assertEqual(out["totals"]["vat"], 0)
+        self.assertEqual(len(out["ledger_entries"]), 1)
+
+    def test_too_many_lines_go_to_the_import_queue(self):
+        lines = [{"item_name": "Widget", "quantity": 1, "rate": 1}] * 200
+        self.assertIn("import queue", self._reject(purchase(items=lines)))
+
+    def test_the_invoice_reference_reaches_the_payload(self):
+        out = self._check(purchase(invoice_date="2026-09-01"))
+        self.assertEqual(out["invoice_number"], "INV-900")
+        self.assertEqual(out["invoice_date"], "2026-09-01")
+
+
+class PurchasePostingTests(unittest.TestCase):
+    """Approval must carry the items, not an empty list."""
+
+    def setUp(self):
+        from accounting_app import create_app
+        with patch("accounting_app.initialize_db"):
+            self.app = create_app()
+        self.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+
+    def test_items_and_the_invoice_reference_reach_add_voucher(self):
+        import accounting_app.agent_proposal_routes as routes
+        payload = {
+            "voucher_type": "Purchase", "date": "2026-09-12",
+            "invoice_number": "INV-900", "invoice_date": "2026-09-01",
+            "narration": "n",
+            "item_entries": [{"item_name": "Widget", "quantity": 10,
+                              "unit_price": 2.5, "amount": 25.0,
+                              "ledger_name": "Inventory", "type": "Debit"}],
+            "ledger_entries": [{"ledger_name": "Acme Supplies",
+                                "type": "Credit", "amount": 26.25}],
+        }
+        with self.app.test_request_context(), \
+             patch("database.add_voucher", return_value="FY26-PUR-1") as posted:
+            routes._post({"payload": payload}, company_id=1)
+        args, kwargs = posted.call_args
+        self.assertEqual(len(args[3]), 1, "the item lines were not passed")
+        self.assertEqual(args[3][0]["item_name"], "Widget")
+        self.assertEqual(kwargs["original_invoice_ref"], "INV-900")
+
+    def test_a_purchase_with_no_items_is_refused_at_the_gate(self):
+        # The last line of defence: even a malformed stored proposal cannot
+        # post a purchase that receives nothing.
+        import accounting_app.agent_proposal_routes as routes
+        payload = {"voucher_type": "Purchase", "date": "2026-09-12",
+                   "item_entries": [], "ledger_entries": []}
+        with self.app.test_request_context(), \
+             patch("database.add_voucher") as posted:
+            with self.assertRaises(ValueError) as caught:
+                routes._post({"payload": payload}, company_id=1)
+        posted.assert_not_called()
+        self.assertIn("receiving the goods", str(caught.exception))
