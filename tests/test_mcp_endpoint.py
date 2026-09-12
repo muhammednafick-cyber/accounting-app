@@ -441,3 +441,115 @@ class OAuthProbeTests(unittest.TestCase):
             "/.well-known/oauth-protected-resource/mcp").get_json()
         self.assertIn("without sign-in", body["message"])
         self.assertIn("X-API-Key", body["message"])
+
+
+class RefusalLoggingTests(unittest.TestCase):
+    """Knowing what a refused caller sent must not mean logging a credential."""
+
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+
+    def _refuse_with(self, headers):
+        with patch.object(mcp_routes, "_caller", return_value=None), \
+             patch.object(self.app.logger, "warning") as logged:
+            self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+                headers={"Content-Type": "application/json", **headers})
+        return logged.call_args[0] if logged.call_args else ()
+
+    def test_the_token_value_is_never_written_to_the_log(self):
+        args = self._refuse_with({"Authorization": "Bearer super-secret-value"})
+        written = " ".join(str(a) for a in args)
+        self.assertNotIn("super-secret-value", written)
+
+    def test_the_scheme_and_length_are_recorded(self):
+        args = self._refuse_with({"Authorization": "Bearer super-secret-value"})
+        written = " ".join(str(a) for a in args)
+        self.assertIn("bearer", written)
+
+    def test_an_api_key_value_is_never_written_either(self):
+        args = self._refuse_with({"X-API-Key": "another-secret"})
+        written = " ".join(str(a) for a in args)
+        self.assertNotIn("another-secret", written)
+        self.assertIn("X-Api-Key", written.replace("x-api-key", "X-Api-Key"))
+
+    def test_a_caller_sending_nothing_is_distinguishable(self):
+        args = self._refuse_with({})
+        written = " ".join(str(a) for a in args)
+        self.assertNotIn("bearer", written)
+
+
+class BareTokenTests(unittest.TestCase):
+    """A connector that asks for a header value often sends the token alone."""
+
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+
+    def _post(self, headers):
+        with patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            return self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+                headers={"Content-Type": "application/json", **headers})
+
+    def test_a_token_without_the_bearer_prefix_is_accepted(self):
+        with patch("accounting_app.mobile_api._identify", return_value=None), \
+             patch.object(mcp_routes, "_identify_token",
+                          return_value=(7, 1)) as look_up:
+            response = self._post({"Authorization": "rawtokenvalue123"})
+        self.assertEqual(response.status_code, 200)
+        look_up.assert_called_once_with("rawtokenvalue123")
+
+    def test_a_proper_bearer_token_is_still_preferred(self):
+        with patch("accounting_app.mobile_api._identify", return_value=(7, 1)), \
+             patch.object(mcp_routes, "_identify_token") as look_up:
+            response = self._post({"Authorization": "Bearer proper-token"})
+        self.assertEqual(response.status_code, 200)
+        look_up.assert_not_called()
+
+    def test_a_wrong_bare_token_is_still_refused(self):
+        with patch("accounting_app.mobile_api._identify", return_value=None), \
+             patch.object(mcp_routes, "_identify_token", return_value=None):
+            self.assertEqual(self._post({"Authorization": "wrong"}).status_code, 401)
+
+    def test_a_malformed_scheme_is_not_treated_as_a_token(self):
+        # "Basic abc" has a space, so it is a scheme we do not accept - not a
+        # bare token that happens to contain one.
+        with patch("accounting_app.mobile_api._identify", return_value=None), \
+             patch.object(mcp_routes, "_identify_token") as look_up:
+            self._post({"Authorization": "Basic abc123"})
+        look_up.assert_not_called()
+
+
+class RefusalLogSafetyTests(unittest.TestCase):
+    """The diagnostic that found the bug had a bug: it printed the credential."""
+
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+
+    def _logged_for(self, header_value):
+        with patch.object(mcp_routes, "_caller", return_value=None), \
+             patch.object(self.app.logger, "warning") as logged:
+            self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+                headers={"Content-Type": "application/json",
+                         "Authorization": header_value})
+        return " ".join(str(a) for a in (logged.call_args[0] if logged.call_args else ()))
+
+    def test_a_bare_token_is_never_printed(self):
+        # Splitting on a space to name the scheme printed the whole credential
+        # when there was no space - the very case being diagnosed.
+        written = self._logged_for("gvJDfG1Tcgm7gqORixgeJ7SoygFi1G97z3oHG3bR4")
+        self.assertNotIn("gvJDfG1Tcg", written)
+        self.assertIn("no recognised scheme", written)
+
+    def test_a_bearer_token_is_never_printed(self):
+        written = self._logged_for("Bearer supersecretvalue")
+        self.assertNotIn("supersecretvalue", written)
+        self.assertIn("bearer", written)
+
+    def test_the_length_is_still_reported(self):
+        written = self._logged_for("Bearer abc")
+        self.assertIn("10 chars", written)

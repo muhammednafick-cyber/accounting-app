@@ -213,6 +213,17 @@ def _caller():
     if identity:
         return identity
 
+    # A connector interface that asks for a header value rather than a
+    # credential often sends the token bare, with no "Bearer " in front of
+    # it. It is the same credential and it is looked up the same way; being
+    # strict about the prefix only makes the setup fail in a way nobody can
+    # see from the outside.
+    header = (request.headers.get("Authorization") or "").strip()
+    if header and " " not in header:
+        identity = _identify_token(header)
+        if identity:
+            return identity
+
     api_key = (request.headers.get("X-API-Key") or "").strip()
     if not api_key:
         return None
@@ -265,9 +276,44 @@ def _reject_foreign_origin():
 
 
 def _unauthorised(message="A valid bearer token is required."):
+    _log_refusal()
     response = jsonify({"error": "unauthorized", "message": message})
     response.status_code = 401
     return response
+
+
+def _log_refusal():
+    """Note which headers a refused caller sent - names only, never values.
+
+    Whether a client is sending a credential at all, and under what name, is
+    otherwise invisible: the access log records the status and nothing else, and
+    the difference between "sent the wrong token" and "sent no token" changes
+    which end needs fixing. Values are deliberately excluded; a token in a log
+    file is a token that has leaked.
+    """
+    try:
+        interesting = [name for name in request.headers.keys()
+                       if name.lower() in ("authorization", "x-api-key",
+                                           "x-mcp-token", "api-key",
+                                           "mcp-protocol-version", "origin",
+                                           "user-agent")]
+        detail = []
+        for name in interesting:
+            value = request.headers.get(name, "")
+            if name.lower() == "authorization":
+                first = value.split(" ", 1)[0].lower() if value else ""
+                scheme = first if first in ("bearer", "basic", "token") \
+                    else "no recognised scheme"
+                detail.append(f"{name}=<{scheme}, {len(value)} chars>")
+            elif name.lower() in ("x-api-key", "x-mcp-token", "api-key"):
+                detail.append(f"{name}=<{len(value)} chars>")
+            else:
+                detail.append(f"{name}={value[:60]}")
+        current_app.logger.warning(
+            "MCP refused a caller. Headers seen: %s",
+            "; ".join(detail) or "none of interest")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- despatch
