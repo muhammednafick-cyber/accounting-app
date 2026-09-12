@@ -200,9 +200,68 @@ def _render(result):
 # ---------------------------------------------------------------- the caller
 
 def _caller():
-    """(user_id, company_id) for this request's bearer token, or None."""
+    """(user_id, company_id) for this request's token, or None.
+
+    `Authorization: Bearer <token>` is the normal way. Some connector interfaces
+    reserve that header for their own sign-in and will not let a person set it
+    by hand, so `X-API-Key` is accepted as the same thing - it is the identical
+    credential, arriving under a name the interface will allow.
+    """
     from .mobile_api import _identify
-    return _identify(request)
+
+    identity = _identify(request)
+    if identity:
+        return identity
+
+    api_key = (request.headers.get("X-API-Key") or "").strip()
+    if not api_key:
+        return None
+    return _identify_token(api_key)
+
+
+def _identify_token(token):
+    """Look a bare token up the same way a bearer token is looked up."""
+    from datetime import datetime
+
+    from database.config import get_connection
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, company_id, expires_at FROM api_tokens "
+                       "WHERE token = %s", (token,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        user_id, company_id, expires_at = row[0], row[1], row[2]
+        if expires_at and expires_at < datetime.now():
+            return None
+        cursor.execute("UPDATE api_tokens SET last_used = NOW() WHERE token = %s",
+                       (token,))
+        conn.commit()
+        return user_id, company_id
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+def _reject_foreign_origin():
+    """Refuse a browser on another site driving this endpoint.
+
+    An agent connects server to server and sends no Origin at all, so the
+    check only bites when a browser is involved - which, for an endpoint
+    holding a company's accounts, is the case worth refusing.
+    """
+    origin = request.headers.get("Origin")
+    if not origin:
+        return None
+    if origin.rstrip("/") == request.url_root.rstrip("/"):
+        return None
+    response = jsonify({"error": "forbidden_origin",
+                        "message": "That origin may not use this endpoint."})
+    response.status_code = 403
+    return response
 
 
 def _unauthorised(message="A valid bearer token is required."):
@@ -306,8 +365,23 @@ def _log_call(tool_name, company_id, started, outcome):
 
 # ---------------------------------------------------------------- the route
 
+@mcp_bp.route("/mcp", methods=["GET", "DELETE"])
+def mcp_method_not_allowed():
+    """The standalone SSE stream and session teardown are gone from this
+    revision of the transport, and 405 is what it asks a server to say."""
+    response = jsonify({"error": "method_not_allowed",
+                        "message": "This endpoint accepts POST."})
+    response.status_code = 405
+    response.headers["Allow"] = "POST"
+    return response
+
+
 @mcp_bp.route("/mcp", methods=["POST"])
 def mcp():
+    forbidden = _reject_foreign_origin()
+    if forbidden:
+        return forbidden
+
     identity = _caller()
     if not identity:
         return _unauthorised()
@@ -349,6 +423,10 @@ def mcp():
     body = _handle(method, payload.get("params"), request_id, company_id)
     response = jsonify(body)
     response.headers["MCP-Protocol-Version"] = _negotiated_version(payload)
+    if body.get("error", {}).get("code") == METHOD_NOT_FOUND:
+        # The status is what lets a client distinguish this server from a
+        # legacy one that simply does not serve this path.
+        response.status_code = 404
     return response
 
 

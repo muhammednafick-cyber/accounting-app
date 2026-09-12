@@ -307,3 +307,107 @@ class RenderingTests(unittest.TestCase):
         # A null cell renders blank rather than the word "None".
         self.assertIn("Bank |", text)
         self.assertNotIn("None", text)
+
+
+class AlternativeHeaderTests(unittest.TestCase):
+    """Some connector interfaces reserve Authorization for their own sign-in."""
+
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+
+    def test_a_bearer_token_is_still_the_normal_way(self):
+        with patch.object(mcp_routes, "_identify_token") as fallback, \
+             patch("accounting_app.mobile_api._identify", return_value=(7, 1)), \
+             patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            response = rpc(self.client, "ping")
+        self.assertEqual(response.status_code, 200)
+        fallback.assert_not_called()
+
+    def test_an_api_key_header_is_accepted_when_there_is_no_bearer(self):
+        with patch("accounting_app.mobile_api._identify", return_value=None), \
+             patch.object(mcp_routes, "_identify_token", return_value=(7, 1)) as look_up, \
+             patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            response = self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}), headers={
+                "Content-Type": "application/json", "X-API-Key": "the-token"})
+        self.assertEqual(response.status_code, 200)
+        look_up.assert_called_once_with("the-token")
+
+    def test_an_empty_api_key_is_not_a_way_in(self):
+        with patch("accounting_app.mobile_api._identify", return_value=None), \
+             patch.object(mcp_routes, "_identify_token") as look_up:
+            response = self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}), headers={
+                "Content-Type": "application/json", "X-API-Key": "   "})
+        self.assertEqual(response.status_code, 401)
+        look_up.assert_not_called()
+
+    def test_a_wrong_api_key_is_refused(self):
+        with patch("accounting_app.mobile_api._identify", return_value=None), \
+             patch.object(mcp_routes, "_identify_token", return_value=None):
+            response = self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}), headers={
+                "Content-Type": "application/json", "X-API-Key": "wrong"})
+        self.assertEqual(response.status_code, 401)
+
+
+class TransportComplianceTests(unittest.TestCase):
+    """What the Streamable HTTP transport requires of a server."""
+
+    def setUp(self):
+        self.app = build_app()
+        self.client = self.app.test_client()
+
+    def test_get_is_method_not_allowed(self):
+        # The standalone SSE stream was removed in this revision; the spec asks
+        # a server that only speaks it to answer GET with 405. It used to
+        # redirect to the sign-in page, which no client could make sense of.
+        response = self.client.get("/mcp")
+        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.headers["Allow"], "POST")
+
+    def test_delete_is_method_not_allowed(self):
+        response = self.client.delete("/mcp")
+        self.assertEqual(response.status_code, 405)
+
+    def test_an_unknown_method_is_a_404_carrying_the_jsonrpc_error(self):
+        # The status is how a client tells this server apart from one that does
+        # not host the path at all.
+        with patch.object(mcp_routes, "_caller", return_value=(7, 1)), \
+             patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            response = rpc(self.client, "resources/read")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()["error"]["code"], -32601)
+
+    def test_a_known_method_is_not_a_404(self):
+        with patch.object(mcp_routes, "_caller", return_value=(7, 1)), \
+             patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            self.assertEqual(rpc(self.client, "ping").status_code, 200)
+
+    def test_a_foreign_origin_is_refused(self):
+        # A browser on another site must not be able to drive this endpoint.
+        with patch.object(mcp_routes, "_caller", return_value=(7, 1)), \
+             patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            response = self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}), headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer good-token",
+                "Origin": "https://evil.example.com"})
+        self.assertEqual(response.status_code, 403)
+
+    def test_no_origin_at_all_is_fine(self):
+        # An agent connects server to server and sends no Origin.
+        with patch.object(mcp_routes, "_caller", return_value=(7, 1)), \
+             patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            self.assertEqual(rpc(self.client, "ping").status_code, 200)
+
+    def test_our_own_origin_is_fine(self):
+        with patch.object(mcp_routes, "_caller", return_value=(7, 1)), \
+             patch.object(mcp_routes, "rate_limit_check", return_value=(True, 0)):
+            response = self.client.post("/mcp", data=json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "method": "ping"}), headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer good-token",
+                "Origin": "http://localhost"})
+        self.assertEqual(response.status_code, 200)
