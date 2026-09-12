@@ -102,6 +102,75 @@ def decide(proposal_id):
     return redirect(url_for("agent_proposal_bp.agent_proposals"))
 
 
+@agent_proposal_bp.route("/api/agent_proposal/<int:proposal_id>")
+@login_required
+def proposal_for_form(proposal_id):
+    """A proposal's contents, for the voucher screen to fill itself from.
+
+    Only a pending proposal is handed out. One already posted or rejected must
+    not be loaded into a fresh form, where saving would post it a second time.
+    """
+    from flask import jsonify
+
+    if not _may_decide():
+        return jsonify({"success": False,
+                        "message": "Voucher access is required."}), 403
+    company_id = session.get("company_id")
+    proposal = get_proposal(proposal_id, company_id) if company_id else None
+    if not proposal:
+        return jsonify({"success": False,
+                        "message": "That proposal does not exist."}), 404
+    if proposal["status"] != PENDING:
+        return jsonify({"success": False,
+                        "message": f"Proposal #{proposal_id} is already "
+                                   f"{proposal['status']}."}), 409
+    return jsonify({"success": True, "id": proposal["id"],
+                    "payload": proposal["payload"]})
+
+
+# The voucher screen posts a proposal after the person has edited it. These
+# three keep the proposal honest about that: claimed before posting so two tabs
+# cannot both post it, closed with the voucher number when the save succeeds,
+# and put back in the queue when it does not.
+
+def claim_for_voucher_form(proposal_id, company_id):
+    """Claim the proposal a voucher form is about to post, or refuse."""
+    if not proposal_id:
+        return None
+    if not claim_proposal(proposal_id, company_id):
+        raise ValueError(
+            f"Agent proposal #{proposal_id} has already been posted or rejected, "
+            "so this voucher was not saved again. Open Agent Proposals to see "
+            "what happened to it.")
+    return proposal_id
+
+
+def finish_voucher_form_posting(proposal_id, company_id, voucher_number):
+    """Close the proposal with the voucher it became."""
+    if not proposal_id:
+        return
+    try:
+        settle_proposal(proposal_id, company_id, APPROVED, current_user.id,
+                        voucher_number=voucher_number)
+        _record_audit(voucher_number, proposal_id, company_id)
+    except Exception:
+        # The voucher is posted. Failing the request now would redraw the form
+        # and invite saving it again.
+        from flask import current_app
+        current_app.logger.warning("Posted %s but could not close proposal #%s",
+                                   voucher_number, proposal_id, exc_info=True)
+
+
+def abandon_voucher_form_posting(proposal_id, company_id):
+    """The save failed: return the proposal to the queue."""
+    if not proposal_id:
+        return
+    try:
+        release_proposal(proposal_id, company_id)
+    except Exception:
+        pass
+
+
 def _post(proposal, company_id):
     """Post through the ordinary path, so every ordinary rule applies.
 

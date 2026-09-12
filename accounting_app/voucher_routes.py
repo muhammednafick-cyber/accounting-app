@@ -656,6 +656,8 @@ def api_item_available_qty():
 def add_voucher_route():
     company_id = get_current_company_id()
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    # Set when this form was filled from an agent proposal and has claimed it.
+    claimed_proposal = None
     voucher_type = _normalize_voucher_type(request.form["voucher_type"])
     date = parse_date(request.form["date"])
     cost_center_name = request.form.get("cost_center_name")
@@ -1202,6 +1204,12 @@ def add_voucher_route():
         if voucher_type in ["Purchase", "Purchase Return", "Expense"] and not original_invoice_date:
             raise ValueError(f"Invoice Date is required for {voucher_type} vouchers")
 
+        # Filled from an agent proposal: claim it before posting, so the same
+        # suggestion open in two tabs cannot be posted twice.
+        from .agent_proposal_routes import claim_for_voucher_form
+        claimed_proposal = claim_for_voucher_form(
+            request.form.get("agent_proposal_id", type=int), company_id)
+
         voucher_number = add_voucher(
             voucher_type,
             date,
@@ -1219,6 +1227,11 @@ def add_voucher_route():
             f"Added voucher: {voucher_number} with narration: {narration}"
         )
 
+        if claimed_proposal:
+            from .agent_proposal_routes import finish_voucher_form_posting
+            finish_voucher_form_posting(claimed_proposal, company_id,
+                                        voucher_number)
+
         order_message = _bill_orders(voucher_number, order_item_ids,
                                      quantities, company_id)
 
@@ -1230,6 +1243,9 @@ def add_voucher_route():
         )
     except Exception as e:
         print(f"Error adding voucher: {str(e)}")
+        if claimed_proposal:
+            from .agent_proposal_routes import abandon_voucher_form_posting
+            abandon_voucher_form_posting(claimed_proposal, company_id)
         if is_ajax:
             return jsonify({"success": False, "message": str(e)}), 500
         return _reject_voucher(str(e), voucher_type)

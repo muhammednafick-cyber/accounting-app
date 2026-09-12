@@ -3376,6 +3376,117 @@ Charges on Purchase Voucher
             .catch(err => setOrderStatus('Could not load that order: ' + err, false));
     }
 
+    // ---- Arriving from Agent Proposals ---------------------------------
+    // The proposal only fills the form. The person edits what needs editing
+    // and saves through this screen's own rules. The proposal id travels with
+    // the form so saving closes it, and so the same suggestion cannot be
+    // posted twice from two tabs.
+    function isoToDmy(value) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
+        return m ? `${m[3]}-${m[2]}-${m[1]}` : (value || '');
+    }
+
+    function setProposalField(el, value) {
+        if (!el) return;
+        if (el._flatpickr && value) el._flatpickr.setDate(value, true, 'd-m-Y');
+        else el.value = value;
+    }
+
+    function triggerChange(el) {
+        if (window.jQuery) $(el).trigger('change');
+        else el.dispatchEvent(new Event('change'));
+    }
+
+    function showProposalBanner(text, isError) {
+        const form = document.getElementById('voucherForm');
+        let banner = document.getElementById('agentProposalBanner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'agentProposalBanner';
+            banner.setAttribute('role', 'status');
+            form.parentElement.insertBefore(banner, form);
+        }
+        banner.className = isError ? 'form-error-summary' : 'draft-banner';
+        banner.textContent = text;
+    }
+
+    function loadAgentProposal(proposalId) {
+        const form = document.getElementById('voucherForm');
+        fetch(`/api/agent_proposal/${encodeURIComponent(proposalId)}`)
+            .then(r => r.json().then(data => ({ ok: r.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok || !data.success) {
+                    showProposalBanner(data.message || 'Could not load that proposal.', true);
+                    return;
+                }
+                const p = data.payload || {};
+                if (p.voucher_type && p.voucher_type !== voucherType) {
+                    showProposalBanner(`Proposal #${data.id} is a ${p.voucher_type}, `
+                        + `not a ${voucherType}.`, true);
+                    return;
+                }
+
+                setProposalField(document.getElementById('date'), isoToDmy(p.date));
+                const narration = document.getElementById('narration');
+                if (narration) narration.value = p.narration || '';
+                setProposalField(document.getElementById('original_invoice_ref'),
+                                 p.invoice_number || '');
+                setProposalField(document.getElementById('original_invoice_date'),
+                                 isoToDmy(p.invoice_date || ''));
+
+                const items = p.item_entries || [];
+                const itemBody = document.querySelector('#itemTable tbody');
+                if (items.length && itemBody) {
+                    itemBody.innerHTML = '';
+                    items.forEach(line => {
+                        addItemRow();
+                        const row = itemBody.lastElementChild;
+                        const select = row.querySelector('select[name="item_name[]"]');
+                        if (select) { select.value = line.item_name; triggerChange(select); }
+                        const qty = row.querySelector('input[name="quantity[]"]');
+                        if (qty) qty.value = line.quantity;
+                        const rate = row.querySelector('input[name="unit_price[]"]');
+                        if (rate) { rate.value = line.unit_price; onItemInputChange(rate); }
+                    });
+                }
+
+                if (p.supplier) {
+                    // A purchase: the party row takes the supplier; VAT and the
+                    // Inventory side follow from the items as they do when typed.
+                    const party = document.querySelector('select[name="ledger_name[]"]');
+                    if (party) { party.value = p.supplier; triggerChange(party); }
+                } else if ((p.ledger_entries || []).length) {
+                    const ledgerBody = document.querySelector('#ledgerTable tbody');
+                    if (ledgerBody) {
+                        ledgerBody.innerHTML = '';
+                        p.ledger_entries.forEach(e => addLedgerRowWithData(e));
+                        if (window.jQuery && $.fn.select2) {
+                            $('#ledgerTable select.select2').select2({ width: '100%' });
+                        }
+                    }
+                }
+
+                let hidden = form.querySelector('input[name="agent_proposal_id"]');
+                if (!hidden) {
+                    hidden = document.createElement('input');
+                    hidden.type = 'hidden';
+                    hidden.name = 'agent_proposal_id';
+                    form.appendChild(hidden);
+                }
+                hidden.value = data.id;
+
+                showProposalBanner(`Filled from agent proposal #${data.id}. Check every `
+                    + 'line against the invoice and correct anything that is wrong, then '
+                    + 'save. Saving posts it and closes the proposal.', false);
+            })
+            .catch(err => showProposalBanner('Could not load that proposal: ' + err, true));
+    }
+
+    (function () {
+        const proposalId = new URLSearchParams(window.location.search).get('proposal');
+        if (proposalId) window.addEventListener('load', () => loadAgentProposal(proposalId));
+    })();
+
     // Arriving from the order screen's "Convert to ..." button
     (function () {
         const fromUrl = new URLSearchParams(window.location.search).get('order');

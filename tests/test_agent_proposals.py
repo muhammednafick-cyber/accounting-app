@@ -440,3 +440,78 @@ class RedirectToPurchaseToolTests(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("propose_purchase", message)
         self.assertIn("quantity", message)
+
+
+class OpenInVoucherScreenTests(unittest.TestCase):
+    """A proposal is opened on its voucher screen to be edited and saved there."""
+
+    def setUp(self):
+        from accounting_app import create_app
+        with patch("accounting_app.initialize_db"):
+            self.app = create_app()
+        self.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as session:
+            session["_user_id"] = "1"
+            session["_fresh"] = True
+            session["company_id"] = 1
+
+    def test_a_pending_proposal_is_handed_to_the_form(self):
+        import accounting_app.agent_proposal_routes as routes
+        with patch.object(routes, "_may_decide", return_value=True), \
+             patch.object(routes, "get_proposal", return_value={
+                 "id": 5, "status": "pending", "payload": balanced()}):
+            body = self.client.get("/api/agent_proposal/5").get_json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["payload"]["voucher_type"], "Payment")
+
+    def test_a_decided_proposal_cannot_be_loaded_into_a_form(self):
+        # Loading one that is already posted would let saving post it twice.
+        import accounting_app.agent_proposal_routes as routes
+        with patch.object(routes, "_may_decide", return_value=True), \
+             patch.object(routes, "get_proposal", return_value={
+                 "id": 5, "status": "approved", "payload": balanced()}):
+            response = self.client.get("/api/agent_proposal/5")
+        self.assertEqual(response.status_code, 409)
+
+    def test_the_form_api_needs_voucher_access(self):
+        import accounting_app.agent_proposal_routes as routes
+        with patch.object(routes, "_may_decide", return_value=False):
+            self.assertEqual(self.client.get("/api/agent_proposal/5").status_code, 403)
+
+    def test_a_proposal_taken_elsewhere_blocks_the_save(self):
+        import accounting_app.agent_proposal_routes as routes
+        with patch.object(routes, "claim_proposal", return_value=None):
+            with self.assertRaises(ValueError) as caught:
+                routes.claim_for_voucher_form(5, 1)
+        self.assertIn("not saved again", str(caught.exception))
+
+    def test_an_ordinary_voucher_claims_nothing(self):
+        import accounting_app.agent_proposal_routes as routes
+        with patch.object(routes, "claim_proposal") as claimed:
+            self.assertIsNone(routes.claim_for_voucher_form(None, 1))
+        claimed.assert_not_called()
+
+    def test_a_failed_save_returns_the_proposal_to_the_queue(self):
+        import accounting_app.agent_proposal_routes as routes
+        with patch.object(routes, "release_proposal") as released:
+            routes.abandon_voucher_form_posting(5, 1)
+        released.assert_called_once_with(5, 1)
+
+    def test_the_list_opens_the_voucher_screen_instead_of_approving(self):
+        import io, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "templates", "agent_proposals.html"),
+                     encoding="utf-8") as handle:
+            page = handle.read()
+        self.assertIn("?proposal=", page)
+        self.assertNotIn("Approve and post", page)
+
+    def test_the_voucher_screen_fills_itself_and_carries_the_id(self):
+        import io, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "templates", "voucher.html"),
+                     encoding="utf-8") as handle:
+            page = handle.read()
+        self.assertIn("loadAgentProposal", page)
+        self.assertIn("agent_proposal_id", page)

@@ -57,15 +57,16 @@
 
     <p class="proposal-intro">
         Vouchers an AI assistant has suggested. Nothing here has been posted.
-        Read each one, and approve it only if it is exactly what you want in the
-        books.
+        Open one on its voucher screen, correct anything that is wrong, and save
+        it there.
     </p>
 
     <div class="warn-note">
         <strong>Check these as carefully as a voucher someone handed you</strong>
         An assistant can misunderstand what you asked for, and it reads
-        narrations and party names that came from suppliers' own files. Approving
-        posts the entry for real, through the same rules as typing it yourself.
+        narrations and party names that came from suppliers' own files. Saving it
+        on the voucher screen posts it for real, through the same rules as typing
+        it yourself.
     </div>
 
     <div class="section">
@@ -150,23 +151,24 @@
                 </tfoot>
             </table>
 
-            {# A submit button carries its own name and value, so which button
-               was pressed arrives in the form data without any script. Setting
-               it from JavaScript would have needed form.elements['action'] -
-               form.action is the URL, not the field. #}
-            <form method="POST" class="proposal-actions"
-                  action="{{ url_for('agent_proposal_bp.decide', proposal_id=proposal.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-                <input type="text" name="note" maxlength="300"
-                       placeholder="Note (optional, kept with the decision)">
-                <button type="submit" name="action" value="approve" class="btn"
-                        onclick="return confirm('Post this voucher to the books for real?');">
-                    Approve and post
-                </button>
-                <button type="submit" name="action" value="reject" class="btn btn-danger">
-                    Reject
-                </button>
-            </form>
+            {# Opened on its own voucher screen to be edited and saved there, rather
+               than approved as a frozen snapshot: that screen has the item,
+               cost-centre and VAT handling and its own validation. #}
+            <div class="proposal-actions">
+                <a class="btn"
+                   href="{{ url_for('voucher_bp.voucher', voucher_type=proposal.payload.voucher_type) }}?proposal={{ proposal.id }}">
+                    Open in voucher screen
+                </a>
+                <form method="POST" style="display:flex;gap:10px;flex:1 1 280px;flex-wrap:wrap"
+                      action="{{ url_for('agent_proposal_bp.decide', proposal_id=proposal.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                    <input type="text" name="note" maxlength="300" style="flex:1 1 180px"
+                           placeholder="Reason for rejecting (optional)">
+                    <button type="submit" name="action" value="reject" class="btn btn-danger">
+                        Reject
+                    </button>
+                </form>
+            </div>
         </div>
         {% endfor %}
     </div>

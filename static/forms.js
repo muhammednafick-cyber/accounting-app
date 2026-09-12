@@ -3,7 +3,9 @@
 window.AppForms = (() => {
     'use strict';
 
-    const SKIP = new Set(['csrf_token', 'submission_token']);
+    // agent_proposal_id is skipped too: a recovered draft must not carry a
+    // proposal that may already have been posted from somewhere else.
+    const SKIP = new Set(['csrf_token', 'submission_token', 'agent_proposal_id']);
     const skipField = f => !f.name || SKIP.has(f.name) || f.type === 'file'
         || f.type === 'button' || f.type === 'submit' || f.disabled;
 
