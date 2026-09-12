@@ -425,3 +425,18 @@ class PurchasePostingTests(unittest.TestCase):
                 routes._post({"payload": payload}, company_id=1)
         posted.assert_not_called()
         self.assertIn("receiving the goods", str(caught.exception))
+
+
+class RedirectToPurchaseToolTests(unittest.TestCase):
+    """A refused purchase must name the tool that can take it."""
+
+    def test_the_refusal_points_at_propose_purchase(self):
+        # Without this an agent holding propose_purchase read "use the Purchase
+        # screen" and told the user it could not help.
+        with patch.object(proposals, "_ledgers", return_value=LEDGERS):
+            with self.assertRaises(ProposalRejected) as caught:
+                proposals.validate_voucher_proposal(
+                    balanced(voucher_type="Purchase"), company_id=1)
+        message = str(caught.exception)
+        self.assertIn("propose_purchase", message)
+        self.assertIn("quantity", message)

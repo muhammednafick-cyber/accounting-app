@@ -28,11 +28,16 @@ LEDGER_ONLY_TYPES = {
 }
 
 # What to say instead, so the answer is useful rather than just a refusal.
+# Names the tool that can do it. Pointing only at the application's screens sent
+# an agent that had propose_purchase available straight past it, telling the
+# user it could not help when it could.
 STOCK_TYPES_ADVICE = (
     "{kind} vouchers move stock as well as money, and this tool can only "
     "propose ledger entries - a {kind} posted through it would record the cost "
-    "but receive none of the goods. Enter it on the {kind} screen, or through "
-    "the import queue for a whole invoice."
+    "but receive none of the goods. For a purchase, call propose_purchase "
+    "instead: give the supplier, invoice number and each item with its quantity "
+    "and rate. If that tool is not available, enter it on the {kind} screen or "
+    "through the import queue for a whole invoice."
 )
 
 
