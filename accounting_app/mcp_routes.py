@@ -135,7 +135,11 @@ PROPOSE_TOOL = {
         "application before any entry reaches the books. Use it when the user "
         "asks you to record something; then tell them a proposal is waiting "
         "for their approval. Amounts must balance - total debits equal total "
-        "credits - and ledger names must match exactly (use list_ledgers)."
+        "credits - and ledger names must match exactly (use list_ledgers). "
+        "Only money-only vouchers: Payment, Receipt, Contra, Journal, Expense, "
+        "Service Income, Service Income Return. Purchases and sales also move "
+        "stock and cannot be proposed here - say so and point the user at the "
+        "purchase or sales screen, or the import queue for a whole invoice."
     ),
     "inputSchema": {
         "type": "object",

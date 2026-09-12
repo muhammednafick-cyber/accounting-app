@@ -14,6 +14,27 @@ from database.agent_proposals_db import create_proposal
 
 MAX_LINES = 200
 
+# Only types that are purely ledger entries. A Purchase or a Sales voucher also
+# moves stock, and this tool carries no item lines - so proposing one produced a
+# voucher whose ledgers moved while its inventory did not, with the cost landing
+# in a purchase account instead of Inventory. Balanced, and wrong.
+#
+# An allowlist rather than a blocklist: a voucher type added to the application
+# later should have to be considered here, not silently inherit permission to be
+# posted without its items.
+LEDGER_ONLY_TYPES = {
+    "Payment", "Receipt", "Contra", "Journal",
+    "Expense", "Service Income", "Service Income Return",
+}
+
+# What to say instead, so the answer is useful rather than just a refusal.
+STOCK_TYPES_ADVICE = (
+    "{kind} vouchers move stock as well as money, and this tool can only "
+    "propose ledger entries - a {kind} posted through it would record the cost "
+    "but receive none of the goods. Enter it on the {kind} screen, or through "
+    "the import queue for a whole invoice."
+)
+
 
 class ProposalRejected(Exception):
     """The suggestion is malformed; tell the agent why so it can correct it."""
@@ -43,6 +64,9 @@ def validate_voucher_proposal(payload, company_id):
     voucher_type = (payload.get("voucher_type") or "").strip()
     if not voucher_type:
         raise ProposalRejected("A voucher type is required, e.g. Payment.")
+    if voucher_type.title() not in LEDGER_ONLY_TYPES:
+        raise ProposalRejected(STOCK_TYPES_ADVICE.format(kind=voucher_type))
+    voucher_type = voucher_type.title()
 
     date = (payload.get("date") or "").strip()
     if not date:

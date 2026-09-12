@@ -251,3 +251,47 @@ class ApprovalGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StockVoucherTests(unittest.TestCase):
+    """A Purchase posted without its items records the cost and receives none
+    of the goods. Two such vouchers reached the books before this existed."""
+
+    def _reject(self, voucher_type):
+        with patch.object(proposals, "_ledgers", return_value=LEDGERS):
+            with self.assertRaises(ProposalRejected) as caught:
+                proposals.validate_voucher_proposal(
+                    balanced(voucher_type=voucher_type), company_id=1)
+        return str(caught.exception)
+
+    def test_a_purchase_cannot_be_proposed(self):
+        message = self._reject("Purchase")
+        self.assertIn("move stock", message)
+        self.assertIn("import queue", message)
+
+    def test_a_sales_voucher_cannot_be_proposed(self):
+        self.assertIn("move stock", self._reject("Sales"))
+
+    def test_returns_and_stock_movements_cannot_be_proposed(self):
+        for kind in ("Purchase Return", "Sales Return", "Stock Adjustment",
+                     "Inventory Transfer", "Physical Stock"):
+            self.assertIn("move stock", self._reject(kind), kind)
+
+    def test_an_unknown_type_is_refused_rather_than_assumed_safe(self):
+        # An allowlist: a voucher type added to the application later must be
+        # considered here, not silently inherit permission.
+        self.assertIn("move stock", self._reject("Some New Type"))
+
+    def test_money_only_vouchers_are_still_allowed(self):
+        for kind in ("Payment", "Receipt", "Contra", "Journal", "Expense",
+                     "Service Income", "Service Income Return"):
+            with patch.object(proposals, "_ledgers", return_value=LEDGERS):
+                checked = proposals.validate_voucher_proposal(
+                    balanced(voucher_type=kind), company_id=1)
+            self.assertEqual(checked["voucher_type"], kind)
+
+    def test_the_type_is_normalised(self):
+        with patch.object(proposals, "_ledgers", return_value=LEDGERS):
+            checked = proposals.validate_voucher_proposal(
+                balanced(voucher_type="payment"), company_id=1)
+        self.assertEqual(checked["voucher_type"], "Payment")
