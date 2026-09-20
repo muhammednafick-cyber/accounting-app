@@ -286,3 +286,26 @@ button.ghost {
 .chat-input input { flex: 1; }
 .chat-input button.primary { width: 52px; margin: 0; padding: 0;
                              font-size: 1.3rem; }
+
+/* ── Downloads ───────────────────────────────────────────────────── */
+/* Replacing the web answer's links, which cannot work inside the app.
+   Sized for a thumb rather than a mouse. */
+.dl-btn {
+    background: var(--blue); color: #fff;
+    border: 0; border-radius: 9px;
+    padding: 9px 14px; margin: 8px 6px 0 0;
+    font-size: .8rem; font-weight: 600; min-height: 38px;
+}
+.dl-btn:disabled { opacity: .6; }
+.bubble .rv-alt .dl-btn,
+.dl-row .dl-btn {
+    background: transparent; color: var(--blue);
+    border: 1px solid var(--line); font-weight: 600;
+}
+.bubble .rv-alt { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+/* The web answer labels where each figure came from; useful here too, but
+   quieter than it is on a big screen. */
+.bubble .rv-src { display: block; margin-top: 8px; font-size: .68rem;
+                  color: var(--muted); }
+.bubble .rv-src-ai { color: #8a6d1f; }
+.bubble .rv-agent-say { margin-top: 8px; }

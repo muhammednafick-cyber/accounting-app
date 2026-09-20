@@ -8,6 +8,7 @@ Everything here is read-only by construction: there is no endpoint that writes
 a voucher, a master or a setting. A shareholder can look, and that is all.
 """
 import secrets
+import time
 from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
@@ -736,13 +737,23 @@ def chat(user_id, company_id):
     from .chatbot_service import process_chat_query
     try:
         ai_enabled = bool(data.get("ai_enabled", True))
-        reply = process_chat_query(
-            question, company_id,
-            ai_enabled=ai_enabled,
-            # "AI only" skips the coded reports entirely, as on the web. It
-            # has no meaning with AI switched off, so it is gated the same way.
-            ai_only=bool(data.get("ai_only")) and ai_enabled,
-            history=data.get("history") or [])
+        # "Agent" is the second assistant: it runs several reports in turn
+        # rather than one. Same engine as the web, reached the same way, so
+        # the phone never has a different answer to the browser.
+        if bool(data.get("agent")) and ai_enabled:
+            from . import chat_agent
+
+            reply = chat_agent.run(question, company_id,
+                                   history=data.get("history") or [])
+        else:
+            reply = process_chat_query(
+                question, company_id,
+                ai_enabled=ai_enabled,
+                # "AI only" skips the coded reports entirely, as on the web. It
+                # has no meaning with AI switched off, so it is gated the same
+                # way.
+                ai_only=bool(data.get("ai_only")) and ai_enabled,
+                history=data.get("history") or [])
         if "error" in reply:
             return jsonify({"success": False, "message": reply["error"]}), 500
     except Exception as exc:
@@ -751,6 +762,93 @@ def chat(user_id, company_id):
                         "message": f"The assistant could not answer: {exc}"}), 500
 
     return jsonify({"success": True, "data": reply})
+
+
+# ------------------------------------------------------------------ downloads
+
+# How long a download ticket is good for. Long enough to hand to the system
+# browser and come back; short enough that one left in browser history is
+# already dead.
+TICKET_TTL_SECONDS = 300
+
+
+@mobile_bp.route("/api/mobile/export_ticket", methods=["POST"])
+@_auth_required
+def export_ticket(user_id, company_id):
+    """Trade a chat result for a one-time download link.
+
+    The app cannot put its bearer token on a plain link, and an Android WebView
+    will not save a file fetched by script. So the file is fetched by the
+    system browser instead, through a ticket that works once and expires in
+    five minutes - never the sign-in token, which would be a credential sitting
+    in browser history.
+    """
+    import uuid
+
+    from database.app_state_db import chat_export_load, chat_export_save
+
+    data = request.get_json(silent=True) or {}
+    result_token = (data.get("token") or "").strip()
+    fmt = (data.get("format") or "xlsx").strip().lower()
+    if fmt not in ("xlsx", "csv", "pdf"):
+        return jsonify({"success": False, "message": "Unknown format."}), 400
+    if not result_token or not chat_export_load(result_token):
+        return jsonify({"success": False,
+                        "message": "That result is no longer available. Ask "
+                                   "the question again."}), 404
+
+    ticket = uuid.uuid4().hex
+    chat_export_save("ticket:" + ticket, {
+        "result_token": result_token,
+        "format": fmt,
+        "user_id": user_id,
+        "company_id": company_id,
+        "expires_at": time.time() + TICKET_TTL_SECONDS,
+    })
+    return jsonify({"success": True, "data": {
+        "url": "/api/mobile/export?ticket=" + ticket,
+        "expires_in": TICKET_TTL_SECONDS,
+    }})
+
+
+@mobile_bp.route("/api/mobile/export")
+def export_download():
+    """Serve a file against a one-time ticket. No bearer token: the ticket is
+    the whole authority, it is single use, and it dies in five minutes."""
+    from database.app_state_db import chat_export_load, chat_export_save
+
+    ticket = (request.args.get("ticket") or "").strip()
+    if not ticket:
+        return jsonify({"success": False, "message": "No ticket."}), 400
+
+    key = "ticket:" + ticket
+    booked = chat_export_load(key)
+    if not booked:
+        return jsonify({"success": False,
+                        "message": "This download link has already been used "
+                                   "or has expired. Ask for it again in the "
+                                   "app."}), 404
+
+    # Spent on sight, whether or not the file builds: a link that survives its
+    # first use is a link that can be replayed from someone's history.
+    try:
+        chat_export_save(key, {"spent": True, "expires_at": 0})
+    except Exception:
+        pass
+
+    if booked.get("spent") or time.time() > float(booked.get("expires_at") or 0):
+        return jsonify({"success": False,
+                        "message": "This download link has expired. Ask for "
+                                   "it again in the app."}), 404
+
+    result = chat_export_load(booked.get("result_token"))
+    if not result:
+        return jsonify({"success": False,
+                        "message": "That result is no longer available."}), 404
+
+    from .export_routes import build_chat_export
+
+    return build_chat_export(result, fmt=booked.get("format") or "xlsx")
 
 
 @mobile_bp.route("/api/mobile/ping")

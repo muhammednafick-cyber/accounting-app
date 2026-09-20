@@ -698,39 +698,88 @@
     // state the server can honour.
     (function initAiToggles() {
         var ai = el('aiToggle'), only = el('aiOnlyToggle'), label = el('aiOnlyLabel');
+        var agent = el('agentToggle'), agentLabel = el('agentLabel');
         if (!ai) return;
         try {
             ai.checked = localStorage.getItem('vaChatAiEnabled') === '1';
             if (only) only.checked = localStorage.getItem('vaChatAiOnly') === '1';
+            if (agent) agent.checked = localStorage.getItem('vaChatAgent') === '1';
         } catch (e) { /* private mode - fall back to the markup defaults */ }
 
         function sync() {
+            if (agent) {
+                agent.disabled = !ai.checked;
+                if (agentLabel) {
+                    agentLabel.style.opacity = ai.checked ? '1' : '0.45';
+                    agentLabel.style.cursor = ai.checked ? 'pointer' : 'not-allowed';
+                }
+            }
             if (!only) return;
-            only.disabled = !ai.checked;
+            // Agent and "AI only" are two different engines; letting both be
+            // on would mean one of them is silently ignored.
+            only.disabled = !ai.checked || (agent && agent.checked);
             if (label) {
-                label.style.opacity = ai.checked ? '1' : '0.45';
-                label.style.cursor = ai.checked ? 'pointer' : 'not-allowed';
+                var usable = !only.disabled;
+                label.style.opacity = usable ? '1' : '0.45';
+                label.style.cursor = usable ? 'pointer' : 'not-allowed';
             }
             var hint = el('aiHint');
             if (hint) {
                 hint.textContent = !ai.checked
                     ? 'Answered from your data by the built-in reports. No AI.'
-                    : (only.checked
-                        ? 'Every question goes straight to the AI model, skipping the built-in reports.'
-                        : 'Questions the built-in reports cannot answer are sent to the AI model.');
+                    : (agent && agent.checked
+                        ? 'The AI runs several reports in turn and explains what it found. Slower, and costs more per question.'
+                        : (only.checked
+                            ? 'Every question goes straight to the AI model, skipping the built-in reports.'
+                            : 'Questions the built-in reports cannot answer are sent to the AI model.'));
             }
         }
         function remember() {
             try {
                 localStorage.setItem('vaChatAiEnabled', ai.checked ? '1' : '0');
                 localStorage.setItem('vaChatAiOnly', only && only.checked ? '1' : '0');
+                localStorage.setItem('vaChatAgent', agent && agent.checked ? '1' : '0');
             } catch (e) { /* nothing to do - the switches still work */ }
             sync();
         }
         ai.addEventListener('change', remember);
         if (only) only.addEventListener('change', remember);
+        if (agent) agent.addEventListener('change', function () {
+            // Switching engines: the new one has not seen this conversation.
+            history = [];
+            remember();
+        });
         sync();
     })();
+
+    // Saving a file: the app holds a bearer token, and a link cannot carry a
+    // header. So the server is asked for a ticket that works once and expires
+    // in five minutes, and the system browser downloads with that. The
+    // sign-in token never leaves the app.
+    el('chatLog').addEventListener('click', function (event) {
+        var button = event.target.closest && event.target.closest('.dl-btn');
+        if (!button || button.disabled) return;
+        event.preventDefault();
+        var original = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Preparing…';
+        api('/api/mobile/export_ticket', {
+            method: 'POST',
+            body: { token: button.dataset.token, format: button.dataset.format }
+        }).then(function (payload) {
+            var url = session.server + payload.data.url;
+            button.textContent = original;
+            button.disabled = false;
+            // '_system' hands it to the phone's browser, which saves it to
+            // Downloads. Opening it in the app's own WebView would render the
+            // bytes, not keep them.
+            window.open(url, '_system');
+        }).catch(function (error) {
+            button.disabled = false;
+            button.textContent = original;
+            addBubble('Could not prepare that download - ' + error.message, 'bot');
+        });
+    });
 
     function ask(question) {
         addBubble(question, 'me');
@@ -746,6 +795,10 @@
                 // ...and this skips them, sending every question to the model,
                 // exactly as the web chat's "AI only" box does.
                 ai_only: el('aiOnlyToggle').checked && el('aiToggle').checked,
+                // ...and this hands the question to the agent instead, which
+                // runs several reports in turn before answering.
+                agent: el('agentToggle') && el('agentToggle').checked
+                    && el('aiToggle').checked,
                 history: history
             }
         }).then(function (payload) {
@@ -781,12 +834,27 @@
             || 'No answer came back.';
         node.innerHTML = text;
 
-        // The web answer offers Excel/CSV/PDF downloads, but those links are
-        // session-authenticated and relative - inside the app they would land
-        // on a sign-in page. Drop them rather than leave a dead end.
+        // The web answer's download links are session-authenticated and
+        // relative: followed inside the app they land on a sign-in page. They
+        // are replaced - not removed - with buttons that ask the server for a
+        // one-time link and hand that to the phone's browser, which is the
+        // only thing here that can actually save a file.
         Array.prototype.forEach.call(
-            node.querySelectorAll('.rv-dl, .rv-alt, a[href^="/export"]'),
-            function (link) { link.remove(); });
+            node.querySelectorAll('a[href*="export_chat_result"]'),
+            function (link) {
+                var token = (link.getAttribute('href').match(/token=([0-9a-f]+)/) || [])[1];
+                var format = (link.getAttribute('href').match(/format=(\w+)/) || [])[1] || 'xlsx';
+                if (!token) { link.remove(); return; }
+                var button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'dl-btn';
+                button.textContent = link.textContent.trim() || format.toUpperCase();
+                button.dataset.token = token;
+                button.dataset.format = format;
+                link.parentNode.replaceChild(button, link);
+            });
+        Array.prototype.forEach.call(node.querySelectorAll('.rv-alt'),
+            function (wrap) { wrap.classList.add('dl-row'); });
 
         var result = answer.data || {};
         var columns = result.columns || [];

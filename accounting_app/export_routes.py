@@ -575,9 +575,19 @@ def export_chat_result():
             "message": "That result is no longer available. Ask the question again.",
         }), 404
 
-    chart_type = (request.args.get("chart") or "").strip().lower()
-    fmt = (request.args.get("format") or "xlsx").strip().lower()
+    return build_chat_export(
+        result,
+        fmt=(request.args.get("format") or "xlsx").strip().lower(),
+        chart_type=(request.args.get("chart") or "").strip().lower())
 
+
+def build_chat_export(result, fmt="xlsx", chart_type=""):
+    """A parked chat result as a downloadable file.
+
+    Shared with the phone app, which reaches the same results over its own
+    token-authenticated route: two ways in, one implementation, so a fix to
+    the file itself cannot land in only one of them.
+    """
     if fmt == "csv":
         df = pd.DataFrame(result["rows"], columns=result["columns"])
         buffer = io.BytesIO(df.to_csv(index=False).encode("utf-8-sig"))
