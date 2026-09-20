@@ -15,7 +15,7 @@
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     {% block extra_head %}{% endblock %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}?v=20260912_3">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}?v=20260920_1">
 </head>
 
 <body class="{% if current_user.is_authenticated %}app-shell{% else %}public-shell{% endif %}" data-company-id="{{ session.get('company_id', '') }}" data-user-id="{{ current_user.id if current_user.is_authenticated else '' }}" data-currency="{{ company.currency_code if company and company.currency_code else 'AED' }}">

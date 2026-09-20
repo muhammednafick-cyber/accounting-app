@@ -71,3 +71,26 @@ class RecentVouchersTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SidebarMarginTests(unittest.TestCase):
+    """The desktop sidebar's reserved space must not survive on a phone."""
+
+    def _css(self):
+        import io, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "static", "ui.css"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_the_content_margin_is_dropped_below_1000px(self):
+        # style.css gives .content margin-left:250px to clear the sidebar. With
+        # the sidebar hidden that margin pushed every page off the right edge
+        # and made the document wider than the screen.
+        css = self._css()
+        self.assertIn("@media(max-width:1000px){.content{margin-left:0", css)
+
+    def test_style_sheet_still_reserves_the_space_on_desktop(self):
+        import io, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "static", "style.css"), encoding="utf-8") as f:
+            self.assertIn("margin-left: 250px", f.read())
