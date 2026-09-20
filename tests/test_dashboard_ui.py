@@ -94,3 +94,59 @@ class SidebarMarginTests(unittest.TestCase):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with io.open(os.path.join(root, "static", "style.css"), encoding="utf-8") as f:
             self.assertIn("margin-left: 250px", f.read())
+
+
+class CompanyGatewayConsistencyTests(unittest.TestCase):
+    """The gateway was a standalone page in a different visual language."""
+
+    def _page(self):
+        import io, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "templates", "company_gateway.html"),
+                     encoding="utf-8") as f:
+            return f.read()
+
+    def test_it_uses_the_application_shell(self):
+        page = self._page()
+        self.assertIn('{% extends "base.html" %}', page)
+        # A page of its own carried its own font, palette and reset, which is
+        # how it drifted from everything else.
+        self.assertNotIn("<html", page)
+        self.assertNotIn("<body", page)
+
+    def test_the_gradient_and_stray_palette_are_gone(self):
+        page = self._page()
+        for stray in ("linear-gradient", "#667eea", "#764ba2", "Segoe UI"):
+            self.assertNotIn(stray, page, stray)
+
+    def test_it_takes_its_colours_from_the_shared_tokens(self):
+        page = self._page()
+        for token in ("var(--brand)", "var(--border)", "var(--ink-muted)"):
+            self.assertIn(token, page, token)
+
+    def test_it_does_not_render_flashes_twice(self):
+        # base.html already renders flashed messages.
+        self.assertNotIn("get_flashed_messages", self._page())
+
+    def test_it_stacks_on_a_phone(self):
+        self.assertIn("@media (max-width: 820px)", self._page())
+
+    def test_it_renders_through_the_real_base_template(self):
+        # The gateway used to be self-contained, so nothing ever proved it
+        # survives contact with base.html and its url_for calls.
+        import os, sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import app as appmod
+        with appmod.app.test_request_context('/company-gateway'):
+            html = appmod.app.jinja_env.get_template('company_gateway.html').render(
+                recent_companies=[{'id': 7, 'name': 'Nafi Retail', 'path': ''}],
+                is_admin=True,
+                # flask_login supplies this on a real request.
+                current_user=type('U', (), {'is_authenticated': True, 'id': 1,
+                                            'username': 'nafi'})(),
+                # Normally a context processor's, but it needs a logged-in
+                # session to run.
+                can_access=lambda *a, **k: True)
+        self.assertIn('Nafi Retail', html)
+        self.assertIn('Choose a company', html)
+        self.assertIn('value="7"', html)

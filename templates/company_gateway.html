@@ -1,281 +1,122 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Company Gateway - Accounting App</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        
-        .gateway-container {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 900px;
-            width: 100%;
-            padding: 40px;
-            position: relative;
-        }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-        
-        .header h1 {
-            color: #333;
-            font-size: 32px;
-            margin-bottom: 10px;
-        }
-        
-        .header p {
-            color: #666;
-            font-size: 16px;
-        }
-        
-        .gateway-sections {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 30px;
-            margin-bottom: 30px;
-        }
-        
-        .gateway-card {
-            background: #f8f9fa;
-            border: 2px solid #e9ecef;
-            border-radius: 10px;
-            padding: 30px;
-            text-align: center;
-            transition: all 0.3s;
-            cursor: pointer;
-        }
-        
-        .gateway-card:hover {
-            border-color: #667eea;
-            transform: translateY(-5px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
-        }
-        
-        .gateway-card h2 {
-            color: #333;
-            font-size: 24px;
-            margin-bottom: 15px;
-        }
-        
-        .gateway-card p {
-            color: #666;
-            margin-bottom: 20px;
-            line-height: 1.6;
-        }
-        
-        .btn {
-            display: inline-block;
-            padding: 12px 30px;
-            background: #667eea;
-            color: white;
-            text-decoration: none;
-            border-radius: 5px;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background 0.3s;
-        }
-        
-        .btn:hover {
-            background: #5568d3;
-        }
-        
-        .btn-secondary {
-            background: #6c757d;
-        }
-        
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-        
-        .recent-companies {
-            margin-top: 40px;
-        }
-        
-        .recent-companies h3 {
-            color: #333;
-            font-size: 20px;
-            margin-bottom: 20px;
-        }
-        
-        .company-list {
-            list-style: none;
-        }
-        
-        .company-item {
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 5px;
-            padding: 15px;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: all 0.2s;
-        }
-        
-        .company-item:hover {
-            background: #e9ecef;
-            border-color: #667eea;
-        }
-        
-        .company-info {
-            flex: 1;
-        }
-        
-        .company-name {
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 5px;
-        }
-        
-        .company-path {
-            font-size: 12px;
-            color: #6c757d;
-        }
-        
-        .flash-messages {
-            margin-bottom: 20px;
-        }
-        
-        .flash {
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 10px;
-        }
-        
-        .flash.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        
-        .flash.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .file-browser {
-            margin: 20px 0;
-        }
-        
-        .file-browser input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #dee2e6;
-            border-radius: 5px;
-            margin-bottom: 10px;
-            font-size: 14px;
-        }
-        
-        .user-info {
-            position: absolute;
-            top: 20px;
-            right: 40px;
-            text-align: right;
-        }
+{% extends "base.html" %}
 
-        .logout-link {
-            color: #dc3545;
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: bold;
-        }
+{% block title %}Choose a company{% endblock %}
 
-        .logout-link:hover {
-            text-decoration: underline;
-        }
-        
-        @media (max-width: 768px) {
-            .gateway-sections {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="gateway-container">
-        <div class="user-info">
-            <span>Welcome, <strong>{{ current_user.username }}</strong></span><br>
-            <a href="{{ url_for('auth_bp.logout') }}" class="logout-link">Logout</a>
-            {% if is_admin %}
-            <br><a href="{{ url_for('auth_bp.admin_management') }}" class="logout-link" style="color: #667eea;">Admin Management</a>
+{% block extra_head %}
+<style>
+    /* No company is chosen yet, so most of the sidebar's destinations would
+       bounce straight back here. The topbar stays for the brand and the way
+       out. */
+    .app-sidebar { display: none !important; }
+    body.app-shell { padding-left: 0; }
+    .app-topbar { left: 0; }
+    /* Nothing left for it to toggle. */
+    #sidebarToggle { display: none; }
+
+    .gateway { max-width: 720px; margin: 0 auto; }
+    .gateway-head { margin-bottom: 26px; }
+    .gateway-head h1 { margin: 0 0 6px; }
+    .gateway-head p { color: var(--ink-muted); margin: 0; }
+
+    .company-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .company-row {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 16px; background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius-lg); padding: 16px 20px;
+    }
+    .company-row:hover { border-color: var(--brand); }
+    .company-row .name { font-weight: 600; color: var(--ink-strong); }
+    .company-row button {
+        background: var(--brand); color: #fff; border: 0; border-radius: 8px;
+        padding: 10px 22px; font-weight: 600; cursor: pointer; min-height: 40px;
+    }
+    .company-row button:hover { background: var(--brand-dark); }
+
+    .gateway-empty {
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: var(--radius-lg); padding: 28px 24px;
+        color: var(--ink-muted);
+    }
+
+    .gateway-new {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 16px; flex-wrap: wrap; margin-top: 22px; padding-top: 20px;
+        border-top: 1px solid var(--border);
+    }
+    .gateway-new p { color: var(--ink-muted); margin: 0; font-size: 13px; }
+    .gateway-new a {
+        color: var(--brand-dark); text-decoration: none; font-weight: 600;
+        border: 1px solid var(--border); border-radius: 9px;
+        padding: 10px 16px; background: #fff;
+    }
+    .gateway-new a:hover { border-color: var(--brand); }
+
+    .gateway-foot {
+        margin-top: 26px; font-size: 12.5px; color: var(--ink-muted);
+        display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+    }
+    .gateway-foot a { color: var(--brand-dark); font-weight: 600; text-decoration: none; }
+    .gateway-foot a:hover { text-decoration: underline; }
+
+    @media (max-width: 820px) {
+        .company-row { flex-direction: column; align-items: stretch; gap: 12px; }
+        .company-row button { width: 100%; min-height: 44px; }
+        .gateway-new a { width: 100%; text-align: center; min-height: 44px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="gateway">
+    <div class="gateway-head">
+        <h1>Choose a company</h1>
+        <p>
+            {% if recent_companies %}
+                Everything you open next - vouchers, reports, stock - belongs to
+                the company you pick here.
+            {% else %}
+                Nothing is available to you yet.
             {% endif %}
-        </div>
+        </p>
+    </div>
 
-        <div class="header">
-            <h1>📊 Accounting Application</h1>
-            <p>Select an existing company {% if is_admin %}or create a new one{% endif %}</p>
-        </div>
-        
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div class="flash-messages">
-                    {% for category, message in messages %}
-                        <div class="flash {{ category }}">{{ message }}</div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
-        
+    {% if recent_companies %}
+    <ul class="company-list">
+        {% for company in recent_companies %}
+        <li class="company-row">
+            <span class="name">{{ company.name }}</span>
+            <form method="POST" action="{{ url_for('company_bp.select_company') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <input type="hidden" name="company_id" value="{{ company.id }}">
+                <button type="submit">Open</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="gateway-empty">
         {% if is_admin %}
-        <div class="gateway-sections">
-            <div class="gateway-card">
-                <h2>➕ Create New Company</h2>
-                <p>Set up a new company with fresh database and configuration</p>
-                <a href="{{ url_for('company_bp.create_new_company') }}" class="btn">Create Company</a>
-            </div>
-        </div>
-        {% endif %}
-        
-        {% if recent_companies %}
-        <div class="recent-companies">
-            <h3>📂 {% if is_admin %}All Companies{% else %}Assigned Companies{% endif %}</h3>
-            <ul class="company-list">
-                {% for company in recent_companies %}
-                <li class="company-item">
-                    <div class="company-info">
-                        <div class="company-name">{{ company.name }}</div>
-                        <!-- <div class="company-path">{{ company.path }}</div> -->
-                    </div>
-                    <form method="POST" action="{{ url_for('company_bp.select_company') }}" style="margin: 0;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                        <input type="hidden" name="company_id" value="{{ company.id }}">
-                        <button type="submit" class="btn">Open</button>
-                    </form>
-                </li>
-                {% endfor %}
-            </ul>
-        </div>
+            No companies have been created yet. Create the first one below.
         {% else %}
-            <div style="text-align: center; margin-top: 40px;">
-                <p>No companies found. {% if not is_admin %}Please contact your administrator.{% endif %}</p>
-            </div>
+            No companies have been assigned to you. Ask an administrator to give
+            you access.
         {% endif %}
     </div>
-    
-    <script>
-        // File input handler
-    </script>
-</body>
-</html>
+    {% endif %}
+
+    {% if is_admin %}
+    <div class="gateway-new">
+        <p>Setting up a new set of books?</p>
+        <a href="{{ url_for('company_bp.create_new_company') }}">Create a company</a>
+    </div>
+    {% endif %}
+
+    <div class="gateway-foot">
+        <span>Signed in as <strong>{{ current_user.username }}</strong></span>
+        {% if is_admin %}
+        <a href="{{ url_for('auth_bp.admin_management') }}">Admin management</a>
+        {% endif %}
+        <a href="{{ url_for('auth_bp.logout') }}">Sign out</a>
+    </div>
+</div>
+{% endblock %}
