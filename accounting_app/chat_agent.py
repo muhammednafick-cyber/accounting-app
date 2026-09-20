@@ -24,6 +24,7 @@ It is read-only. It cannot propose or post anything; that path exists only
 over MCP, where a human approves each suggestion on the voucher screen.
 """
 import json
+import re
 import time
 
 from . import chat_permissions as P
@@ -273,6 +274,67 @@ def _arguments(call):
 
 
 # ============================================================
+# "give me that in excel"
+# ============================================================
+
+# A download is not a question, and it must not cost a model call or depend on
+# the model thinking to offer one. The old assistant answers these itself; so
+# does this one, from the last result it parked.
+# A phrase counts as an export when every word in it is either a filler word
+# or the name of a format. Matching that way rather than with one long pattern
+# keeps "give me that in excel" and "csv" working without also swallowing
+# "show me the excel import log", which has real words in it too.
+_EXPORT_FILLER = {
+    "and", "also", "now", "then", "ok", "okay", "please", "give", "send",
+    "show", "get", "put", "make", "save", "me", "it", "that", "this", "them",
+    "the", "previous", "last", "result", "results", "data", "above", "one",
+    "in", "as", "to", "into", "a", "an", "with", "of", "copy", "version",
+    "format", "want", "i", "can", "you",
+}
+_EXPORT_FORMATS = {
+    "excel", "xlsx", "xls", "spreadsheet", "csv", "pdf", "workbook", "sheet",
+    "download", "export", "file",
+}
+
+
+def _is_export_request(question):
+    words = re.findall(r"[a-z]+", (question or "").lower())
+    if not words:
+        return False
+    if not any(word in _EXPORT_FORMATS for word in words):
+        return False
+    return all(word in _EXPORT_FILLER or word in _EXPORT_FORMATS
+               for word in words)
+
+
+def _export_previous(question):
+    """The download links for whatever was answered last, or None.
+
+    Returns None when the message is not an export request, or when there is
+    nothing parked to export - the caller then treats it as a normal question.
+    """
+    if not _is_export_request(question):
+        return None
+
+    from flask import session
+
+    from .chat_export_store import SESSION_KEY, load
+
+    try:
+        token = session.get(SESSION_KEY)
+    except RuntimeError:
+        token = None
+    if not token or not load(token):
+        return None
+
+    fmt = CR.requested_format(question)
+    return CR.plain(
+        "Here is the last result you asked for.<br>"
+        + CR.export_links(token, primary=fmt),
+        "export_chat_result", {"export_token": token})
+
+
+# ============================================================
 # The loop
 # ============================================================
 
@@ -286,6 +348,10 @@ def run(question, company_id, history=None):
     question = (question or "").strip()
     if not question:
         return CR.plain("Ask me anything about your masters, vouchers or reports.")
+
+    exported = _export_previous(question)
+    if exported is not None:
+        return exported
 
     tools = _catalogue()
     if not tools:
@@ -361,6 +427,7 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
     """
     parts = []
     token = None
+    fmt = CR.requested_format(question)
 
     for name, result in used:
         block = []
@@ -378,12 +445,16 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
                 block.append(totals)
         if result.get("note"):
             block.append("<small class='rv-note'>" + str(result["note"]) + "</small>")
-        if block:
-            parts.append("<br>".join(block))
-        # The last result with rows is the one "give it in excel" will mean.
+
+        # Each table carries its own download. An answer here can hold three of
+        # them, so a single button at the bottom would quietly hand over
+        # whichever table happened to run last - not the one being pointed at.
         this_token = CR.remember_result(result, question)
         if this_token:
             token = this_token
+            block.append(CR.export_links(this_token, primary=fmt))
+        if block:
+            parts.append("<br>".join(block))
 
     text = (prose or "").strip() or (fallback_note or "")
     if text:
@@ -391,9 +462,6 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
             "<div class='rv-agent-say'>" + _escape_prose(text) + "</div>"
             "<small class='rv-src rv-src-ai'>Written by AI from the figures "
             "above</small>")
-
-    if token:
-        parts.append(CR.export_links(token, primary=CR.requested_format(question)))
 
     if used:
         names = ", ".join(sorted({n for n, _ in used}))

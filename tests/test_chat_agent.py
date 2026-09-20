@@ -194,6 +194,104 @@ class SafetyTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", reply["response"])
 
 
+class DownloadTests(unittest.TestCase):
+    """Every table the agent shows has to be downloadable.
+
+    The first version parked all the tables but printed one button at the
+    bottom, so clicking it handed over whichever report happened to run last
+    rather than the one being pointed at.
+    """
+
+    def setUp(self):
+        import app as appmod
+
+        self._run, self._ask = TK.run, A._ask_model
+        self._allowed, self._sql = P.allowed_tool_names, P.can_use_ai_sql
+        TK.run = lambda name, args, company_id=None, state=None: (
+            table(name.replace("_", " ").title(), [["Cash", "100.00"]]), args)
+        P.allowed_tool_names = lambda: ["cash_balance", "bank_balance"]
+        P.can_use_ai_sql = lambda: False
+        self.ctx = appmod.app.test_request_context('/api/chat_agent', method='POST')
+        self.ctx.push()
+
+    def tearDown(self):
+        self.ctx.pop()
+        TK.run, A._ask_model = self._run, self._ask
+        P.allowed_tool_names, P.can_use_ai_sql = self._allowed, self._sql
+
+    def _tokens(self, html):
+        import re
+        return re.findall(r"token=([0-9a-f]+)", html)
+
+    def test_each_table_gets_its_own_download(self):
+        A._ask_model = FakeModel(
+            {"content": "", "tool_calls": [call("cash_balance")]},
+            {"content": "", "tool_calls": [call("bank_balance", call_id="c2")]},
+            {"content": "Together that is 300.", "tool_calls": []},
+        )
+        reply = A.run("cash and bank", company_id=1)
+        self.assertEqual(len(set(self._tokens(reply["response"]))), 2)
+
+    def test_a_parked_result_can_be_fetched_back(self):
+        from accounting_app.chat_export_store import load
+
+        A._ask_model = FakeModel(
+            {"content": "", "tool_calls": [call("cash_balance")]},
+            {"content": "There it is.", "tool_calls": []},
+        )
+        reply = A.run("cash balance", company_id=1)
+        stored = load(reply["data"]["export_token"])
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["rows"], [["Cash", "100.00"]])
+
+    def test_asking_for_excel_afterwards_costs_no_model_call(self):
+        # "give it in excel" is not a question, and the old assistant answers
+        # it locally. This one must too, or the model has to think to offer a
+        # download and usually does not.
+        A._ask_model = FakeModel(
+            {"content": "", "tool_calls": [call("cash_balance")]},
+            {"content": "There it is.", "tool_calls": []},
+        )
+        A.run("cash balance", company_id=1)
+
+        def explode(messages, tools):
+            raise AssertionError("the model was called for a download")
+
+        A._ask_model = explode
+        reply = A.run("give it in excel", company_id=1)
+        self.assertEqual(reply["intent"], "export_chat_result")
+        self.assertIn("token=", reply["response"])
+
+    def test_the_named_format_is_the_one_offered_first(self):
+        A._ask_model = FakeModel(
+            {"content": "", "tool_calls": [call("cash_balance")]},
+            {"content": "There it is.", "tool_calls": []},
+        )
+        A.run("cash balance", company_id=1)
+        A._ask_model = FakeModel()
+        for phrase, fmt in (("csv please", "csv"), ("download pdf", "pdf")):
+            reply = A.run(phrase, company_id=1)
+            self.assertIn("format=%s" % fmt, reply["response"], phrase)
+
+    def test_a_real_question_is_not_mistaken_for_a_download(self):
+        for phrase in ("show me the excel import log", "top 5 customers",
+                       "what about last year"):
+            self.assertFalse(A._is_export_request(phrase), phrase)
+
+    def test_export_phrases_are_recognised(self):
+        for phrase in ("give it in excel", "in excel", "csv", "download pdf",
+                       "excel", "give me that in excel"):
+            self.assertTrue(A._is_export_request(phrase), phrase)
+
+    def test_nothing_to_export_falls_through_to_a_normal_answer(self):
+        # Asking for a download before anything has been answered must reach
+        # the model, not produce a dead link.
+        A._ask_model = FakeModel({"content": "Ask me something first.",
+                                  "tool_calls": []})
+        reply = A.run("give it in excel", company_id=1)
+        self.assertNotEqual(reply["intent"], "export_chat_result")
+
+
 class SeparationTests(unittest.TestCase):
     """The old assistant has to be unaffected and remain the default."""
 
