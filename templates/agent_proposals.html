@@ -48,6 +48,33 @@
         color: #714b19; max-width: 74ch;
     }
     .warn-note strong { display: block; margin-bottom: 4px; font-size: 13px; }
+
+    /* A table that cannot shrink scrolls inside its own box, so the page
+       itself never scrolls sideways on a phone. */
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .table-scroll table { min-width: 430px; }
+
+    @media (max-width: 820px) {
+        .content .form-row { flex-direction: column; align-items: stretch; gap: 12px; }
+        .content .form-group { width: 100%; min-width: 0; }
+        .content .form-group select,
+        .content .form-group input { width: 100%; }
+        /* Thumb-sized targets, and buttons that do not sit half off the edge. */
+        .content .btn,
+        .content button[type=submit] { width: 100%; min-height: 44px; }
+    }
+
+    @media (max-width: 820px) {
+        .proposal { padding: 14px 14px; }
+        /* The number and the date belong together; on a phone they stack
+           rather than being pushed apart to opposite edges. */
+        .proposal-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+        .proposal-actions { flex-direction: column; align-items: stretch; }
+        .proposal-actions form { flex-direction: column !important; }
+        .proposal-actions input[type=text] { flex: 1 1 auto; width: 100%; min-height: 44px; }
+        .proposal-actions .btn { text-align: center; }
+        .warn-note { padding: 14px 16px; }
+    }
 </style>
 {% endblock %}
 
@@ -93,6 +120,7 @@
             {# The goods. A purchase approved without these records the cost and
                receives none of the stock, so they are shown before the money. #}
             {% if proposal.payload.item_entries %}
+            <div class="table-scroll">
             <table>
                 <thead>
                     <tr><th>Item</th><th style="text-align:right">Quantity</th>
@@ -122,8 +150,10 @@
                     {% endif %}
                 </tfoot>
             </table>
+            </div>
             {% endif %}
 
+            <div class="table-scroll">
             <table>
                 <thead>
                     <tr><th>Ledger</th><th style="text-align:right">Debit</th>
@@ -150,6 +180,7 @@
                     </tr>
                 </tfoot>
             </table>
+            </div>
 
             {# Opened on its own voucher screen to be edited and saved there, rather
                than approved as a frozen snapshot: that screen has the item,
@@ -176,6 +207,7 @@
     {% if decided %}
     <div class="section">
         <h3>Recently decided</h3>
+        <div class="table-scroll">
         <table class="decided">
             <thead>
                 <tr><th>#</th><th>What</th><th>Outcome</th><th>Posted as</th><th>When</th></tr>
@@ -199,6 +231,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        </div>
     </div>
     {% endif %}
 </div>

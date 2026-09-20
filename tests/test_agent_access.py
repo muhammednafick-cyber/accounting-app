@@ -210,3 +210,35 @@ class NavigationTests(unittest.TestCase):
         last_endif = preceding.rfind("{% endif %}")
         self.assertGreater(last_endif, last_if,
                            "the Agent Access link sits inside a conditional block")
+
+
+class ResponsiveLayoutTests(unittest.TestCase):
+    """Both screens are used from a phone, not only a desk."""
+
+    def _page(self, name):
+        import io, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "templates", name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_every_table_can_scroll_inside_its_own_box(self):
+        # Otherwise the whole page scrolls sideways and the buttons drift off
+        # the edge of a phone screen.
+        for name in ("agent_access.html", "agent_proposals.html"):
+            page = self._page(name)
+            self.assertEqual(page.count('<div class="table-scroll">'),
+                             page.count('<table'),
+                             name + ': every table needs its own scroll box')
+
+    def test_the_layout_stacks_below_tablet_width(self):
+        for name in ("agent_access.html", "agent_proposals.html"):
+            page = self._page(name)
+            self.assertIn("@media (max-width: 820px)", page, name)
+
+    def test_controls_are_thumb_sized_on_a_phone(self):
+        for name in ("agent_access.html", "agent_proposals.html"):
+            self.assertIn("min-height: 44px", self._page(name), name)
+
+    def test_the_token_is_not_squeezed_against_its_button(self):
+        page = self._page("agent_access.html")
+        self.assertIn(".token-value { flex-direction: column", page)
