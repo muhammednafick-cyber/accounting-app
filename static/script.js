@@ -1843,19 +1843,48 @@ document.addEventListener('DOMContentLoaded', function () {
             && localStorage.getItem('vaChatAiEnabled') === '1';
     }
 
+    // "Agent" sends the question to the second assistant (/api/chat_agent),
+    // which runs several reports in turn. The old assistant is untouched and
+    // stays the default: with this unticked nothing about chat changes.
+    function isAgentMode() {
+        const toggle = document.getElementById('vaChatAgentToggle');
+        if (toggle) return toggle.checked && isAiEnabled();
+        return localStorage.getItem('vaChatAgent') === '1'
+            && localStorage.getItem('vaChatAiEnabled') === '1';
+    }
+
+    // What the agent has been told so far, so a follow-up ("and last year?")
+    // means something. Trimmed hard - it is sent with every question.
+    let agentHistory = [];
+
+    function rememberAgentTurn(role, content) {
+        agentHistory.push({ role: role, content: String(content || '').slice(0, 1500) });
+        if (agentHistory.length > 6) agentHistory = agentHistory.slice(-6);
+    }
+
     function initAiToggle() {
         const toggle = document.getElementById('vaChatAiToggle');
         const onlyToggle = document.getElementById('vaChatAiOnlyToggle');
         const onlyLabel = document.getElementById('vaChatAiOnlyLabel');
+        const agentToggle = document.getElementById('vaChatAgentToggle');
+        const agentLabel = document.getElementById('vaChatAgentLabel');
         if (!toggle) return;
         toggle.checked = localStorage.getItem('vaChatAiEnabled') === '1';
         if (onlyToggle) onlyToggle.checked = localStorage.getItem('vaChatAiOnly') === '1';
+        if (agentToggle) agentToggle.checked = localStorage.getItem('vaChatAgent') === '1';
 
         // "AI only" is meaningless without AI, so it follows the AI switch:
         // greyed out and inert whenever AI is off.
         function syncAiOnly() {
-            if (!onlyToggle) return;
             const aiOn = toggle.checked;
+            if (agentToggle) {
+                agentToggle.disabled = !aiOn;
+                if (agentLabel) {
+                    agentLabel.style.opacity = aiOn ? '1' : '0.45';
+                    agentLabel.style.cursor = aiOn ? 'pointer' : 'not-allowed';
+                }
+            }
+            if (!onlyToggle) return;
             onlyToggle.disabled = !aiOn;
             if (onlyLabel) {
                 onlyLabel.style.opacity = aiOn ? '1' : '0.45';
@@ -1871,6 +1900,14 @@ document.addEventListener('DOMContentLoaded', function () {
         if (onlyToggle) {
             onlyToggle.addEventListener('change', function () {
                 localStorage.setItem('vaChatAiOnly', onlyToggle.checked ? '1' : '0');
+            });
+        }
+        if (agentToggle) {
+            agentToggle.addEventListener('change', function () {
+                localStorage.setItem('vaChatAgent', agentToggle.checked ? '1' : '0');
+                // Switching engines mid-conversation: the new one has not seen
+                // any of it, so start its memory clean rather than half-full.
+                agentHistory = [];
             });
         }
         syncAiOnly();
@@ -1982,22 +2019,39 @@ document.addEventListener('DOMContentLoaded', function () {
             chatPendingDateQuery = null;
         }
 
-        setStatus('Thinking...', false);
+        const agent = isAgentMode();
+        setStatus(agent ? 'Working through it...' : 'Thinking...', false);
         try {
-            const res = await fetch('/api/chat_query', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    query: query,
-                    ai_enabled: isAiEnabled(),
-                    ai_only: isAiOnly()
+            const res = agent
+                ? await fetch('/api/chat_agent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query, history: agentHistory })
                 })
-            });
+                : await fetch('/api/chat_query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: query,
+                        ai_enabled: isAiEnabled(),
+                        ai_only: isAiOnly()
+                    })
+                });
             const data = await res.json();
             setStatus('', false);
 
             if (data.success && data.data) {
                 globalChatAppendMessage('bot', data.data.response);
+                if (agent) {
+                    rememberAgentTurn('user', query);
+                    // The tables are in the page already; what the agent needs
+                    // to remember is what it concluded, not the rows.
+                    rememberAgentTurn('assistant', (data.data.data
+                        && data.data.data.tools_used
+                        && data.data.data.tools_used.length)
+                        ? 'Answered using: ' + data.data.data.tools_used.join(', ')
+                        : 'No answer found.');
+                }
                 if (data.data.data && data.data.data.need_date) {
                     chatPendingDateQuery = data.data.data.pending_query || null;
                 }

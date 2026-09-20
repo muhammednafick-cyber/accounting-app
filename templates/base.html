@@ -359,6 +359,12 @@
                         <input type="checkbox" id="vaChatAiOnlyToggle" style="cursor:pointer;">
                         <span>AI only</span>
                     </label>
+                    <label class="global-chat-ai-toggle" id="vaChatAgentLabel"
+                           title="Answer by running several reports in turn instead of one: the AI picks a report, reads the result, and fetches more until it can answer. Tables are computed from your data as always; only the closing sentences are written by AI. Slower and costs more per question. Needs 'Enable AI'."
+                           style="display:flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;font-size:0.85em;user-select:none;">
+                        <input type="checkbox" id="vaChatAgentToggle" style="cursor:pointer;">
+                        <span>Agent (beta)</span>
+                    </label>
                 </div>
                 <button id="globalChatClose" type="button" class="global-chat-close" aria-label="Close assistant"
                     onclick="if(window.closeGlobalChat) window.closeGlobalChat(); else { document.getElementById('globalChatOverlay').hidden = true; document.getElementById('globalChatOverlay').setAttribute('hidden', ''); document.getElementById('globalChatOverlay').style.removeProperty('display'); }">

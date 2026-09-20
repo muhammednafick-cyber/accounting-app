@@ -329,6 +329,7 @@ def create_app():
     from .print_routes import print_bp
     from .financial_year_routes import financial_year_bp
     from .chat_routes import chat_bp
+    from .chat_agent_routes import chat_agent_bp
     from .fixed_asset_routes import fixed_asset_bp
     from .recurring_routes import recurring_bp
     from .admin_config_routes import admin_config_bp
@@ -355,6 +356,7 @@ def create_app():
     app.register_blueprint(print_bp)
     app.register_blueprint(financial_year_bp)
     app.register_blueprint(chat_bp)
+    app.register_blueprint(chat_agent_bp)
     app.register_blueprint(fixed_asset_bp)
     app.register_blueprint(recurring_bp)
     app.register_blueprint(admin_config_bp)
