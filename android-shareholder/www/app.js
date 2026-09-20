@@ -770,10 +770,21 @@
             var url = session.server + payload.data.url;
             button.textContent = original;
             button.disabled = false;
-            // '_system' hands it to the phone's browser, which saves it to
-            // Downloads. Opening it in the app's own WebView would render the
-            // bytes, not keep them.
-            window.open(url, '_system');
+            // The phone's own browser has to do the saving: this WebView has
+            // no download handler, and fetching the bytes by script would only
+            // put them in memory. Capacitor sends a URL outside the app's own
+            // host to the system browser either way - by opening a window, or,
+            // where the WebView will not open one, by being asked to navigate
+            // to it. The second is the fallback, not the intent: the app stays
+            // where it is and Chrome takes the download.
+            var opened = null;
+            try { opened = window.open(url, '_system'); } catch (e) { opened = null; }
+            if (!opened) {
+                try { opened = window.open(url, '_blank'); } catch (e) { opened = null; }
+            }
+            if (!opened) {
+                window.location.href = url;
+            }
         }).catch(function (error) {
             button.disabled = false;
             button.textContent = original;
