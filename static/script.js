@@ -604,9 +604,6 @@ document.addEventListener('DOMContentLoaded', function () {
         row.appendChild(bubble);
         messagesEl.appendChild(row);
         messagesEl.scrollTop = messagesEl.scrollHeight;
-        // Returned so a caller can take a placeholder back out again - the
-        // invoice upload shows "Reading..." until the answer replaces it.
-        return row;
     }
 
     const voucherExamples = {
@@ -1856,14 +1853,6 @@ document.addEventListener('DOMContentLoaded', function () {
             && localStorage.getItem('vaChatAiEnabled') === '1';
     }
 
-    // The attach button belongs to the agent: the old assistant's invoice
-    // upload is a different path, reached by picking a voucher type first.
-    function syncAgentInvoiceButton() {
-        const button = document.getElementById('vaAgentInvoiceBtn');
-        if (!button) return;
-        button.hidden = !isAgentMode();
-    }
-
     // What the agent has been told so far, so a follow-up ("and last year?")
     // means something. Trimmed hard - it is sent with every question.
     let agentHistory = [];
@@ -1919,11 +1908,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 // Switching engines mid-conversation: the new one has not seen
                 // any of it, so start its memory clean rather than half-full.
                 agentHistory = [];
-                syncAgentInvoiceButton();
             });
         }
-        toggle.addEventListener('change', syncAgentInvoiceButton);
-        syncAgentInvoiceButton();
         syncAiOnly();
     }
 
@@ -2077,47 +2063,6 @@ document.addEventListener('DOMContentLoaded', function () {
             globalChatAppendMessage('bot', `Error: ${e.message}`);
         }
     }
-
-    // An attached purchase invoice: read on the server, matched against this
-    // company's suppliers and items, and filed as a proposal. Nothing posts.
-    (function initAgentInvoice() {
-        const button = document.getElementById('vaAgentInvoiceBtn');
-        const input = document.getElementById('vaAgentInvoiceInput');
-        if (!button || !input) return;
-
-        button.addEventListener('click', function () { input.click(); });
-
-        input.addEventListener('change', async function () {
-            const file = this.files && this.files[0];
-            this.value = '';           // so the same file can be retried
-            if (!file) return;
-
-            globalChatAppendMessage('user', 'Attached ' + file.name);
-            const waiting = globalChatAppendMessage(
-                'bot', 'Reading the invoice - a scan can take a minute...');
-            setStatus('Reading the invoice...', false);
-
-            const form = new FormData();
-            form.append('file', file);
-            try {
-                const res = await fetch('/api/chat_agent/invoice',
-                                        { method: 'POST', body: form });
-                const data = await res.json();
-                setStatus('', false);
-                if (waiting && waiting.remove) waiting.remove();
-                if (data.success && data.data) {
-                    globalChatAppendMessage('bot', data.data.response);
-                } else {
-                    globalChatAppendMessage(
-                        'bot', data.message || 'The invoice could not be read.');
-                }
-            } catch (e) {
-                setStatus('', false);
-                if (waiting && waiting.remove) waiting.remove();
-                globalChatAppendMessage('bot', 'The upload failed - ' + e.message);
-            }
-        });
-    })();
 
     async function sendFromInput() {
         console.log('Chatbot: sendFromInput called');

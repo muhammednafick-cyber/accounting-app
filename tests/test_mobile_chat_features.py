@@ -124,14 +124,6 @@ class AppBundleTests(unittest.TestCase):
         self.assertIn('id="agentToggle"', self.bundle('index.html'))
         self.assertIn("agent: el('agentToggle')", self.bundle('app.js'))
 
-    def test_a_proposal_link_is_pointed_at_the_server(self):
-        # The voucher screen belongs to the web app. Left relative, the link
-        # would resolve against the app bundle and go nowhere.
-        source = self.bundle('app.js')
-        self.assertIn("a[href^=\"/voucher/\"], a[href^=\"/settings/\"]", source)
-        self.assertIn("session.server + link.getAttribute('href')", source)
-        self.assertIn("openOutside(ext.dataset.external)", source)
-
     def test_downloads_are_offered_rather_than_stripped(self):
         source = self.bundle('app.js')
         self.assertIn('/api/mobile/export_ticket', source)

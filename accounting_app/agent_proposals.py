@@ -41,35 +41,6 @@ STOCK_TYPES_ADVICE = (
 )
 
 
-def _did_you_mean(name, known, limit=4):
-    """The real names closest to the one that was refused.
-
-    A refusal that only says "no such ledger" costs a round trip at best, and
-    at worst sends the agent off listing every ledger in the company. Naming
-    the near misses usually makes the next attempt the right one.
-    """
-    import difflib
-
-    if not known:
-        return ""
-    wanted = (name or "").strip().lower()
-    close = difflib.get_close_matches(wanted, [k.lower() for k in known],
-                                      n=limit, cutoff=0.5)
-    # Substring matches matter more than edit distance here: "Almarai" against
-    # "Nafi-ALMARAI EMIRATES COMPANY L.L.C" scores badly but is the answer.
-    contains = [k for k in known if wanted and wanted in k.lower()]
-    picked, seen = [], set()
-    for candidate in contains + [k for k in known if k.lower() in close]:
-        if candidate not in seen:
-            seen.add(candidate)
-            picked.append(candidate)
-        if len(picked) >= limit:
-            break
-    if not picked:
-        return ""
-    return " Did you mean: " + ", ".join(repr(p) for p in picked) + "?"
-
-
 class ProposalRejected(Exception):
     """The suggestion is malformed; tell the agent why so it can correct it."""
 
@@ -123,9 +94,8 @@ def validate_voucher_proposal(payload, company_id):
             raise ProposalRejected(f"Line {index} has no ledger name.")
         if known and name not in known:
             raise ProposalRejected(
-                f"Line {index}: there is no ledger called {name!r}."
-                + (_did_you_mean(name, known)
-                   or " Use search_ledger to find the exact name."))
+                f"Line {index}: there is no ledger called {name!r}. "
+                "Use list_ledgers to see the exact names.")
         side = (entry.get("type") or "").strip().title()
         if side not in ("Debit", "Credit"):
             raise ProposalRejected(
@@ -217,11 +187,9 @@ def validate_purchase_proposal(payload, company_id):
     known_ledgers = _ledger_names(company_id)
     if known_ledgers and supplier not in known_ledgers:
         raise ProposalRejected(
-            f"There is no ledger called {supplier!r}."
-            + (_did_you_mean(supplier, known_ledgers)
-               or " Use search_ledger to find the supplier's exact name.")
-            + " If they are new, create them in the application first - an "
-              "agent must not invent a supplier.")
+            f"There is no ledger called {supplier!r}. Use search_ledger to find "
+            "the supplier's exact name, and if they are new, create them in the "
+            "application first - an agent must not invent a supplier.")
 
     date = (payload.get("date") or "").strip()
     if not date:

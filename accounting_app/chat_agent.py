@@ -20,10 +20,8 @@ can be trusted:
     catalogue is filtered by `chat_permissions`, and `chat_toolkit.run` checks
     again on the way in.
 
-It can suggest entries, exactly as Claude can over MCP, and can post none.
-A suggestion goes to Agent Proposals; a person opens it on its voucher screen,
-corrects it and saves it there, through the same rules as typing it by hand.
-Only users who may enter vouchers themselves are offered the two tools.
+It is read-only. It cannot propose or post anything; that path exists only
+over MCP, where a human approves each suggestion on the voucher screen.
 """
 import json
 import re
@@ -34,13 +32,10 @@ from . import chat_router as CR
 from . import chat_toolkit as TK
 
 # How many times round the loop before we stop and answer with what we have.
-# Ten covers "compare these two things and tell me what moved", and leaves a
-# recording request room to look a name up, be refused, and get it right. Six
-# was not enough: the first attempt spent all of them hunting for a ledger and
-# never reached the suggestion it was asked for. Past ten the question is
-# usually one the model has misunderstood, and every extra step is another
-# call the company pays for.
-MAX_STEPS = 10
+# Six covers "compare these two things and tell me what moved"; past that the
+# question is usually one the model has misunderstood, and every extra step is
+# another call the company pays for.
+MAX_STEPS = 6
 
 # Rows fed back to the model per tool call. The user still sees every row - this
 # cap is only what goes back into the conversation, so a 4,000-row ledger dump
@@ -63,28 +58,9 @@ what they mean, point at what matters, and mention anything that looks wrong.
 Dates in this company are day-month-year. Amounts are in the company's own \
 currency; do not convert them.
 
-You can SUGGEST an entry, never post one. When the user asks you to record \
-something - "receipt of 5000 from X", "paid Y 300 for fuel" - that is a job \
-for propose_voucher (money only: Payment, Receipt, Contra, Journal, Expense, \
-Service Income) or propose_purchase (a supplier invoice with items), and \
-nothing else. Do it in as few steps as you can:
-
-1. Call the propose tool straight away with the names as the user said them.
-2. If it comes back saying a name does not exist, it usually tells you the \
-real ones. Use one of those and call the tool again.
-3. Only if it gives you nothing to go on, call search_ledger ONCE for that \
-name. Never call list_ledgers for this - it returns hundreds of rows and \
-tells you nothing a search would not.
-4. If several names genuinely fit, stop and ask the user which one they mean.
-
-Do not research a recording request. Reports, balances and past vouchers are \
-not needed to suggest a new entry, and a suggestion the user never gets is \
-worse than one they have to correct.
-
-The suggestion waits in Agent Proposals for a person to check and save; say \
-so, and never say it has been posted or recorded. You cannot change, delete \
-or reverse anything. Sales cannot be proposed; point the user at the sales \
-screen."""
+You cannot create, change, delete or reverse anything, and you must not claim \
+you have. If the user asks you to record an entry, tell them to use the \
+voucher screen."""
 
 
 class AgentUnavailable(Exception):
@@ -116,25 +92,7 @@ def _catalogue():
         })
     if P.can_use_ai_sql():
         tools.append(SQL_TOOL)
-    if _may_propose():
-        from .mcp_routes import PROPOSE_TOOL, PURCHASE_TOOL
-        for spec in (PROPOSE_TOOL, PURCHASE_TOOL):
-            tools.append({"type": "function", "function": {
-                "name": spec["name"],
-                "description": spec["description"],
-                "parameters": spec["inputSchema"],
-            }})
     return tools
-
-
-PROPOSE_NAMES = ("propose_voucher", "propose_purchase")
-
-
-def _may_propose():
-    """Suggesting a voucher needs the right to enter one - the same rule MCP
-    applies, so the agent is never a way to post for someone who could not."""
-    user = P._user()
-    return bool(user) and user.can_access("vouchers")
 
 
 # The escape hatch, offered only to users who already have the broad reporting
@@ -219,9 +177,6 @@ def _run_tool(name, arguments, company_id):
         except Exception as exc:
             return {"message": "The query failed: " + str(exc), "isError": True}
 
-    if name in PROPOSE_NAMES:
-        return _run_propose(name, arguments, company_id)
-
     if name not in TK.TOOLS:
         return {"message": "No such tool: " + str(name), "isError": True}
 
@@ -234,45 +189,6 @@ def _run_tool(name, arguments, company_id):
                 "isError": True}
     except Exception as exc:
         return {"message": "That did not work: " + str(exc), "isError": True}
-
-
-def _run_propose(name, arguments, company_id):
-    """File a suggestion in Agent Proposals. Nothing is posted here.
-
-    Validation is the same code MCP uses: unknown ledgers, suppliers and items
-    are refused, and so is an entry that does not balance. A refusal goes back
-    to the model so it can look the name up and try again.
-    """
-    from .agent_proposals import (ProposalRejected, propose_purchase,
-                                  propose_voucher)
-
-    if not _may_propose():
-        return {"message": "You do not have permission to enter vouchers, so "
-                           "I cannot suggest one for you either.",
-                "isError": True}
-    user = P._user()
-    file_it = propose_purchase if name == "propose_purchase" else propose_voucher
-    try:
-        proposal_id, summary = file_it(arguments or {}, company_id,
-                                       getattr(user, "id", None))
-    except ProposalRejected as rejected:
-        return {"message": str(rejected), "isError": True}
-    except Exception as exc:
-        return {"message": "The suggestion could not be filed: " + str(exc),
-                "isError": True}
-
-    voucher_type = "Purchase" if name == "propose_purchase" else (
-        (arguments or {}).get("voucher_type") or "Journal")
-    return {
-        "title": "Proposal #%s waiting for approval" % proposal_id,
-        "summary": summary,
-        "message": ("Proposal #%s filed: %s. Nothing has been posted - it is "
-                    "waiting in Agent Proposals for a person to check and "
-                    "save." % (proposal_id, summary)),
-        "proposal_id": proposal_id,
-        "voucher_type": voucher_type,
-        "tool": name,
-    }
 
 
 def _feedback(result):
@@ -492,54 +408,15 @@ def run(question, company_id, history=None):
 
     # Out of steps. Everything gathered is still shown; only the closing
     # sentence is missing, and saying so is better than inventing one.
-    note = ("I stopped after %d steps. Here is what I found - ask me something "
-            "narrower if this isn't it." % MAX_STEPS)
-    # A recording request that ends in a pile of reports looks like an answer
-    # until you notice nothing was suggested. Say it plainly instead.
-    if _sounds_like_recording(question) and not any(
-            name in PROPOSE_NAMES for name, _ in used):
-        note = ("I ran out of steps before suggesting that entry - what you "
-                "see below is only what I looked up. Try again naming the "
-                "ledger exactly, for example \"receipt of 5000 from "
-                "<full ledger name> into cash today\".")
-    return _compose(question, used, None, note,
+    return _compose(question, used, None,
+                    "I stopped after %d steps. Here is what I found - ask me "
+                    "something narrower if this isn't it." % MAX_STEPS,
                     steps=MAX_STEPS, seconds=time.perf_counter() - started)
 
 
 # ============================================================
 # The answer
 # ============================================================
-
-# A question about the past, however it is worded, is not a request to record
-# anything: "how much did we receive from Almarai" must never be read as an
-# instruction to file a receipt.
-ASKING = re.compile(
-    r"^\s*(?:and\s+|also\s+|ok\s+)?"
-    r"(how|what|which|who|when|where|why|show|list|give|find|tell|compare|"
-    r"total|sum|is|are|do|did|does|can|could|any)\b", re.I)
-
-# Either naming the voucher, or describing the movement with an amount -
-# "received 5000 from Almarai" is how a person actually types it.
-RECORDING_WORDS = re.compile(
-    r"\b(post|enter|record|create|make|add|book|raise)\b.{0,40}"
-    r"\b(receipt|payment|voucher|entry|contra|journal|expense|invoice|purchase)\b"
-    r"|\b(receipt|payment|contra|journal|expense)\b.{0,30}\b(of|from|to)\b"
-    r"|\b(received|receive|paid|pay|spent|transferred|transfer|bought|"
-    r"purchased)\b[^.]{0,40}?\d",
-    re.I | re.S)
-
-
-def _sounds_like_recording(question):
-    """Whether the user was asking for an entry rather than a report.
-
-    Only used to explain a run that ended without one - it never decides
-    whether to propose. Getting it wrong costs a sentence, not an entry.
-    """
-    text = (question or "").strip()
-    if ASKING.match(text):
-        return False
-    return bool(RECORDING_WORDS.search(text))
-
 
 def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
     """Build the chat bubble: real tables, then the model's words.
@@ -560,8 +437,6 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
             block.append("<b>" + str(title) + "</b>")
         if summary and summary != title:
             block.append(str(summary))
-        if result.get("proposal_id"):
-            block.append(_proposal_card(result))
         table = CR.render_table(result)
         if table:
             block.append(table)
@@ -608,19 +483,6 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
         },
         "explanation": "agent loop over the coded tools",
     }
-
-
-def _proposal_card(result):
-    """Where a suggestion went, and the one click that opens it for editing."""
-    from urllib.parse import quote
-
-    pid = int(result["proposal_id"])
-    vtype = quote(str(result.get("voucher_type") or "Journal"))
-    return ("<div class='rv-proposal'>Nothing has been posted. "
-            "<a class='btn btn-sm btn-primary' href='/voucher/%s?proposal=%d'>"
-            "Open in voucher screen</a> "
-            "<a class='rv-alt-dl' href='/settings/agent-proposals'>"
-            "All agent proposals</a></div>" % (vtype, pid))
 
 
 def _escape_prose(text):

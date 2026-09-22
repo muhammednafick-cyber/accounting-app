@@ -752,30 +752,11 @@
         sync();
     })();
 
-    // Anything the phone's own browser has to handle: a file to save, or a
-    // screen this app does not have. Capacitor sends a URL outside the app's
-    // own host to the system browser either way - by opening a window, or,
-    // where the WebView will not open one, by being asked to navigate to it.
-    function openOutside(url) {
-        var opened = null;
-        try { opened = window.open(url, '_system'); } catch (e) { opened = null; }
-        if (!opened) {
-            try { opened = window.open(url, '_blank'); } catch (e) { opened = null; }
-        }
-        if (!opened) { window.location.href = url; }
-    }
-
     // Saving a file: the app holds a bearer token, and a link cannot carry a
     // header. So the server is asked for a ticket that works once and expires
     // in five minutes, and the system browser downloads with that. The
     // sign-in token never leaves the app.
     el('chatLog').addEventListener('click', function (event) {
-        var ext = event.target.closest && event.target.closest('.ext-link');
-        if (ext && ext.dataset.external) {
-            event.preventDefault();
-            openOutside(ext.dataset.external);
-            return;
-        }
         var button = event.target.closest && event.target.closest('.dl-btn');
         if (!button || button.disabled) return;
         event.preventDefault();
@@ -796,7 +777,14 @@
             // where the WebView will not open one, by being asked to navigate
             // to it. The second is the fallback, not the intent: the app stays
             // where it is and Chrome takes the download.
-            openOutside(url);
+            var opened = null;
+            try { opened = window.open(url, '_system'); } catch (e) { opened = null; }
+            if (!opened) {
+                try { opened = window.open(url, '_blank'); } catch (e) { opened = null; }
+            }
+            if (!opened) {
+                window.location.href = url;
+            }
         }).catch(function (error) {
             button.disabled = false;
             button.textContent = original;
@@ -878,18 +866,6 @@
             });
         Array.prototype.forEach.call(node.querySelectorAll('.rv-alt'),
             function (wrap) { wrap.classList.add('dl-row'); });
-
-        // A suggested voucher is approved on the web app's voucher screen,
-        // which is not part of this app. The links are relative, so inside the
-        // app they would resolve against the bundle and go nowhere; they are
-        // pointed at the server and opened in the phone's browser instead.
-        Array.prototype.forEach.call(
-            node.querySelectorAll('a[href^="/voucher/"], a[href^="/settings/"]'),
-            function (link) {
-                link.dataset.external = session.server + link.getAttribute('href');
-                link.setAttribute('href', '#');
-                link.classList.add('ext-link');
-            });
 
         var result = answer.data || {};
         var columns = result.columns || [];
