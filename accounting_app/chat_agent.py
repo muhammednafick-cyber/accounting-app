@@ -20,8 +20,10 @@ can be trusted:
     catalogue is filtered by `chat_permissions`, and `chat_toolkit.run` checks
     again on the way in.
 
-It is read-only. It cannot propose or post anything; that path exists only
-over MCP, where a human approves each suggestion on the voucher screen.
+It can suggest entries, exactly as Claude can over MCP, and can post none.
+A suggestion goes to Agent Proposals; a person opens it on its voucher screen,
+corrects it and saves it there, through the same rules as typing it by hand.
+Only users who may enter vouchers themselves are offered the two tools.
 """
 import json
 import re
@@ -58,9 +60,14 @@ what they mean, point at what matters, and mention anything that looks wrong.
 Dates in this company are day-month-year. Amounts are in the company's own \
 currency; do not convert them.
 
-You cannot create, change, delete or reverse anything, and you must not claim \
-you have. If the user asks you to record an entry, tell them to use the \
-voucher screen."""
+You can SUGGEST an entry, never post one. When the user asks you to record \
+something, use propose_voucher (money only: Payment, Receipt, Contra, Journal, \
+Expense, Service Income) or propose_purchase (a supplier invoice with items). \
+Look up exact ledger, supplier and item names with the other tools first - a \
+guessed name is refused. The suggestion waits in Agent Proposals for a person \
+to check and save; say so, and never say it has been posted or recorded. You \
+cannot change, delete or reverse anything. Sales cannot be proposed; point the \
+user at the sales screen."""
 
 
 class AgentUnavailable(Exception):
@@ -92,7 +99,25 @@ def _catalogue():
         })
     if P.can_use_ai_sql():
         tools.append(SQL_TOOL)
+    if _may_propose():
+        from .mcp_routes import PROPOSE_TOOL, PURCHASE_TOOL
+        for spec in (PROPOSE_TOOL, PURCHASE_TOOL):
+            tools.append({"type": "function", "function": {
+                "name": spec["name"],
+                "description": spec["description"],
+                "parameters": spec["inputSchema"],
+            }})
     return tools
+
+
+PROPOSE_NAMES = ("propose_voucher", "propose_purchase")
+
+
+def _may_propose():
+    """Suggesting a voucher needs the right to enter one - the same rule MCP
+    applies, so the agent is never a way to post for someone who could not."""
+    user = P._user()
+    return bool(user) and user.can_access("vouchers")
 
 
 # The escape hatch, offered only to users who already have the broad reporting
@@ -177,6 +202,9 @@ def _run_tool(name, arguments, company_id):
         except Exception as exc:
             return {"message": "The query failed: " + str(exc), "isError": True}
 
+    if name in PROPOSE_NAMES:
+        return _run_propose(name, arguments, company_id)
+
     if name not in TK.TOOLS:
         return {"message": "No such tool: " + str(name), "isError": True}
 
@@ -189,6 +217,45 @@ def _run_tool(name, arguments, company_id):
                 "isError": True}
     except Exception as exc:
         return {"message": "That did not work: " + str(exc), "isError": True}
+
+
+def _run_propose(name, arguments, company_id):
+    """File a suggestion in Agent Proposals. Nothing is posted here.
+
+    Validation is the same code MCP uses: unknown ledgers, suppliers and items
+    are refused, and so is an entry that does not balance. A refusal goes back
+    to the model so it can look the name up and try again.
+    """
+    from .agent_proposals import (ProposalRejected, propose_purchase,
+                                  propose_voucher)
+
+    if not _may_propose():
+        return {"message": "You do not have permission to enter vouchers, so "
+                           "I cannot suggest one for you either.",
+                "isError": True}
+    user = P._user()
+    file_it = propose_purchase if name == "propose_purchase" else propose_voucher
+    try:
+        proposal_id, summary = file_it(arguments or {}, company_id,
+                                       getattr(user, "id", None))
+    except ProposalRejected as rejected:
+        return {"message": str(rejected), "isError": True}
+    except Exception as exc:
+        return {"message": "The suggestion could not be filed: " + str(exc),
+                "isError": True}
+
+    voucher_type = "Purchase" if name == "propose_purchase" else (
+        (arguments or {}).get("voucher_type") or "Journal")
+    return {
+        "title": "Proposal #%s waiting for approval" % proposal_id,
+        "summary": summary,
+        "message": ("Proposal #%s filed: %s. Nothing has been posted - it is "
+                    "waiting in Agent Proposals for a person to check and "
+                    "save." % (proposal_id, summary)),
+        "proposal_id": proposal_id,
+        "voucher_type": voucher_type,
+        "tool": name,
+    }
 
 
 def _feedback(result):
@@ -437,6 +504,8 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
             block.append("<b>" + str(title) + "</b>")
         if summary and summary != title:
             block.append(str(summary))
+        if result.get("proposal_id"):
+            block.append(_proposal_card(result))
         table = CR.render_table(result)
         if table:
             block.append(table)
@@ -483,6 +552,19 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
         },
         "explanation": "agent loop over the coded tools",
     }
+
+
+def _proposal_card(result):
+    """Where a suggestion went, and the one click that opens it for editing."""
+    from urllib.parse import quote
+
+    pid = int(result["proposal_id"])
+    vtype = quote(str(result.get("voucher_type") or "Journal"))
+    return ("<div class='rv-proposal'>Nothing has been posted. "
+            "<a class='btn btn-sm btn-primary' href='/voucher/%s?proposal=%d'>"
+            "Open in voucher screen</a> "
+            "<a class='rv-alt-dl' href='/settings/agent-proposals'>"
+            "All agent proposals</a></div>" % (vtype, pid))
 
 
 def _escape_prose(text):

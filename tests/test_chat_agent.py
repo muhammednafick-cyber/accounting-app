@@ -292,6 +292,110 @@ class DownloadTests(unittest.TestCase):
         self.assertNotEqual(reply["intent"], "export_chat_result")
 
 
+class ProposingTests(unittest.TestCase):
+    """Suggesting an entry - the same path Claude uses over MCP."""
+
+    def setUp(self):
+        self._run, self._ask = TK.run, A._ask_model
+        self._allowed, self._sql = P.allowed_tool_names, P.can_use_ai_sql
+        self._may = A._may_propose
+        TK.run = lambda name, args, company_id=None, state=None: (
+            table(name, [["Cash", "100.00"]]), args)
+        P.allowed_tool_names = lambda: ["cash_balance"]
+        P.can_use_ai_sql = lambda: False
+        A._may_propose = lambda: True
+        self.filed = []
+
+    def tearDown(self):
+        TK.run, A._ask_model = self._run, self._ask
+        P.allowed_tool_names, P.can_use_ai_sql = self._allowed, self._sql
+        A._may_propose = self._may
+
+    def _accept(self, proposal_id=7, summary="Receipt of 5,000 from Almarai"):
+        """Stand in for agent_proposals, recording what it was handed."""
+        import accounting_app.agent_proposals as AP
+
+        self._real = (AP.propose_voucher, AP.propose_purchase)
+
+        def fake(payload, company_id, user_id):
+            self.filed.append((payload, company_id, user_id))
+            return proposal_id, summary
+
+        AP.propose_voucher = fake
+        AP.propose_purchase = fake
+        self.addCleanup(lambda: setattr(AP, "propose_voucher", self._real[0]))
+        self.addCleanup(lambda: setattr(AP, "propose_purchase", self._real[1]))
+
+    def test_the_tools_are_offered_when_the_user_may_enter_vouchers(self):
+        names = [t["function"]["name"] for t in A._catalogue()]
+        self.assertIn("propose_voucher", names)
+        self.assertIn("propose_purchase", names)
+
+    def test_they_are_hidden_from_someone_who_may_not(self):
+        A._may_propose = lambda: False
+        names = [t["function"]["name"] for t in A._catalogue()]
+        self.assertNotIn("propose_voucher", names)
+        self.assertNotIn("propose_purchase", names)
+
+    def test_a_hidden_tool_is_still_refused_if_called(self):
+        # The catalogue is a convenience; the check has to be on the way in.
+        A._may_propose = lambda: False
+        result = A._run_tool("propose_voucher", {"voucher_type": "Payment"}, 1)
+        self.assertTrue(result["isError"])
+        self.assertIn("permission", result["message"].lower())
+
+    def test_a_filed_proposal_is_reported_as_waiting_not_posted(self):
+        self._accept()
+        A._ask_model = FakeModel(
+            {"content": "", "tool_calls": [call(
+                "propose_voucher",
+                '{"voucher_type": "Receipt", "date": "2026-09-22"}')]},
+            {"content": "I have suggested it.", "tool_calls": []},
+        )
+        reply = A.run("receipt of 5000 from Almarai by cash", company_id=1)
+
+        self.assertEqual(len(self.filed), 1)
+        self.assertEqual(self.filed[0][1], 1)
+        self.assertIn("waiting for approval", reply["response"])
+        self.assertIn("Nothing has been posted", reply["response"])
+        self.assertIn("/voucher/Receipt?proposal=7", reply["response"])
+        self.assertIn("/settings/agent-proposals", reply["response"])
+
+    def test_a_rejected_proposal_goes_back_to_the_model_to_retry(self):
+        import accounting_app.agent_proposals as AP
+
+        real = AP.propose_voucher
+
+        def refuse(payload, company_id, user_id):
+            raise AP.ProposalRejected("No ledger called 'Almari'.")
+
+        AP.propose_voucher = refuse
+        self.addCleanup(lambda: setattr(AP, "propose_voucher", real))
+
+        model = FakeModel(
+            {"content": "", "tool_calls": [call("propose_voucher", '{}')]},
+            {"content": "That name does not exist.", "tool_calls": []},
+        )
+        A._ask_model = model
+        reply = A.run("receipt from Almari", company_id=1)
+
+        told = [m for m in model.seen[1][0] if m["role"] == "tool"][0]
+        self.assertIn("No ledger called", told["content"])
+        self.assertNotIn("waiting for approval", reply["response"])
+
+    def test_a_purchase_opens_on_the_purchase_screen(self):
+        self._accept(proposal_id=9, summary="Purchase from Gulf Trading")
+        A._ask_model = FakeModel(
+            {"content": "", "tool_calls": [call("propose_purchase", '{}')]},
+            {"content": "Suggested.", "tool_calls": []},
+        )
+        reply = A.run("enter this invoice", company_id=1)
+        self.assertIn("/voucher/Purchase?proposal=9", reply["response"])
+
+    def test_the_prompt_forbids_claiming_it_posted(self):
+        self.assertIn("never say it has been posted", A.SYSTEM_PROMPT)
+
+
 class SeparationTests(unittest.TestCase):
     """The old assistant has to be unaffected and remain the default."""
 
@@ -312,13 +416,16 @@ class SeparationTests(unittest.TestCase):
                          encoding='utf-8') as f:
                 self.assertNotIn("chat_agent", f.read(), name)
 
-    def test_the_agent_offers_no_way_to_write(self):
+    def test_the_agent_cannot_post_only_suggest(self):
+        # It may now file a proposal, which is not a posting: the entry reaches
+        # the books only when a person saves it on the voucher screen.
         import io
         with io.open(os.path.join(os.path.dirname(__file__), '..',
                                   'accounting_app', 'chat_agent.py'),
                      encoding='utf-8') as f:
             source = f.read()
-        for writer in ("propose_voucher", "propose_purchase", "INSERT", "UPDATE "):
+        for writer in ("INSERT", "UPDATE ", "DELETE ", "post_voucher",
+                       "save_voucher", "commit()"):
             self.assertNotIn(writer, source, writer)
 
 
