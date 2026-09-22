@@ -34,10 +34,13 @@ from . import chat_router as CR
 from . import chat_toolkit as TK
 
 # How many times round the loop before we stop and answer with what we have.
-# Six covers "compare these two things and tell me what moved"; past that the
-# question is usually one the model has misunderstood, and every extra step is
-# another call the company pays for.
-MAX_STEPS = 6
+# Ten covers "compare these two things and tell me what moved", and leaves a
+# recording request room to look a name up, be refused, and get it right. Six
+# was not enough: the first attempt spent all of them hunting for a ledger and
+# never reached the suggestion it was asked for. Past ten the question is
+# usually one the model has misunderstood, and every extra step is another
+# call the company pays for.
+MAX_STEPS = 10
 
 # Rows fed back to the model per tool call. The user still sees every row - this
 # cap is only what goes back into the conversation, so a 4,000-row ledger dump
@@ -61,13 +64,27 @@ Dates in this company are day-month-year. Amounts are in the company's own \
 currency; do not convert them.
 
 You can SUGGEST an entry, never post one. When the user asks you to record \
-something, use propose_voucher (money only: Payment, Receipt, Contra, Journal, \
-Expense, Service Income) or propose_purchase (a supplier invoice with items). \
-Look up exact ledger, supplier and item names with the other tools first - a \
-guessed name is refused. The suggestion waits in Agent Proposals for a person \
-to check and save; say so, and never say it has been posted or recorded. You \
-cannot change, delete or reverse anything. Sales cannot be proposed; point the \
-user at the sales screen."""
+something - "receipt of 5000 from X", "paid Y 300 for fuel" - that is a job \
+for propose_voucher (money only: Payment, Receipt, Contra, Journal, Expense, \
+Service Income) or propose_purchase (a supplier invoice with items), and \
+nothing else. Do it in as few steps as you can:
+
+1. Call the propose tool straight away with the names as the user said them.
+2. If it comes back saying a name does not exist, it usually tells you the \
+real ones. Use one of those and call the tool again.
+3. Only if it gives you nothing to go on, call search_ledger ONCE for that \
+name. Never call list_ledgers for this - it returns hundreds of rows and \
+tells you nothing a search would not.
+4. If several names genuinely fit, stop and ask the user which one they mean.
+
+Do not research a recording request. Reports, balances and past vouchers are \
+not needed to suggest a new entry, and a suggestion the user never gets is \
+worse than one they have to correct.
+
+The suggestion waits in Agent Proposals for a person to check and save; say \
+so, and never say it has been posted or recorded. You cannot change, delete \
+or reverse anything. Sales cannot be proposed; point the user at the sales \
+screen."""
 
 
 class AgentUnavailable(Exception):
@@ -475,15 +492,54 @@ def run(question, company_id, history=None):
 
     # Out of steps. Everything gathered is still shown; only the closing
     # sentence is missing, and saying so is better than inventing one.
-    return _compose(question, used, None,
-                    "I stopped after %d steps. Here is what I found - ask me "
-                    "something narrower if this isn't it." % MAX_STEPS,
+    note = ("I stopped after %d steps. Here is what I found - ask me something "
+            "narrower if this isn't it." % MAX_STEPS)
+    # A recording request that ends in a pile of reports looks like an answer
+    # until you notice nothing was suggested. Say it plainly instead.
+    if _sounds_like_recording(question) and not any(
+            name in PROPOSE_NAMES for name, _ in used):
+        note = ("I ran out of steps before suggesting that entry - what you "
+                "see below is only what I looked up. Try again naming the "
+                "ledger exactly, for example \"receipt of 5000 from "
+                "<full ledger name> into cash today\".")
+    return _compose(question, used, None, note,
                     steps=MAX_STEPS, seconds=time.perf_counter() - started)
 
 
 # ============================================================
 # The answer
 # ============================================================
+
+# A question about the past, however it is worded, is not a request to record
+# anything: "how much did we receive from Almarai" must never be read as an
+# instruction to file a receipt.
+ASKING = re.compile(
+    r"^\s*(?:and\s+|also\s+|ok\s+)?"
+    r"(how|what|which|who|when|where|why|show|list|give|find|tell|compare|"
+    r"total|sum|is|are|do|did|does|can|could|any)\b", re.I)
+
+# Either naming the voucher, or describing the movement with an amount -
+# "received 5000 from Almarai" is how a person actually types it.
+RECORDING_WORDS = re.compile(
+    r"\b(post|enter|record|create|make|add|book|raise)\b.{0,40}"
+    r"\b(receipt|payment|voucher|entry|contra|journal|expense|invoice|purchase)\b"
+    r"|\b(receipt|payment|contra|journal|expense)\b.{0,30}\b(of|from|to)\b"
+    r"|\b(received|receive|paid|pay|spent|transferred|transfer|bought|"
+    r"purchased)\b[^.]{0,40}?\d",
+    re.I | re.S)
+
+
+def _sounds_like_recording(question):
+    """Whether the user was asking for an entry rather than a report.
+
+    Only used to explain a run that ended without one - it never decides
+    whether to propose. Getting it wrong costs a sentence, not an entry.
+    """
+    text = (question or "").strip()
+    if ASKING.match(text):
+        return False
+    return bool(RECORDING_WORDS.search(text))
+
 
 def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
     """Build the chat bubble: real tables, then the model's words.

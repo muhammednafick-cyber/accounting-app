@@ -87,7 +87,10 @@ class ValidationTests(unittest.TestCase):
         message = self._reject(balanced(ledger_entries=[
             entry("Nafi-Cash", "Credit", 100), entry("Nonsense", "Debit", 100)]))
         self.assertIn("Nonsense", message)
-        self.assertIn("list_ledgers", message)
+        # Pointed at a search rather than a dump: listing every ledger is
+        # hundreds of rows, and it was how the agent used to burn its steps.
+        self.assertIn("search_ledger", message)
+        self.assertNotIn("list_ledgers", message)
 
     def test_a_missing_voucher_type_is_refused(self):
         self.assertIn("voucher type", self._reject(balanced(voucher_type="")))

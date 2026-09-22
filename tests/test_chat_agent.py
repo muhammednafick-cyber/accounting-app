@@ -396,6 +396,72 @@ class ProposingTests(unittest.TestCase):
         self.assertIn("never say it has been posted", A.SYSTEM_PROMPT)
 
 
+class RecordingFlowTests(unittest.TestCase):
+    """The first real run failed here: asked to record a receipt, the agent
+    spent all six steps looking ledgers up - including listing all 275 of them
+    - and never suggested anything."""
+
+    def test_a_refused_name_names_the_real_ones(self):
+        from accounting_app.agent_proposals import _did_you_mean
+
+        known = {"Nafi-ALMARAI EMIRATES COMPANY L.L.C", "Nafi-ALMARAI UNBILL",
+                 "Nafi-Cash", "Inventory"}
+        hint = _did_you_mean("Almarai", known)
+        self.assertIn("ALMARAI EMIRATES", hint)
+        self.assertIn("ALMARAI UNBILL", hint)
+        # Nothing like it: no misleading suggestion.
+        self.assertEqual(_did_you_mean("Zzzzz", known), "")
+
+    def test_the_prompt_sends_it_to_propose_before_researching(self):
+        prompt = A.SYSTEM_PROMPT
+        self.assertIn("Call the propose tool straight away", prompt)
+        self.assertIn("Never call list_ledgers for this", prompt)
+        self.assertIn("Do not research a recording request", prompt)
+
+    def test_there_is_room_to_be_refused_and_try_again(self):
+        # Six steps could not survive one lookup, one refusal and one retry.
+        self.assertGreaterEqual(A.MAX_STEPS, 10)
+
+    def test_a_recording_request_is_told_when_nothing_was_suggested(self):
+        # The failure mode to avoid: a wall of reports that looks like an
+        # answer until you notice no entry was ever proposed.
+        real = TK.run
+        allowed, sql = P.allowed_tool_names, P.can_use_ai_sql
+        may = A._may_propose
+        TK.run = lambda name, args, company_id=None, state=None: (
+            table(name, [["Cash", "100.00"]]), args)
+        P.allowed_tool_names = lambda: ["search_ledger"]
+        P.can_use_ai_sql = lambda: False
+        A._may_propose = lambda: True
+        ask = A._ask_model
+        try:
+            A._ask_model = lambda messages, tools: {
+                "content": "", "tool_calls": [call("search_ledger")]}
+            reply = A.run("received 5000 from almarai", company_id=1)
+        finally:
+            TK.run, A._ask_model = real, ask
+            P.allowed_tool_names, P.can_use_ai_sql = allowed, sql
+            A._may_propose = may
+
+        self.assertIn("ran out of steps before suggesting that entry",
+                      reply["response"])
+
+    def test_it_knows_a_recording_request_from_a_question(self):
+        for asked in ("received 5000 from almarai",
+                      "post a receipt of 5000 from Almarai",
+                      "paid 1200 to Gulf Trading by cash",
+                      "transfer 1000 from cash to bank"):
+            self.assertTrue(A._sounds_like_recording(asked), asked)
+
+        for asked in ("how much did we receive from Almarai",
+                      "what did we pay Gulf in 2026",
+                      "show me receipts over 5000",
+                      "list payments last month",
+                      "total paid to suppliers 2026",
+                      "top 5 customers"):
+            self.assertFalse(A._sounds_like_recording(asked), asked)
+
+
 class SeparationTests(unittest.TestCase):
     """The old assistant has to be unaffected and remain the default."""
 
