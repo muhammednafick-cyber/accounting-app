@@ -391,9 +391,14 @@
                 <input type="file" id="vaChatFileInput" accept=".xlsx" hidden />
                 <!-- File input for AI Invoice Processing (PDF/Image) -->
                 <input type="file" id="vaAIInvoiceInput" accept=".pdf,.jpg,.jpeg,.png" hidden />
+                <!-- Purchase invoice read by the agent into a proposal -->
+                <input type="file" id="vaAgentInvoiceInput" accept=".pdf,.jpg,.jpeg,.png" hidden />
                 <div class="rv-chat-input-bar">
                     <button id="vaChatMicBtn" type="button" class="btn" title="Speak"
                         style="margin-right: 5px;">🎤</button>
+                    <button id="vaAgentInvoiceBtn" type="button" class="btn" hidden
+                        title="Attach a purchase invoice. It is read into a suggested voucher, which you then check and save."
+                        style="margin-right: 5px;">📎</button>
                     <input id="vaChatInput" type="text" autocomplete="off"
                         placeholder="Example: received 5000 from ABC by cash today" />
                     <button id="vaChatSendBtn" type="button" class="btn">Send</button>
