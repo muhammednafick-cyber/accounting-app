@@ -1154,8 +1154,12 @@ def add_voucher_route():
                  conn_cd = get_db_connection()
                  cur_cd = conn_cd.cursor()
                  placeholders = ','.join('?' for _ in candidates)
-                 query = f"SELECT credit_days FROM ledgers WHERE ledger_name IN ({placeholders}) AND credit_days > 0 LIMIT 1"
-                 cur_cd.execute(query, candidates)
+                 # Ledger names repeat across companies - "Cash", "Almarai" -
+                 # so without the company this read another client's credit
+                 # days and gave this voucher their due date.
+                 query = (f"SELECT credit_days FROM ledgers WHERE company_id = ? "
+                          f"AND ledger_name IN ({placeholders}) AND credit_days > 0 LIMIT 1")
+                 cur_cd.execute(query, [get_current_company_id()] + list(candidates))
                  row = cur_cd.fetchone()
                  if row:
                      computed_credit_days = row[0]

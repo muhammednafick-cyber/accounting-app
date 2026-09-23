@@ -2259,11 +2259,12 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
                          from accounting_app import get_db_connection
                          conn_cd = get_db_connection()
                          cur_cd = conn_cd.cursor()
+                         # No company, no lookup: reading by name alone would
+                         # take whichever client's ledger of that name came first.
+                         row = None
                          if company_id:
                              cur_cd.execute("SELECT credit_days FROM ledgers WHERE ledger_name = ? AND company_id = ? LIMIT 1", (party_name, company_id))
-                         else:
-                             cur_cd.execute("SELECT credit_days FROM ledgers WHERE ledger_name = ? LIMIT 1", (party_name,))
-                         row = cur_cd.fetchone()
+                             row = cur_cd.fetchone()
                          if row and row[0]:
                              credit_days_val = row[0]
                          conn_cd.close()
