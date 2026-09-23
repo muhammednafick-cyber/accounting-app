@@ -12,8 +12,8 @@
     --brand: #2563ab;
     --brand-dark: #1a3c6e;
     --brand-soft: #dbeafe;
-    --nav-from: #667eea;
-    --nav-to: #764ba2;
+    --nav-from: #245c56;   /* brand, as in ui.css --brand */
+    --nav-to: #16443f;     /* brand-dark */
 
     /* intent */
     --success: #28a745;
@@ -1100,48 +1100,34 @@ table td button {
     border-top: 1px solid #eee;
 }
 
-#vaChatNewBtn {
-    background-color: var(--info);
-    border-color: var(--info);
-    color: white;
-}
-
-#vaChatNewBtn:hover {
-    background-color: #138496;
-    border-color: #117a8b;
-}
-
-#vaChatSubmitBtn {
-    background-color: var(--success);
-    border-color: var(--success);
-    color: white;
-}
-
-#vaChatSubmitBtn:hover {
-    background-color: var(--success-dark);
-    border-color: #1e7e34;
-}
-
+#vaChatNewBtn,
 #vaChatShowDraftsBtn {
-    background-color: var(--warning);
-    border-color: var(--warning);
-    color: #212529;
+    background-color: #fff;
+    border: 1px solid var(--border, #dde5eb);
+    color: var(--brand-dark, #16443f);
 }
 
+#vaChatNewBtn:hover,
 #vaChatShowDraftsBtn:hover {
-    background-color: #e0a800;
-    border-color: #d39e00;
+    background-color: var(--brand-soft, #e8f3ef);
+    border-color: var(--brand, #245c56);
+    color: var(--brand-dark, #16443f);
 }
 
-#vaChatSendBtn {
-    background-color: var(--nav-from);
-    border-color: var(--nav-from);
+#vaChatSubmitBtn,
+#vaChatSendBtn,
+#vaChatAddAllBtn {
+    background-color: var(--brand, #245c56);
+    border-color: var(--brand, #245c56);
     color: white;
 }
 
-#vaChatSendBtn:hover {
-    background-color: #5a67d8;
-    border-color: #5a67d8;
+#vaChatSubmitBtn:hover,
+#vaChatSendBtn:hover,
+#vaChatAddAllBtn:hover {
+    background-color: var(--brand-dark, #16443f);
+    border-color: var(--brand-dark, #16443f);
+    color: white;
 }
 
 #vaChatMicBtn {
