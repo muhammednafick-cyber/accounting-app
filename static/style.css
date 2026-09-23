@@ -792,7 +792,7 @@ table td button {
 }
 
 .global-chat-fab:hover {
-    background: #5a71e6;
+    background: var(--nav-to);
 }
 
 .global-chat-overlay {
@@ -1034,7 +1034,7 @@ table td button {
 .global-chat-window .rv-chat-input-bar input:focus {
     border-color: var(--nav-from);
     background-color: #fff;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+    box-shadow: 0 4px 12px rgba(36, 92, 86, 0.12);
 }
 
 .global-chat-window .rv-chat-input-bar .btn {

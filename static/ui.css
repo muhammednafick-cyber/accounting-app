@@ -158,3 +158,57 @@ button[type=submit]:disabled{opacity:.65;cursor:progress}
 .rv-feedback button.chosen{opacity:1;border-color:var(--brand);background:var(--brand-soft)}
 select.global-chat-select:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:600px){.rv-followup{padding:8px 12px;font-size:13px}.rv-chart{height:190px}}
+
+/* ---------------------------------------------------------------------------
+   Chat on phones and tablets.
+   Measured before: on a 375px phone the messages had 44% of the screen, the
+   send button and wide tables ran off the right edge, the text box was 14px
+   (iOS zooms the page for anything under 16), and the switches were 13px
+   targets. On a tablet the window stopped at 760px of a 1024px screen.
+   --------------------------------------------------------------------------- */
+
+/* Every size: a wide table scrolls inside its own bubble instead of pushing
+   the whole conversation - and the send button - past the window's edge. */
+.global-chat-window .rv-chat{grid-template-columns:minmax(0,1fr)}
+.global-chat-window .rv-chat>*,.global-chat-window .rv-msg,.global-chat-window .rv-bubble{min-width:0}
+.global-chat-window .rv-bubble .rv-table-wrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+/* Tablets and phones. */
+@media (max-width:1024px){
+  body.chat-open{overflow:hidden}
+  .global-chat-window{height:min(900px,92vh);height:min(900px,92dvh)}
+  .global-chat-window .global-chat-select{height:40px;font-size:15px}
+  .global-chat-window .global-chat-ai-toggle{min-height:36px;padding:0 12px;border-radius:999px;background:rgba(255,255,255,.12);display:inline-flex!important;align-items:center;gap:7px}
+  .global-chat-window .global-chat-ai-toggle input[type="checkbox"]{width:18px!important;height:18px}
+  .global-chat-window .global-chat-close{width:40px;height:40px}
+  .global-chat-window .rv-chat-input-bar input{font-size:16px!important}
+  .global-chat-window .rv-chat-input-bar .btn{min-height:44px;min-width:44px}
+  .global-chat-window .rv-cell-link{display:inline-block;padding:6px 0}
+  .global-chat-window .rv-feedback button{min-width:44px;min-height:36px}
+  .global-chat-window .rv-followup{min-height:36px}
+  .global-chat-window .rv-chat-actions .btn{min-height:44px}
+  /* The voucher buttons do nothing until a voucher type is chosen. */
+  .global-chat-window.is-general .rv-chat-actions,
+  .global-chat-window.is-general .rv-drafts-label{display:none}
+  /* What is left of that row is the status line - kept, because the Agent's
+     progress shows there - so it keeps only the room its text needs. */
+  .global-chat-window.is-general .rv-drafts-meta{padding:2px 14px 0;min-height:0;line-height:1.3}
+}
+
+/* Phones: the chat is the screen. */
+@media (max-width:600px){
+  .global-chat-overlay{padding:0;align-items:stretch;justify-content:stretch}
+  .global-chat-window{width:100vw!important;max-width:none!important;border-radius:0;border:0;
+    height:100vh;height:100dvh;height:var(--chat-vh,100dvh);
+    padding-bottom:env(safe-area-inset-bottom)}
+  .global-chat-header{padding:calc(10px + env(safe-area-inset-top)) 12px 10px;align-items:flex-start}
+  /* The title is the one thing the conversation below already says. */
+  .global-chat-header-left .global-chat-title{display:none}
+  .global-chat-header-left{gap:8px}
+  .global-chat-window .global-chat-select{flex:1 1 150px!important}
+  .global-chat-window .rv-chat{padding:0 12px 10px;gap:6px}
+  .global-chat-window .rv-bubble{max-width:94%}
+  .global-chat-window .rv-chat-input-bar{gap:8px;padding:8px 0;margin-top:4px}
+  .global-chat-window .rv-chat-input-bar input{padding:11px 14px}
+  .global-chat-fab{bottom:calc(16px + env(safe-area-inset-bottom));right:16px}
+}

@@ -1060,6 +1060,7 @@ document.addEventListener('DOMContentLoaded', function () {
         hideLedgerPicker();
         updateDraftCount(assistantState.voucherType || '');
         if (newBtn) newBtn.textContent = assistantState.voucherType ? `New ${assistantState.voucherType}` : 'New';
+        markChatMode();
 
         // --- Custom Logic for Import-Only Vouchers ---
         const isImportOnly = ['Sales', 'Purchase'].includes(vt);
@@ -1831,11 +1832,39 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    // Tells the stylesheet which mode the chat is in: the voucher buttons are
+    // hidden on phones and tablets while there is no voucher type to use them.
+    function markChatMode() {
+        const win = document.querySelector('.global-chat-window');
+        if (win) win.classList.toggle('is-general', !assistantState.voucherType);
+    }
+
+    // On a phone the chat fills the screen, and when the keyboard opens the
+    // visible area shrinks under it. The height it is given follows the
+    // visual viewport, so the text box stays above the keyboard instead of
+    // behind it; the messages keep their place at the bottom.
+    (function followVisualViewport() {
+        const vv = window.visualViewport;
+        if (!vv) return;
+        const apply = () => {
+            document.documentElement.style.setProperty('--chat-vh', vv.height + 'px');
+            const list = document.getElementById('vaChatMessages');
+            if (list && document.body.classList.contains('chat-open')) {
+                list.scrollTop = list.scrollHeight;
+            }
+        };
+        vv.addEventListener('resize', apply);
+        apply();
+    })();
+
     function openGlobalChat() {
         if (!chatOverlay) return;
         chatOverlay.hidden = false;
         chatOverlay.removeAttribute('hidden');
         chatOverlay.style.removeProperty('display');
+        // The page behind a full-screen chat must not scroll under the finger.
+        document.body.classList.add('chat-open');
+        markChatMode();
         hideLedgerPicker();
         const pageSlug = currentVoucherSlug();
         const savedSlug = readSelectedVoucherSlug();
@@ -1874,6 +1903,7 @@ document.addEventListener('DOMContentLoaded', function () {
         chatOverlay.hidden = true;
         chatOverlay.setAttribute('hidden', '');
         chatOverlay.style.removeProperty('display');
+        document.body.classList.remove('chat-open');
         hideLedgerPicker();
     }
 
