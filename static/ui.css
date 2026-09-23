@@ -212,3 +212,19 @@ select.global-chat-select:disabled{opacity:.5;cursor:not-allowed}
   .global-chat-window .rv-chat-input-bar input{padding:11px 14px}
   .global-chat-fab{bottom:calc(16px + env(safe-area-inset-bottom));right:16px}
 }
+
+/* Send: the word on wider screens, a paper plane on a phone, where the word
+   squeezed the text box and read as a faded pill. The label stays for screen
+   readers through aria-label. */
+#vaChatSendBtn .send-icon{display:none}
+@media (max-width:600px){
+  #vaChatSendBtn{width:44px;height:44px;min-width:44px;padding:0!important;border-radius:50%!important;
+    display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px}
+  #vaChatSendBtn .send-label{display:none}
+  #vaChatSendBtn .send-icon{display:block;margin-left:-2px}
+  /* Disabled until there is something to send - dimmer, but still clearly
+     the send button rather than a washed-out blank. */
+  #vaChatSendBtn:disabled{opacity:.45}
+  .global-chat-window .rv-chat-input-bar #vaChatMicBtn{width:44px;height:44px;min-width:44px;padding:0;
+    border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;margin-right:0!important}
+}

@@ -96,8 +96,33 @@ class ScriptTests(unittest.TestCase):
 
     def test_browsers_are_told_all_three_files_changed(self):
         base = source("templates", "base.html")
-        for name in ("style.css", "ui.css", "script.js"):
+        for name in ("style.css", "script.js"):
             self.assertIn("filename='%s') }}?v=20260923_3" % name, base)
+        self.assertIn("filename='ui.css') }}?v=20260923_4", base)
+
+
+class SendButtonTests(unittest.TestCase):
+    """A paper plane on a phone, where the word squeezed the text box."""
+
+    def test_the_button_keeps_its_name_for_screen_readers(self):
+        base = source("templates", "base.html")
+        self.assertIn('id="vaChatSendBtn" type="button" class="btn" aria-label="Send"', base)
+        self.assertIn('<span class="send-label">Send</span>', base)
+        self.assertIn('class="send-icon"', base)
+
+    def test_the_icon_shows_only_on_a_phone(self):
+        css = source("static", "ui.css")
+        self.assertIn("#vaChatSendBtn .send-icon{display:none}", css)
+        phone = css[css.index("Send: the word on wider screens"):]
+        self.assertIn("#vaChatSendBtn .send-label{display:none}", phone)
+        self.assertIn("#vaChatSendBtn .send-icon{display:block", phone)
+        self.assertIn("width:44px;height:44px", phone)
+
+    def test_nothing_rewrites_the_button_text(self):
+        # Setting textContent would wipe the icon out.
+        js = source("static", "script.js")
+        self.assertNotIn("sendBtn.textContent", js)
+        self.assertNotIn("sendBtn.innerText", js)
 
 
 if __name__ == "__main__":

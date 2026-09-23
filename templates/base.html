@@ -15,7 +15,7 @@
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     {% block extra_head %}{% endblock %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}?v=20260923_3">
+    <link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}?v=20260923_4">
 </head>
 
 <body class="{% if current_user.is_authenticated %}app-shell{% else %}public-shell{% endif %}" data-company-id="{{ session.get('company_id', '') }}" data-user-id="{{ current_user.id if current_user.is_authenticated else '' }}" data-currency="{{ company.currency_code if company and company.currency_code else 'AED' }}">
@@ -399,7 +399,13 @@
                         style="margin-right: 5px;">🎤</button>
                     <input id="vaChatInput" type="text" autocomplete="off"
                         placeholder="Example: received 5000 from ABC by cash today" />
-                    <button id="vaChatSendBtn" type="button" class="btn">Send</button>
+                    <button id="vaChatSendBtn" type="button" class="btn" aria-label="Send" title="Send">
+                        <span class="send-label">Send</span>
+                        <svg class="send-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"
+                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>
+                        </svg>
+                    </button>
                 </div>
                 <div class="rv-chat-actions">
                     <button id="vaChatNewBtn" type="button" class="btn btn-secondary">New</button>
