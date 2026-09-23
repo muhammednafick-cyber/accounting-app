@@ -756,6 +756,12 @@ def chat(user_id, company_id):
                 history=data.get("history") or [])
         if "error" in reply:
             return jsonify({"success": False, "message": reply["error"]}), 500
+        from .chat_routes import MISS_INTENTS
+        from database.chat_insights_db import record_miss
+
+        reason = MISS_INTENTS.get(reply.get("intent"))
+        if reason:
+            record_miss(company_id, user_id, question, reason)
     except Exception as exc:
         print(f"[mobile] chat failed: {exc}")
         return jsonify({"success": False,

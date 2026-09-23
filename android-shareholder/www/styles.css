@@ -309,3 +309,17 @@ button.ghost {
                   color: var(--muted); }
 .bubble .rv-src-ai { color: #8a6d1f; }
 .bubble .rv-agent-say { margin-top: 8px; }
+
+/* ── Next questions and clickable cells ──────────────────────────── */
+.bubble .rv-cell-link {
+    background: none; border: 0; padding: 0; font: inherit;
+    color: var(--blue); text-decoration: underline; text-align: left;
+}
+.bubble .rv-followups { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.bubble .rv-followup {
+    background: #fff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 8px 12px; font-size: .8rem; color: var(--blue); min-height: 36px;
+}
+/* The thumbs post to a signed-in web session this app does not have, and the
+   charts need a library the app does not ship. The table is the answer. */
+.bubble .rv-feedback, .bubble .rv-chart { display: none; }

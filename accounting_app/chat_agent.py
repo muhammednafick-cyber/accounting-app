@@ -338,12 +338,37 @@ def _export_previous(question):
 # The loop
 # ============================================================
 
-def run(question, company_id, history=None):
+def _tell(progress, text):
+    """Report a step to whoever is watching. Never lets that fail the answer."""
+    if progress is None:
+        return
+    try:
+        progress(text)
+    except Exception as exc:
+        print(f"[agent] progress report failed: {exc}")
+
+
+def _describe_step(name):
+    """What a tool call looks like to the person waiting for it."""
+    if name == "query_database":
+        return "Querying the database"
+    tool = TK.TOOLS.get(name)
+    label = (name or "a report").replace("_", " ")
+    if tool is not None and tool.group:
+        return "Running %s (%s)" % (label, tool.group.lower())
+    return "Running " + label
+
+
+def run(question, company_id, history=None, progress=None):
     """Answer one message, calling as many tools as it takes.
 
     Returns the same envelope as the old assistant - {intent, response, data,
     explanation} - so the chat window renders it without knowing which
     assistant produced it.
+
+    `progress`, when given, is called with a short line for each step, so a
+    person waiting through six model calls can see where it has got to - and
+    notice early when it is heading the wrong way.
     """
     question = (question or "").strip()
     if not question:
@@ -372,6 +397,8 @@ def run(question, company_id, history=None):
     started = time.perf_counter()
 
     for step in range(MAX_STEPS):
+        _tell(progress, "Reading your question" if step == 0
+              else "Deciding what to look at next")
         try:
             reply = _ask_model(messages, tools)
         except AgentUnavailable as exc:
@@ -396,6 +423,7 @@ def run(question, company_id, history=None):
         })
         for call in calls:
             name = (call.get("function") or {}).get("name")
+            _tell(progress, _describe_step(name))
             result = _run_tool(name, _arguments(call), company_id)
             if not result.get("isError"):
                 used.append((name, result))
@@ -425,6 +453,8 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
     assistant uses. The model's text is kept separate and labelled, so a reader
     can always see which part of the answer was computed and which was written.
     """
+    from . import chat_extras as X
+
     parts = []
     token = None
     fmt = CR.requested_format(question)
@@ -434,17 +464,20 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
         title = result.get("title")
         summary = result.get("summary")
         if title:
-            block.append("<b>" + str(title) + "</b>")
+            block.append("<b>" + X.esc(title) + "</b>")
         if summary and summary != title:
-            block.append(str(summary))
+            block.append(X.safe(summary))
         table = CR.render_table(result)
         if table:
             block.append(table)
+            drawn = X.render_chart(X.chart_spec(name, result))
+            if drawn:
+                block.append(drawn)
             totals = CR.render_totals(result)
             if totals:
                 block.append(totals)
         if result.get("note"):
-            block.append("<small class='rv-note'>" + str(result["note"]) + "</small>")
+            block.append("<small class='rv-note'>" + X.safe(result["note"]) + "</small>")
 
         # Each table carries its own download. An answer here can hold three of
         # them, so a single button at the bottom would quietly hand over
@@ -467,6 +500,10 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
         names = ", ".join(sorted({n for n, _ in used}))
         parts.append("<small class='rv-src'>Computed from your data &middot; "
                      + names + "</small>")
+        last_name, last_result = used[-1]
+        parts.append(X.render_follow_ups(
+            X.follow_ups(last_name, last_result, question)))
+        parts.append(X.render_feedback(question, "agent:" + last_name))
     elif not text:
         parts.append("I couldn't find anything for that.")
 
@@ -480,9 +517,42 @@ def _compose(question, used, prose, fallback_note, steps=None, seconds=None):
             "steps": steps,
             "seconds": round(seconds, 2) if seconds else None,
             "export_token": token,
+            "memory": _memory(used, text),
         },
         "explanation": "agent loop over the coded tools",
     }
+
+
+# What a follow-up needs, and no more: it is sent back with every question.
+MEMORY_LIMIT = 1200
+
+
+def _memory(used, prose):
+    """The answer, as the agent should remember it next turn.
+
+    It used to remember only which reports it ran - "Answered using:
+    ledger_statement" - so "and last year?" had no party, no period and no
+    figures to go on. This keeps each report's own heading and summary line,
+    which carry exactly those, and the closing sentence.
+    """
+    import re
+
+    lines = []
+    for _name, result in used:
+        heading = str(result.get("title") or "").strip()
+        summary = re.sub(r"<[^>]+>", "", str(result.get("summary") or "")).strip()
+        totals = result.get("totals") or {}
+        line = heading
+        if summary and summary != heading:
+            line += ": " + summary
+        if isinstance(totals, dict) and totals:
+            line += " (" + ", ".join("%s %s" % (k, v) for k, v in totals.items()) + ")"
+        if line:
+            lines.append(line)
+    if prose:
+        lines.append("Concluded: " + str(prose).strip())
+    text = "\n".join(lines)
+    return text[:MEMORY_LIMIT]
 
 
 def _escape_prose(text):

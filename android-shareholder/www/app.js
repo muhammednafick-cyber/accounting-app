@@ -680,6 +680,17 @@
     // typing it, so the server reads it as the reply to what it just asked.
     // Without this the AI path is unreachable from the phone: it always asks
     // permission first, and an unclickable button is a dead end.
+    // Follow-up chips and clickable table cells: each one is a question the
+    // server already understands ("statement of X"), asked as if typed. They
+    // stay live - a table of ten ledgers is ten questions, not one choice.
+    el('chatLog').addEventListener('click', function (event) {
+        var chip = event.target.closest && event.target.closest('.rv-ask');
+        if (!chip) return;
+        event.preventDefault();
+        var value = chip.getAttribute('data-value') || chip.textContent.trim();
+        if (value) ask(value);
+    });
+
     el('chatLog').addEventListener('click', function (event) {
         var pick = event.target.closest && event.target.closest('.rv-pick');
         if (!pick) return;
@@ -816,6 +827,11 @@
             thinking.remove();
             renderAnswer(payload.data);
             history.push({ role: 'user', content: question });
+            var meta = (payload.data && payload.data.data) || {};
+            if (meta.memory) {
+                history.push({ role: 'assistant', content: meta.memory });
+            }
+            if (history.length > 6) history = history.slice(-6);
         }).catch(function (error) {
             thinking.remove();
             addBubble('Sorry - ' + error.message, 'bot');

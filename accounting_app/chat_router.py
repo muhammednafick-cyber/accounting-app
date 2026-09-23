@@ -61,12 +61,22 @@ def _cell(value):
 
 
 def render_table(result, limit=MAX_TABLE_ROWS):
-    """The result's rows as a compact HTML table, or '' when there are none."""
+    """The result's rows as a compact HTML table, or '' when there are none.
+
+    Every heading and cell is escaped. The chat window inserts answers as HTML,
+    and a narration or party name that arrived in a supplier's file would
+    otherwise run as markup in whoever's window displayed it.
+
+    A ledger or voucher in a cell becomes a link that asks about it.
+    """
+    from . import chat_extras as X
+
     columns, rows = result.get("columns"), result.get("rows")
     if not columns or not rows:
         return ""
     shown = rows[:limit]
     rendered = [[_cell(v) for v in r] for r in shown]
+    kinds = [X.link_kind(c) for c in columns]
 
     # A column is numeric when every filled cell in it is - then the heading is
     # right-aligned to sit over its own figures.
@@ -77,13 +87,19 @@ def render_table(result, limit=MAX_TABLE_ROWS):
             numeric_cols.add(idx)
 
     head = "".join(
-        f"<th class='rv-num'>{c}</th>" if i in numeric_cols else f"<th>{c}</th>"
+        f"<th class='rv-num'>{X.esc(c)}</th>" if i in numeric_cols
+        else f"<th>{X.esc(c)}</th>"
         for i, c in enumerate(columns))
+
+    def cell_html(idx, text, css):
+        kind = kinds[idx] if idx < len(kinds) and not css else None
+        inner = (X.cell_link(kind, text) if kind else None) or X.esc(text)
+        return f"<td class='{css}'>{inner}</td>" if css else f"<td>{inner}</td>"
+
     body = ""
     for row in rendered:
         body += "<tr>" + "".join(
-            (f"<td class='{css}'>{text}</td>" if css else f"<td>{text}</td>")
-            for text, css in row) + "</tr>"
+            cell_html(i, text, css) for i, (text, css) in enumerate(row)) + "</tr>"
     html = ("<div class='rv-table-wrap'><table class='rv-table'>"
             f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>")
     if len(rows) > limit:
@@ -93,11 +109,14 @@ def render_table(result, limit=MAX_TABLE_ROWS):
 
 
 def render_totals(result):
+    from . import chat_extras as X
+
     totals = result.get("totals") or {}
     if not totals:
         return ""
     return ("<div class='rv-totals'>"
-            + " &nbsp;|&nbsp; ".join(f"<b>{k}:</b> {v}" for k, v in totals.items())
+            + " &nbsp;|&nbsp; ".join(f"<b>{X.esc(k)}:</b> {X.esc(v)}"
+                                    for k, v in totals.items())
             + "</div>")
 
 
@@ -158,8 +177,10 @@ def remember_result(result, question):
 
 def answer(result, question, tool_name, source="coded", chart=None):
     """Assemble the chat bubble for a finished tool result."""
+    from . import chat_extras as X
+
     token = remember_result(result, question)
-    parts = [result.get("summary") or result.get("title") or ""]
+    parts = [X.safe(result.get("summary") or result.get("title") or "")]
     tbl = render_table(result)
     if tbl:
         parts.append(tbl)
@@ -167,7 +188,7 @@ def answer(result, question, tool_name, source="coded", chart=None):
     if totals and tbl:
         parts.append(totals)
     if result.get("note"):
-        parts.append(f"<small class='rv-note'>{result['note']}</small>")
+        parts.append(f"<small class='rv-note'>{X.safe(result['note'])}</small>")
     if token:
         parts.append(export_links(token, chart=chart,
                                   primary=requested_format(question)))
@@ -175,6 +196,13 @@ def answer(result, question, tool_name, source="coded", chart=None):
              if source == "ai" else
              f"<small class='rv-src'>Computed from your data &middot; {tool_name}</small>")
     parts.append(badge)
+
+    drawn = X.render_chart(X.chart_spec(tool_name, result))
+    if drawn:
+        # After the table, so the figures are always there to check it against.
+        parts.insert(2 if tbl else 1, drawn)
+    parts.append(X.render_follow_ups(X.follow_ups(tool_name, result, question)))
+    parts.append(X.render_feedback(question, tool_name))
 
     return {
         "intent": tool_name,

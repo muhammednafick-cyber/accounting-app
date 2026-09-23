@@ -43,7 +43,26 @@ def chat_query():
     if "error" in result:
         return jsonify({"success": False, "message": result["error"]}), 500
 
+    _note_if_unanswered(result, user_query, company_id)
     return jsonify({"success": True, "data": result})
+
+
+# What the built-in reports could not match. Answered with an apology and then
+# forgotten, until now: the ones asked most often are the next phrasings to
+# teach the no-AI path. See Chat Insights.
+MISS_INTENTS = {"no_match": "no_report_matched",
+                "need_permission": "no_report_matched"}
+
+
+def _note_if_unanswered(result, question, company_id):
+    reason = MISS_INTENTS.get((result or {}).get("intent"))
+    if not reason:
+        return
+    from flask_login import current_user
+
+    from database.chat_insights_db import record_miss
+
+    record_miss(company_id, getattr(current_user, "id", None), question, reason)
 
 
 @chat_bp.route('/api/chat_reset', methods=['POST'])

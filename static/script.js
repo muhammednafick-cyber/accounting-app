@@ -603,7 +603,54 @@ document.addEventListener('DOMContentLoaded', function () {
         bubble.appendChild(time);
         row.appendChild(bubble);
         messagesEl.appendChild(row);
+        if (who !== 'user') drawChatCharts(bubble);
         messagesEl.scrollTop = messagesEl.scrollHeight;
+        return row;
+    }
+
+    // Answers that are a series or a ranking carry a <canvas data-chart>. The
+    // table stays above it, so the figures are always there to check the
+    // picture against. Without Chart.js (offline, blocked CDN) the canvas is
+    // simply left out - the table is the answer either way.
+    function drawChatCharts(root) {
+        const canvases = root.querySelectorAll('canvas[data-chart]:not([data-drawn])');
+        if (!canvases.length) return;
+        canvases.forEach((canvas) => {
+            canvas.setAttribute('data-drawn', '1');
+            if (typeof window.Chart !== 'function') {
+                const wrap = canvas.closest('.rv-chart');
+                if (wrap) wrap.remove();
+                return;
+            }
+            let spec;
+            try { spec = JSON.parse(canvas.getAttribute('data-chart')); } catch (e) { return; }
+            const brand = getComputedStyle(document.documentElement)
+                .getPropertyValue('--brand').trim() || '#245c56';
+            new window.Chart(canvas, {
+                type: spec.type === 'line' ? 'line' : 'bar',
+                data: {
+                    labels: spec.labels,
+                    datasets: [{
+                        label: spec.label,
+                        data: spec.values,
+                        backgroundColor: spec.type === 'line' ? 'transparent' : brand,
+                        borderColor: brand,
+                        borderWidth: 2,
+                        tension: 0.25,
+                        pointRadius: 2,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { maxRotation: 0, autoSkip: true, font: { size: 10 } } },
+                        y: { ticks: { font: { size: 10 } } },
+                    },
+                },
+            });
+        });
     }
 
     const voucherExamples = {
@@ -1853,6 +1900,24 @@ document.addEventListener('DOMContentLoaded', function () {
             && localStorage.getItem('vaChatAiEnabled') === '1';
     }
 
+    // The voucher-type selector and the Agent answer the same sentence in
+    // different ways, and the selector used to win without saying so: pick
+    // "Receipt", tick Agent, and the Agent was never asked. While the Agent is
+    // on, the selector is cleared and locked, and says why.
+    function syncVoucherSelectWithAgent() {
+        const select = document.getElementById('globalChatVoucherType');
+        if (!select) return;
+        const agentOn = isAgentMode();
+        if (agentOn && select.value) {
+            select.value = '';
+            select.dispatchEvent(new Event('change'));
+        }
+        select.disabled = agentOn;
+        select.title = agentOn
+            ? 'Voucher entry is off while the Agent is on. Untick Agent to use it.'
+            : '';
+    }
+
     // What the agent has been told so far, so a follow-up ("and last year?")
     // means something. Trimmed hard - it is sent with every question.
     let agentHistory = [];
@@ -1908,8 +1973,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 // Switching engines mid-conversation: the new one has not seen
                 // any of it, so start its memory clean rather than half-full.
                 agentHistory = [];
+                syncVoucherSelectWithAgent();
             });
         }
+        toggle.addEventListener('change', syncVoucherSelectWithAgent);
+        syncVoucherSelectWithAgent();
         syncAiOnly();
     }
 
@@ -2021,12 +2089,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const agent = isAgentMode();
         setStatus(agent ? 'Working through it...' : 'Thinking...', false);
+        const runId = agent ? newRunId() : null;
+        const stopWatching = agent ? watchAgentProgress(runId) : () => {};
         try {
             const res = agent
                 ? await fetch('/api/chat_agent', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: query, history: agentHistory })
+                    body: JSON.stringify({ query: query, history: agentHistory,
+                                           run_id: runId })
                 })
                 : await fetch('/api/chat_query', {
                     method: 'POST',
@@ -2038,19 +2109,21 @@ document.addEventListener('DOMContentLoaded', function () {
                     })
                 });
             const data = await res.json();
+            stopWatching();
             setStatus('', false);
 
             if (data.success && data.data) {
                 globalChatAppendMessage('bot', data.data.response);
                 if (agent) {
                     rememberAgentTurn('user', query);
-                    // The tables are in the page already; what the agent needs
-                    // to remember is what it concluded, not the rows.
-                    rememberAgentTurn('assistant', (data.data.data
-                        && data.data.data.tools_used
-                        && data.data.data.tools_used.length)
-                        ? 'Answered using: ' + data.data.data.tools_used.join(', ')
-                        : 'No answer found.');
+                    // Not the rows - the tables are on screen - but each
+                    // report's heading and summary line, which carry the party,
+                    // the period and the figures a follow-up needs.
+                    const meta = data.data.data || {};
+                    rememberAgentTurn('assistant', meta.memory
+                        || (meta.tools_used && meta.tools_used.length
+                            ? 'Answered using: ' + meta.tools_used.join(', ')
+                            : 'No answer found.'));
                 }
                 if (data.data.data && data.data.data.need_date) {
                     chatPendingDateQuery = data.data.data.pending_query || null;
@@ -2059,9 +2132,41 @@ document.addEventListener('DOMContentLoaded', function () {
                 globalChatAppendMessage('bot', `Error: ${data.message || 'Unknown error'}`);
             }
         } catch (e) {
+            stopWatching();
             setStatus('', false);
             globalChatAppendMessage('bot', `Error: ${e.message}`);
         }
+    }
+
+    function newRunId() {
+        const bytes = new Uint8Array(12);
+        (window.crypto || window.msCrypto).getRandomValues(bytes);
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    // The agent can take several model calls. Its steps are read back while
+    // it works - "Running ledger statement..." - so the wait says where it has
+    // got to, and a question heading the wrong way is visible early.
+    function watchAgentProgress(runId) {
+        let stopped = false;
+        let shown = 0;
+        async function poll() {
+            if (stopped) return;
+            try {
+                const res = await fetch('/api/chat_agent/progress?run=' + runId);
+                const data = await res.json();
+                if (stopped) return;
+                const steps = (data && data.steps) || [];
+                if (steps.length > shown) {
+                    shown = steps.length;
+                    setStatus(steps[steps.length - 1] + '...', false);
+                }
+                if (data && data.done) return;
+            } catch (e) { /* a missed poll is not worth reporting */ }
+            if (!stopped) setTimeout(poll, 700);
+        }
+        setTimeout(poll, 500);
+        return () => { stopped = true; };
     }
 
     async function sendFromInput() {
@@ -2094,6 +2199,14 @@ document.addEventListener('DOMContentLoaded', function () {
             const n = parseInt(lower.replace('delete', '').trim(), 10);
             if (Number.isFinite(n)) deleteDraft(n);
             else globalChatAppendMessage('bot', 'Use: delete 1');
+            return;
+        }
+
+        // The Agent takes the message whatever else is selected - the lock
+        // above should already have cleared the voucher type, and this makes
+        // sure a stale one can never quietly send it elsewhere.
+        if (isAgentMode()) {
+            await handleGeneralChatQuery(text);
             return;
         }
 
@@ -2287,6 +2400,47 @@ document.addEventListener('DOMContentLoaded', function () {
         // "shall I use AI? yes / no". Clicking one is the same as typing it, so
         // the server picks the answer up as the reply to what it just asked.
         if (messagesEl) {
+            // Follow-up chips and clickable table cells. Unlike the choice
+            // chips below, these stay live - a table of ten ledgers is ten
+            // questions you might ask, not one choice to make.
+            messagesEl.addEventListener('click', (e) => {
+                const ask = e.target.closest('.rv-ask');
+                if (!ask || !messagesEl.contains(ask)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const value = ask.getAttribute('data-value') || ask.textContent.trim();
+                if (!value) return;
+                globalChatAppendMessage('user', value);
+                handleGeneralChatQuery(value);
+            });
+
+            // 7. Was this right? One vote per answer; the insights page reads it.
+            messagesEl.addEventListener('click', async (e) => {
+                const button = e.target.closest('.rv-feedback button[data-vote]');
+                if (!button || !messagesEl.contains(button)) return;
+                e.preventDefault();
+                const box = button.closest('.rv-feedback');
+                box.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+                button.classList.add('chosen');
+                try {
+                    const res = await fetch('/api/chat_feedback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            vote: button.getAttribute('data-vote'),
+                            question: box.getAttribute('data-q') || '',
+                            tool: box.getAttribute('data-tool') || '',
+                        }),
+                    });
+                    const data = await res.json();
+                    const note = box.querySelector('span');
+                    if (note) note.textContent = data.success ? 'Thanks.' : 'Could not save that.';
+                } catch (err) {
+                    box.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+                    button.classList.remove('chosen');
+                }
+            });
+
             messagesEl.addEventListener('click', (e) => {
                 const pick = e.target.closest('.rv-pick');
                 if (!pick || !messagesEl.contains(pick)) return;
