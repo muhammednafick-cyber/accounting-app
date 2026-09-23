@@ -1039,11 +1039,18 @@ def add_voucher(voucher_type, date, ledger_entries, item_entries,
         # auto-added Inventory ledger debit, so item_entries must NOT be added again
         # (doing so doubled the voucher amount and triggered false imbalance warnings).
 
-        if voucher_type != 'Physical Stock' and abs(total_debit - total_credit) > 0.05:
-            try:
-                print('BalanceCheck', voucher_type, 'DEBIT=', total_debit, 'CREDIT=', total_credit, 'LEDGERS=', ledger_entries)
-            except Exception:
-                pass
+        # Double entry, enforced here rather than trusted to every caller. This
+        # used to print the imbalance and save the voucher anyway - which is how
+        # a reversal once went in with both of its lines on the credit side and
+        # left the trial balance 200.00 out. The edit path already refused; the
+        # create path now does too. Physical Stock carries no ledger lines of its
+        # own, and an Inventory Transfer's lines are never written.
+        if (voucher_type not in ('Physical Stock', 'Inventory Transfer')
+                and abs(total_debit - total_credit) > 0.05):
+            raise ValueError(
+                f"Debit {total_debit:,.2f} and Credit {total_credit:,.2f} do not "
+                f"match - a difference of {abs(total_debit - total_credit):,.2f}. "
+                "Nothing was saved.")
         
         if voucher_type == "Purchase Return":
             prefix = "PR"
