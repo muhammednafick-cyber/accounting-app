@@ -1192,7 +1192,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         } else {
             // General Chat
-            globalChatAppendMessage('bot', 'Hi! Ask me accounting questions or select a voucher type to create one.');
+            greetGeneralChat();
         }
     }
 
@@ -1834,6 +1834,18 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Tells the stylesheet which mode the chat is in: the voucher buttons are
     // hidden on phones and tablets while there is no voucher type to use them.
+    // The general-chat greeting, once. It used to be posted every time the
+    // window opened and every time "General Chat" was picked - and opening
+    // runs both paths - so the same line stacked up the conversation. It now
+    // appears only when the chat was not already greeted as general chat,
+    // using the same marker the voucher-type welcome uses.
+    function greetGeneralChat() {
+        if (!messagesEl) return;
+        if (messagesEl.dataset.vaWelcomeFor === 'general') return;
+        globalChatAppendMessage('bot', 'Hi! Ask me accounting questions or select a voucher type to create one.');
+        messagesEl.dataset.vaWelcomeFor = 'general';
+    }
+
     function markChatMode() {
         const win = document.querySelector('.global-chat-window');
         if (win) win.classList.toggle('is-general', !assistantState.voucherType);
@@ -1877,7 +1889,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         if (!assistantState.voucherType) {
             setChatActionsEnabled(true);
-            globalChatAppendMessage('bot', 'Hi! Ask me accounting questions or select a voucher type to create one.');
+            greetGeneralChat();
             return;
         }
 

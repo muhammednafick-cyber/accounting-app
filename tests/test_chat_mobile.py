@@ -96,8 +96,8 @@ class ScriptTests(unittest.TestCase):
 
     def test_browsers_are_told_all_three_files_changed(self):
         base = source("templates", "base.html")
-        for name in ("style.css", "script.js"):
-            self.assertIn("filename='%s') }}?v=20260923_3" % name, base)
+        self.assertIn("filename='style.css') }}?v=20260923_3", base)
+        self.assertIn("filename='script.js') }}?v=20260924_1", base)
         self.assertIn("filename='ui.css') }}?v=20260923_4", base)
 
 
@@ -123,6 +123,26 @@ class SendButtonTests(unittest.TestCase):
         js = source("static", "script.js")
         self.assertNotIn("sendBtn.textContent", js)
         self.assertNotIn("sendBtn.innerText", js)
+
+
+class GreetingTests(unittest.TestCase):
+    """The general-chat greeting stacked up: opening the window and picking
+    General Chat each posted it, and opening ran both paths."""
+
+    def test_the_greeting_has_one_source_and_a_guard(self):
+        js = source("static", "script.js")
+        text = "Hi! Ask me accounting questions or select a voucher type to create one."
+        self.assertEqual(js.count(text), 1)
+        body = js[js.index("function greetGeneralChat"):]
+        body = body[:body.index("function markChatMode")]
+        self.assertIn("if (messagesEl.dataset.vaWelcomeFor === 'general') return;", body)
+        self.assertIn("messagesEl.dataset.vaWelcomeFor = 'general';", body)
+
+    def test_nothing_posts_it_directly_any_more(self):
+        js = source("static", "script.js")
+        self.assertNotIn(
+            "globalChatAppendMessage('bot', 'Hi! Ask me accounting questions", js.replace(
+                js[js.index("function greetGeneralChat"):js.index("function markChatMode")], ""))
 
 
 if __name__ == "__main__":
