@@ -661,6 +661,72 @@ document.addEventListener('DOMContentLoaded', function () {
         'Service Income': 'income 5000 for Consulting from Client',
     };
 
+    // What can be typed for the voucher that is selected - and only that one.
+    // Every instant example here is one the no-AI parser reads correctly
+    // (tests/test_chat_mobile.py runs each through it). Service Income has no
+    // instant pattern, so it says plainly that it needs AI.
+    const voucherWelcomes = {
+        Receipt: {
+            what: 'money coming in from a customer or anyone else',
+            examples: [
+                'received 5000 from ABC Trading by cash today',
+                'received 2500 from ABC Trading by bank yesterday',
+                'receipt of 750 from XYZ LLC by cash 15-09-2026',
+            ],
+        },
+        Payment: {
+            what: 'money going out to a supplier or anyone else',
+            examples: [
+                'paid 1200 to ABC Trading by cash today',
+                'paid 3000 to Landlord by bank yesterday',
+                'payment of 450 to XYZ LLC by bank 15-09-2026',
+            ],
+        },
+        Contra: {
+            what: 'moving money between your own cash and bank',
+            examples: [
+                'transfer 1000 from Cash to Bank today',
+                'transfer 2000 from Bank to Cash yesterday',
+            ],
+        },
+        Expense: {
+            what: 'a cost paid straight away, such as fuel, rent or stationery',
+            examples: [
+                'expense 300 for Fuel by cash today',
+                'spent 85 on Stationery by bank yesterday',
+                'expense of 1200 for Rent by bank 01-09-2026',
+            ],
+        },
+        'Service Income': {
+            what: 'income for a service you provided',
+            examples: [
+                'income 5000 for Consulting from Client',
+            ],
+            needsAi: true,
+        },
+    };
+
+    function voucherWelcome(vt) {
+        const w = voucherWelcomes[vt];
+        if (!w) return `Tell me your ${vt} in simple words, or type "new" to start.`;
+        const lines = [
+            `${vt}: ${w.what}.`,
+            '',
+            'Type it in one line, for example:',
+            ...w.examples.map((e) => '  ' + e),
+            '',
+        ];
+        if (w.needsAi) {
+            lines.push('This one is read by AI - tick "Enable AI" first. Or type "new" and fill in the form.');
+        } else if (vt === 'Contra') {
+            lines.push('Add a date as today, yesterday or 15-09-2026. Or type "new" and fill in the form.');
+        } else {
+            lines.push('Say "by cash" or "by bank", and a date as today, yesterday or 15-09-2026.');
+            lines.push('Or type "new" and fill in the form.');
+        }
+        return lines.join('\n');
+    }
+
     function updateInputPlaceholder() {
         if (!inputEl) return;
         const hintEl = document.getElementById('vaChatHint');
@@ -1898,7 +1964,7 @@ document.addEventListener('DOMContentLoaded', function () {
             .then(() => {
                 updateDraftCount(assistantState.voucherType);
                 if (messagesEl && messagesEl.dataset.vaWelcomeFor !== assistantState.voucherType) {
-                    globalChatAppendMessage('bot', `Tell me your ${assistantState.voucherType} in simple words.\nType "new" to start, or one-line examples:\nReceipt: received 5000 from ABC by cash today\nPayment: paid 1200 to ABC by cash today\nContra: transfer 1000 from Cash to Bank today\nExpense: expense 300 for Fuel by cash today`);
+                    globalChatAppendMessage('bot', voucherWelcome(assistantState.voucherType));
                     messagesEl.dataset.vaWelcomeFor = assistantState.voucherType;
                 }
             })
@@ -2515,7 +2581,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     .then(() => {
                         updateDraftCount(assistantState.voucherType);
                         if (messagesEl && messagesEl.dataset.vaWelcomeFor !== assistantState.voucherType) {
-                            globalChatAppendMessage('bot', `Tell me your ${assistantState.voucherType} in simple words.\nType "new" to start, or one-line examples:\nReceipt: received 5000 from ABC by cash today\nPayment: paid 1200 to ABC by cash today\nContra: transfer 1000 from Cash to Bank today\nExpense: expense 300 for Fuel by cash today`);
+                            globalChatAppendMessage('bot', voucherWelcome(assistantState.voucherType));
                             messagesEl.dataset.vaWelcomeFor = assistantState.voucherType;
                         }
                         if (inputEl && !inputEl.disabled) inputEl.focus();
