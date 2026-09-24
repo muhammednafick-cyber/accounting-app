@@ -317,13 +317,15 @@ document.addEventListener('DOMContentLoaded', function () {
                         globalChatAppendMessage('bot', `⚠️ ${data.data.warning}`);
                     }
 
-                    // Show download link
+                    // Show download link - in the same panel design.
                     const linkRow = document.createElement('div');
-                    linkRow.className = 'rv-msg bot';
-                    const bubble = document.createElement('div');
-                    bubble.className = 'rv-bubble';
-                    bubble.innerHTML = `📥 <a href="${data.download_url}" download style="color: #007bff; text-decoration: underline;">Download Excel for Import</a>`;
-                    linkRow.appendChild(bubble);
+                    linkRow.className = 'rv-chat-options rv-excel-options';
+                    const link = document.createElement('a');
+                    link.className = 'rv-excel-option is-primary';
+                    link.href = data.download_url;
+                    link.setAttribute('download', '');
+                    link.textContent = 'Download Excel for Import';
+                    linkRow.appendChild(link);
                     if (messagesEl) messagesEl.appendChild(linkRow);
 
                     globalChatAppendMessage('bot', 'Upload this Excel to Purchase Import to create vouchers.');
@@ -376,8 +378,8 @@ document.addEventListener('DOMContentLoaded', function () {
                             <datalist id="aiCreditLedgerList"></datalist>
                         </div>
                         <div style="display: flex; gap: 10px; margin-top: 15px;">
-                            <button id="aiExpensePostBtn" class="btn btn-success btn-sm">Create Expense</button>
-                            <button id="aiExpenseCancelBtn" class="btn btn-secondary btn-sm">Cancel</button>
+                            <button id="aiExpensePostBtn" type="button" class="rv-excel-option is-primary">Create Expense</button>
+                            <button id="aiExpenseCancelBtn" type="button" class="rv-excel-option is-quiet">Cancel</button>
                         </div>
                     `;
 
@@ -1177,20 +1179,19 @@ document.addEventListener('DOMContentLoaded', function () {
 
             if (vt === 'Purchase') {
                 // AI Invoice Processing for Purchase
-                globalChatAppendMessage('bot', `Purchase Invoice Processing with AI.`);
-                globalChatAppendMessage('bot', 'Upload a PDF or Image to extract invoice data automatically.');
+                globalChatAppendMessage('bot',
+                    'Purchase Invoice Processing with AI.\n'
+                    + 'Upload a PDF or Image to extract invoice data automatically.');
 
+                // Same panel design as Sales and Service Income.
                 const container = document.createElement('div');
-                container.className = 'rv-chat-options';
-                container.style.display = 'flex';
-                container.style.flexDirection = 'column';
-                container.style.gap = '10px';
-                container.style.marginTop = '10px';
+                container.className = 'rv-chat-options rv-excel-options';
 
                 // AI Upload Button
                 const aiUpBtn = document.createElement('button');
-                aiUpBtn.className = 'btn btn-primary btn-sm';
-                aiUpBtn.innerHTML = '📄 Upload Invoice (AI Extract)';
+                aiUpBtn.type = 'button';
+                aiUpBtn.className = 'rv-excel-option is-primary';
+                aiUpBtn.textContent = 'Upload Invoice (AI Extract)';
                 aiUpBtn.onclick = () => {
                     const aiInput = document.getElementById('vaAIInvoiceInput');
                     if (aiInput) {
@@ -1201,7 +1202,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 // Download Template Button
                 const dlBtn = document.createElement('button');
-                dlBtn.className = 'btn btn-secondary btn-sm';
+                dlBtn.type = 'button';
+                dlBtn.className = 'rv-excel-option is-quiet';
                 dlBtn.textContent = 'Download Template';
                 dlBtn.onclick = () => {
                     window.location.href = `/download_voucher_template/${encodeURIComponent(vt)}`;
@@ -1209,7 +1211,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 // Manual Upload Excel
                 const upBtn = document.createElement('button');
-                upBtn.className = 'btn btn-outline-secondary btn-sm';
+                upBtn.type = 'button';
+                upBtn.className = 'rv-excel-option is-quiet';
                 upBtn.textContent = 'Upload Manual Excel';
                 upBtn.onclick = () => {
                     const fileInput = document.getElementById('vaChatFileInput');
@@ -1244,16 +1247,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
             // Add AI Invoice option for Expense mode
             if (assistantState.voucherType === 'Expense') {
+                // Same panel design as Sales and Service Income.
                 const container = document.createElement('div');
-                container.className = 'rv-chat-options';
-                container.style.display = 'flex';
-                container.style.gap = '10px';
-                container.style.marginTop = '8px';
-                container.style.marginBottom = '8px';
+                container.className = 'rv-chat-options rv-excel-options';
 
                 const aiBtn = document.createElement('button');
-                aiBtn.className = 'btn btn-outline-primary btn-sm';
-                aiBtn.innerHTML = '📄 Upload Invoice (AI Extract)';
+                aiBtn.type = 'button';
+                aiBtn.className = 'rv-excel-option is-quiet';
+                aiBtn.textContent = 'Upload Invoice (AI Extract)';
                 aiBtn.onclick = () => {
                     const aiInput = document.getElementById('vaAIInvoiceInput');
                     if (aiInput) {

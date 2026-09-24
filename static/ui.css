@@ -231,7 +231,8 @@ select.global-chat-select:disabled{opacity:.5;cursor:not-allowed}
 
 /* Sales and Service Income in the chat: template, upload, or the voucher page. */
 .rv-excel-options{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
-.rv-excel-option{min-height:40px;padding:8px 16px;border-radius:9px;font-weight:600;font-size:13.5px;cursor:pointer;border:1px solid var(--border)}
+.rv-excel-option{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;min-height:40px;padding:8px 16px;border-radius:9px;font-weight:600;font-size:13.5px;cursor:pointer;border:1px solid var(--border)}
+.rv-excel-option:hover{text-decoration:none}
 .rv-excel-option.is-primary{background:var(--brand);border-color:var(--brand);color:#fff}
 .rv-excel-option.is-primary:hover{background:var(--brand-dark);border-color:var(--brand-dark)}
 .rv-excel-option.is-quiet{background:#fff;color:var(--brand-dark)}
