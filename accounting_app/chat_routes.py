@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 import requests
 import json
 import os
+import re
 import datetime
 from database.master_db import get_system_setting
 from database.company_db import get_current_company_id
@@ -216,9 +217,19 @@ from flask import send_file, url_for
 import tempfile
 import uuid
 
-# Ensure generated directory exists
-GEN_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'generated')
+# Spreadsheets built from uploaded invoices. They hold a supplier's invoice
+# data, so they are NOT under static/: nginx serves that folder to anyone with
+# the link and no sign-in. They live under data/ (outside git and outside what
+# nginx serves) and come back only through generated_file() below, which
+# needs a signed-in user of the same company.
+#
+# The old static/generated folder was also created locked (drwx------) on the
+# server, so nginx could not read it and every "Download Excel for Import"
+# answered 403 - "File wasn't available on site".
+GEN_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'generated')
 os.makedirs(GEN_DIR, exist_ok=True)
+
+GENERATED_NAME = re.compile(r'^parsed_invoice_(\d+)_[0-9a-f]{32}\.xlsx$')
 
 def _process_invoice(file_bytes, filename, invoice_type, company_id, job_id=None,
                      location=None):
@@ -244,15 +255,41 @@ def _process_invoice(file_bytes, filename, invoice_type, company_id, job_id=None
         jobs.set_progress(job_id, "Building the import spreadsheet...")
     excel_io = generate_purchase_excel(data, company_id=company_id,
                                        location=location)
-    out_name = f"parsed_invoice_{uuid.uuid4().hex}.xlsx"
+    # The company goes into the name, so the file is only ever handed back to
+    # that company - see generated_file().
+    out_name = f"parsed_invoice_{int(company_id)}_{uuid.uuid4().hex}.xlsx"
     with open(os.path.join(GEN_DIR, out_name), "wb") as f:
         f.write(excel_io.getbuffer())
 
     return {
         "type": "Purchase",
-        "download_url": f"/static/generated/{out_name}",
+        "download_url": f"/generated/{out_name}",
         "data": data,
     }
+
+
+@chat_bp.route('/generated/<name>')
+def generated_file(name):
+    """An invoice spreadsheet, for a signed-in user of the company it belongs to.
+
+    Only names this module writes are accepted, so the route cannot be walked
+    into any other file, and a file from another company answers 404 exactly
+    as a missing one does - it does not confirm the file exists.
+    """
+    from flask import abort, send_from_directory
+    from flask_login import current_user
+
+    if not getattr(current_user, 'is_authenticated', False):
+        abort(401)
+    match = GENERATED_NAME.match(name or '')
+    if not match or int(match.group(1)) != int(get_current_company_id() or 0):
+        abort(404)
+    if not os.path.isfile(os.path.join(GEN_DIR, name)):
+        abort(404)
+    return send_from_directory(
+        GEN_DIR, name, as_attachment=True,
+        download_name='purchase_invoice_import.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @chat_bp.route('/api/upload_and_analyze_invoice', methods=['POST'])
