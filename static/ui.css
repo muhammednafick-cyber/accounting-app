@@ -228,3 +228,13 @@ select.global-chat-select:disabled{opacity:.5;cursor:not-allowed}
   .global-chat-window .rv-chat-input-bar #vaChatMicBtn{width:44px;height:44px;min-width:44px;padding:0;
     border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:0 0 44px;margin-right:0!important}
 }
+
+/* Sales and Service Income in the chat: template, upload, or the voucher page. */
+.rv-excel-options{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}
+.rv-excel-option{min-height:40px;padding:8px 16px;border-radius:9px;font-weight:600;font-size:13.5px;cursor:pointer;border:1px solid var(--border)}
+.rv-excel-option.is-primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.rv-excel-option.is-primary:hover{background:var(--brand-dark);border-color:var(--brand-dark)}
+.rv-excel-option.is-quiet{background:#fff;color:var(--brand-dark)}
+.rv-excel-option.is-quiet:hover{border-color:var(--brand);background:var(--brand-soft)}
+@media(max-width:600px){.rv-excel-options{flex-direction:column}.rv-excel-option{width:100%;min-height:44px}}
+.global-chat-window.is-excel-only .rv-chat-actions,.global-chat-window.is-excel-only .rv-drafts-label{display:none}

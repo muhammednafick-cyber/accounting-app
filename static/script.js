@@ -662,9 +662,9 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     // What can be typed for the voucher that is selected - and only that one.
-    // Every instant example here is one the no-AI parser reads correctly
-    // (tests/test_chat_mobile.py runs each through it). Service Income has no
-    // instant pattern, so it says plainly that it needs AI.
+    // Every example here is one the no-AI parser reads correctly
+    // (tests/test_voucher_welcome.py runs each through it). Sales, Purchase
+    // and Service Income are not typed - see EXCEL_ONLY_TYPES.
     const voucherWelcomes = {
         Receipt: {
             what: 'money coming in from a customer or anyone else',
@@ -697,13 +697,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 'expense of 1200 for Rent by bank 01-09-2026',
             ],
         },
-        'Service Income': {
-            what: 'income for a service you provided',
-            examples: [
-                'income 5000 for Consulting from Client',
-            ],
-            needsAi: true,
-        },
     };
 
     function voucherWelcome(vt) {
@@ -716,9 +709,7 @@ document.addEventListener('DOMContentLoaded', function () {
             ...w.examples.map((e) => '  ' + e),
             '',
         ];
-        if (w.needsAi) {
-            lines.push('This one is read by AI - tick "Enable AI" first. Or type "new" and fill in the form.');
-        } else if (vt === 'Contra') {
+        if (vt === 'Contra') {
             lines.push('Add a date as today, yesterday or 15-09-2026. Or type "new" and fill in the form.');
         } else {
             lines.push('Say "by cash" or "by bank", and a date as today, yesterday or 15-09-2026.');
@@ -1105,6 +1096,56 @@ document.addEventListener('DOMContentLoaded', function () {
         autoFinalize: false,
     };
 
+    // Entered from Excel or on the voucher screen, never typed into the chat.
+    // Sales and Service Income: template, upload, or the voucher page - no AI.
+    const EXCEL_ONLY_TYPES = ['Sales', 'Purchase', 'Service Income'];
+    function isExcelOnlyType(vt) { return EXCEL_ONLY_TYPES.includes(vt); }
+
+    // Typing means nothing for these types, so the box says so and stays off.
+    function lockTypingForExcelOnly(vt) {
+        setChatActionsEnabled(false);
+        if (inputEl) {
+            inputEl.placeholder = vt + ' is entered from Excel or the voucher page.';
+            inputEl.disabled = true;
+        }
+        if (sendBtn) sendBtn.disabled = true;
+    }
+
+    // Sales and Service Income: the three ways in, as one small panel.
+    function showExcelOptions(vt, slug) {
+        globalChatAppendMessage('bot',
+            vt + ' vouchers are entered from Excel or on the voucher page.\n\n'
+            + '1. Download the template and fill it in.\n'
+            + '2. Upload it here - it goes to the Import Queue.\n'
+            + 'Or open the voucher page to enter one by hand.');
+
+        const panel = document.createElement('div');
+        panel.className = 'rv-chat-options rv-excel-options';
+
+        const make = (label, cls, onClick) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'rv-excel-option ' + cls;
+            b.textContent = label;
+            b.addEventListener('click', onClick);
+            panel.appendChild(b);
+        };
+        make('Download Template', 'is-quiet', () => {
+            window.location.href = `/download_voucher_template/${encodeURIComponent(vt)}`;
+        });
+        make('Upload Excel', 'is-primary', () => {
+            const fileInput = document.getElementById('vaChatFileInput');
+            if (fileInput) {
+                fileInput.value = '';
+                fileInput.click();
+            }
+        });
+        make('Go to Voucher Page', 'is-quiet', () => {
+            window.location.href = `/voucher/${encodeURIComponent(slug)}`;
+        });
+        if (messagesEl) messagesEl.appendChild(panel);
+    }
+
     function ensureVoucherTypeSelected() {
         const slug = readSelectedVoucherSlug();
         const vt = voucherTypeMap[slug] || '';
@@ -1129,7 +1170,7 @@ document.addEventListener('DOMContentLoaded', function () {
         markChatMode();
 
         // --- Custom Logic for Import-Only Vouchers ---
-        const isImportOnly = ['Sales', 'Purchase'].includes(vt);
+        const isImportOnly = isExcelOnlyType(vt);
         if (isImportOnly) {
             setChatActionsEnabled(false); // Disable inputs
             if (messagesEl) messagesEl.innerHTML = ''; // Clear chat
@@ -1183,46 +1224,14 @@ document.addEventListener('DOMContentLoaded', function () {
                 container.appendChild(upBtn);
                 if (messagesEl) messagesEl.appendChild(container);
             } else {
-                // Sales - keep original behavior
-                globalChatAppendMessage('bot', `Chat is not available for ${vt}.`);
-                globalChatAppendMessage('bot', 'Please use the buttons below to manage vouchers via Excel.');
-
-                const container = document.createElement('div');
-                container.className = 'rv-chat-options';
-                container.style.display = 'flex';
-                container.style.gap = '10px';
-                container.style.marginTop = '10px';
-
-                const dlBtn = document.createElement('button');
-                dlBtn.className = 'btn btn-secondary btn-sm';
-                dlBtn.textContent = 'Download Template';
-                dlBtn.onclick = () => {
-                    window.location.href = `/download_voucher_template/${encodeURIComponent(vt)}`;
-                };
-
-                const upBtn = document.createElement('button');
-                upBtn.className = 'btn btn-primary btn-sm';
-                upBtn.textContent = 'Upload Excel';
-                upBtn.onclick = () => {
-                    const fileInput = document.getElementById('vaChatFileInput');
-                    if (fileInput) {
-                        fileInput.value = '';
-                        fileInput.click();
-                    }
-                };
-
-                container.appendChild(dlBtn);
-                container.appendChild(upBtn);
-                if (messagesEl) messagesEl.appendChild(container);
+                // Sales and Service Income.
+                showExcelOptions(vt, slug);
             }
 
-            // Disable input field specifically and set placeholder
-            if (inputEl) {
-                inputEl.placeholder = 'Chat disabled for this voucher type.';
-                inputEl.disabled = true;
-            }
-            if (sendBtn) sendBtn.disabled = true;
-
+            lockTypingForExcelOnly(vt);
+            // Marks what is on screen, so reopening the chat does not draw it
+            // again, and nothing posts a typing welcome underneath it.
+            if (messagesEl) messagesEl.dataset.vaWelcomeFor = vt;
             return;
         }
 
@@ -1914,7 +1923,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function markChatMode() {
         const win = document.querySelector('.global-chat-window');
-        if (win) win.classList.toggle('is-general', !assistantState.voucherType);
+        if (win) {
+            win.classList.toggle('is-general', !assistantState.voucherType);
+            // Excel-only types have their own panel; the typed-voucher buttons
+            // (New, Submit, Drafts, Add All) cannot do anything for them.
+            win.classList.toggle('is-excel-only', isExcelOnlyType(assistantState.voucherType));
+        }
     }
 
     // On a phone the chat fills the screen, and when the keyboard opens the
@@ -1956,6 +1970,15 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!assistantState.voucherType) {
             setChatActionsEnabled(true);
             greetGeneralChat();
+            return;
+        }
+
+        if (isExcelOnlyType(assistantState.voucherType)) {
+            if (messagesEl && messagesEl.dataset.vaWelcomeFor === assistantState.voucherType) {
+                lockTypingForExcelOnly(assistantState.voucherType);
+            } else {
+                setVoucherTypeFromSlug(readSelectedVoucherSlug());
+            }
             return;
         }
 
@@ -2575,6 +2598,8 @@ document.addEventListener('DOMContentLoaded', function () {
                     updateInputPlaceholder();
                     return;
                 }
+                // Its panel is already drawn and typing is off; nothing else.
+                if (isExcelOnlyType(assistantState.voucherType)) return;
                 setChatActionsEnabled(true);
                 updateInputPlaceholder();
                 loadVoucherAssistantBootstrap()

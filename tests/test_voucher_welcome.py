@@ -34,8 +34,9 @@ def welcomes():
 class VoucherWelcomeTests(unittest.TestCase):
 
     def test_every_typed_voucher_type_has_its_own_welcome(self):
-        self.assertEqual(set(welcomes()),
-                         {"Receipt", "Payment", "Contra", "Expense", "Service Income"})
+        # Sales, Purchase and Service Income are not typed: they have the
+        # Excel panel instead (tests/test_chat_excel_only.py).
+        self.assertEqual(set(welcomes()), {"Receipt", "Payment", "Contra", "Expense"})
 
     def test_every_instant_example_is_read_as_its_own_type(self):
         for vt, (examples, needs_ai) in welcomes().items():

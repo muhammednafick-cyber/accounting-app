@@ -97,8 +97,8 @@ class ScriptTests(unittest.TestCase):
     def test_browsers_are_told_all_three_files_changed(self):
         base = source("templates", "base.html")
         self.assertIn("filename='style.css') }}?v=20260923_3", base)
-        self.assertIn("filename='script.js') }}?v=20260924_2", base)
-        self.assertIn("filename='ui.css') }}?v=20260923_4", base)
+        self.assertIn("filename='script.js') }}?v=20260924_3", base)
+        self.assertIn("filename='ui.css') }}?v=20260924_3", base)
 
 
 class SendButtonTests(unittest.TestCase):
