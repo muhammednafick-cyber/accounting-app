@@ -120,7 +120,7 @@ class ScreenFixTests(unittest.TestCase):
 
     def test_browsers_fetch_the_new_script(self):
         base = read("templates", "base.html")
-        self.assertIn("filename='script.js') }}?v=20260926_1", base)
+        self.assertIn("filename='script.js') }}?v=20260926_2", base)
         self.assertIn("filename='date_picker.js') }}?v=", base)
 
 

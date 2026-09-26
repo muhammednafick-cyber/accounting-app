@@ -1253,7 +1253,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 const aiBtn = document.createElement('button');
                 aiBtn.type = 'button';
-                aiBtn.className = 'rv-excel-option is-quiet';
+                aiBtn.className = 'rv-excel-option is-primary';
                 aiBtn.textContent = 'Upload Invoice (AI Extract)';
                 aiBtn.onclick = () => {
                     const aiInput = document.getElementById('vaAIInvoiceInput');
