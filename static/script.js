@@ -3302,36 +3302,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }, true);
 })();
 
-// ============================
-// DATE PICKER INITIALIZATION (GLOBAL)
-// ============================
-document.addEventListener("DOMContentLoaded", function () {
-    // Helper to init flatpickr safely
-    function initFlatpickr(selectorOrElement) {
-        if (typeof flatpickr !== 'undefined') {
-            flatpickr(selectorOrElement, {
-                dateFormat: "d-m-Y",
-                allowInput: true,
-                onClose: function (selectedDates, dateStr, instance) {
-                    // Ensure change event is fired so other listeners (like calculateDueDate) pick it up
-                    instance.element.dispatchEvent(new Event('input', { bubbles: true }));
-                    instance.element.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            });
-        }
-    }
-
-    // Initialize for inputs with class 'date-picker'
-    initFlatpickr(".date-picker");
-
-    // Initialize for inputs with specific placeholder/pattern if they miss the class
-    const potentialDateInputs = document.querySelectorAll('input[placeholder="DD-MM-YYYY"], input[pattern="\\d{2}-\\d{2}-\\d{4}"]');
-    potentialDateInputs.forEach(input => {
-        if (!input.classList.contains("date-picker") && !input.classList.contains("flatpickr-input")) {
-            initFlatpickr(input);
-        }
-    });
-});
+// Date pickers: see static/date_picker.js - one component, the Receipt
+// voucher's, for every date field in the application.
 
 
 // ============================================================

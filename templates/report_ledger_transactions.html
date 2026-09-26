@@ -120,8 +120,8 @@
 </div>
 
 <script>
-flatpickr("#from_date", { dateFormat: "d-m-Y", allowInput: true });
-flatpickr("#to_date",   { dateFormat: "d-m-Y", allowInput: true });
+AppDatePicker.attach("#from_date");
+AppDatePicker.attach("#to_date");
 
 $(document).ready(function () {
     $('.select2').select2({ allowClear: true, placeholder: function() { return $(this).data('placeholder'); } });

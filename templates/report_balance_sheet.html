@@ -58,7 +58,7 @@
 </div>
 
 <script>
-flatpickr("#as_of_date", { dateFormat: "d-m-Y", allowInput: true });
+AppDatePicker.attach("#as_of_date");
 
 function toISO(ddmmyyyy) {
     if (!ddmmyyyy) return '';

@@ -99,8 +99,8 @@
 </div>
 
 <script>
-flatpickr("#from_date", { dateFormat: "d-m-Y", allowInput: true });
-flatpickr("#to_date",   { dateFormat: "d-m-Y", allowInput: true });
+AppDatePicker.attach("#from_date");
+AppDatePicker.attach("#to_date");
 
 // The GL dump is capped at one month per pull - a full year costs 13.7s and
 // 240MB on the server and holds a worker thread for the duration. Opening on

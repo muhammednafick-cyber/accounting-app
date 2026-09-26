@@ -162,7 +162,9 @@
         document.getElementById('orderTotal').textContent = total.toFixed(2);
     }
 
-    document.getElementById('date').valueAsDate = new Date();
+    // Today, in local time. valueAsDate used UTC - still yesterday in the
+    // UAE until 4 am - and only works on a native date field.
+    AppDatePicker.setDate(document.getElementById('date'), new Date());
     $(function () {
         makeSearchable(document);
         addRow();

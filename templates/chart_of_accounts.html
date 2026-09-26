@@ -182,8 +182,8 @@ let balances = {};           // ledger_name → {net_change, balance}
 let collapsed = new Set();   // rowKeys that are collapsed
 
 // ── Flatpickr date pickers ─────────────────────────────────────────
-flatpickr("#fromDate", { dateFormat: "d-m-Y", allowInput: true });
-flatpickr("#toDate",   { dateFormat: "d-m-Y", allowInput: true });
+AppDatePicker.attach("#fromDate");
+AppDatePicker.attach("#toDate");
 
 // ── Helpers ────────────────────────────────────────────────────────
 function fmt(val) {
