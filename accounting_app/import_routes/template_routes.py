@@ -261,35 +261,80 @@ def download_voucher_template(voucher_type):
             "Item X", 5, "Warehouse A", "Shop B", "Project A"
         ]
     
-    if location_index is not None and sample_data:
-        sample_data.insert(location_index, active_location)
+    # The samples are dated today, in the DD-MM-YYYY the rest of the app uses.
+    # They used to be dated 2023, in YYYY-MM-DD - a year with no financial year
+    # set up, in a format nothing else in the app shows.
+    from datetime import date as _date
+    from database import get_current_company_id
+    from .template_lookups import restricted_ledger_columns
+    today = _date.today().strftime("%d-%m-%Y")
+    company_id = get_current_company_id()
+    old_dates = {"2023-12-31", "2023-12-30", "2024-01-15"}
 
-    # Write sample row
-    if sample_data:
-        # Format dates if needed, but writing string is safer for template
-        for col, data in enumerate(sample_data):
+    sample_rows = [sample_data] if sample_data else []
+    if voucher_type == "Journal":
+        sample_rows.append(["1", "2023-12-31", "Adjustment", "Cash Account",
+                            500, "Credit", 0, "Project A"])
+
+    # Receipt, Payment and Contra samples were a single line - a Receipt that
+    # only credited a customer, which could never balance or import. Each is
+    # now the pair it has to be, naming real Cash/Bank ledgers where the
+    # company has them.
+    plans = restricted_ledger_columns(voucher_type, headers, company_id)
+    by_type = next((p for p in plans if p["kind"] == "by_type"), None)
+
+    def pick(side, fallback, prefer=None, avoid=None):
+        names = (by_type or {}).get(side) or []
+        ordered = ([n for n in names if prefer and prefer in n.lower()]
+                   + [n for n in names if not (prefer and prefer in n.lower())])
+        for name in ordered:
+            if name != avoid:
+                return name
+        return fallback
+
+    if voucher_type == "Receipt":
+        cash = pick("Debit", "Cash")
+        sample_rows = [
+            ["1", today, "Received from customer", cash, 5000, "Debit"],
+            ["1", today, "Received from customer", pick("Credit", "Customer A"), 5000, "Credit"],
+        ]
+    elif voucher_type == "Payment":
+        cash = pick("Credit", "Cash")
+        sample_rows = [
+            ["1", today, "Paid to supplier", pick("Debit", "Supplier B"), 2000, "Debit"],
+            ["1", today, "Paid to supplier", cash, 2000, "Credit"],
+        ]
+    elif voucher_type == "Contra":
+        bank = pick("Debit", "Bank", prefer="bank")
+        cash = pick("Credit", "Cash", prefer="cash", avoid=bank)
+        sample_rows = [
+            ["1", today, "Cash deposited in bank", bank, 1000, "Debit"],
+            ["1", today, "Cash deposited in bank", cash, 1000, "Credit"],
+        ]
+
+    for row_index, row in enumerate(sample_rows, start=1):
+        row = [today if value in old_dates else value for value in row]
+        if location_index is not None:
+            row.insert(location_index, active_location)
+        for col, data in enumerate(row):
             if col < len(headers):
-                worksheet.write(1, col, data)
-        
-        # Add a second row for Journal to show balancing?
-        if voucher_type == "Journal":
-             sample_data_2 = ["1", "2023-12-31", "Adjustment", "Cash Account", 500, "Credit", 0, "Project A"]
-             if location_index is not None:
-                 sample_data_2.insert(location_index, active_location)
-             for col, data in enumerate(sample_data_2):
-                if col < len(headers):
-                    worksheet.write(2, col, data)
+                worksheet.write(row_index, col, data)
 
     # Dropdowns for every column that must match an existing record. The
     # sample rows occupy rows 2-3, so validation starts below them.
-    from database import get_current_company_id
-    from .template_lookups import apply_lookups
+    from .template_lookups import apply_lookups, write_restricted_ledger_lists
     # The Location column is not a free pick: a voucher is posted to the
     # location selected in the main menu, so the sheet offers that one only and
     # the import rejects anything else.
-    overrides = {"Location": None} if location_index is not None else None
-    apply_lookups(workbook, worksheet, headers, get_current_company_id(),
-                  overrides=overrides, first_row=3)
+    overrides = {"Location": None} if location_index is not None else {}
+    # Ledger columns the Voucher Configuration restricts get their own lists
+    # below, instead of every ledger in the company.
+    for plan in plans:
+        overrides[plan["header"]] = None
+    apply_lookups(workbook, worksheet, headers, company_id,
+                  overrides=overrides or None, first_row=3)
+    write_restricted_ledger_lists(workbook, worksheet, voucher_type, plans,
+                                  company_id, first_row=3)
 
     if location_index is not None:
         worksheet.data_validation(3, location_index, 2000, location_index, {

@@ -2497,10 +2497,12 @@ Charges on Purchase Voucher
         let filteredLedgers = ledgersData.filter(l => !vatLedgers.includes(l.ledger_name));
 
         // 1. Apply Hardcoded rules (Receipt/Payment Cash/Bank)
-        if (voucherType === 'Receipt' && side === 'Debit') {
-            filteredLedgers = filteredLedgers.filter(l => ['G005', 'G006'].includes(l.group_code));
-        }
-        else if (voucherType === 'Payment' && side === 'Credit') {
+        // The built-in rules the server enforces on save (models.py
+        // BUILT_IN_SIDE_RULES). Contra was missing here, so its dropdowns
+        // offered every ledger and the save was then refused.
+        if ((voucherType === 'Receipt' && side === 'Debit')
+                || (voucherType === 'Payment' && side === 'Credit')
+                || voucherType === 'Contra') {
             filteredLedgers = filteredLedgers.filter(l => ['G005', 'G006'].includes(l.group_code));
         }
 

@@ -400,6 +400,33 @@ def check_built_in_side_rules(voucher_type, ledger_entries, company_id):
     return True, ""
 
 
+def allowed_ledger_names(voucher_type, side, company_id=None):
+    """The ledgers a voucher of this type may use on this side - exactly what
+    validate_voucher_ledger_groups below will accept - or None when any active
+    ledger will do.
+
+    Two sources, the same two the validator applies: the Voucher Configuration
+    under Setup, and the built-in rules (Receipt debit, Payment credit and both
+    sides of a Contra are Cash or Bank). The import templates build their
+    dropdowns from this, so the sheet offers what the import will take.
+    """
+    vt = (voucher_type or "").strip()
+    rule = BUILT_IN_SIDE_RULES.get((vt, side))
+    try:
+        from database.voucher_config_db import get_allowed_ledgers, get_voucher_config
+        config = get_voucher_config(vt, side, company_id=company_id)
+    except Exception as exc:
+        print(f"allowed_ledger_names: configuration unreadable: {exc}")
+        return None
+    if not rule and not config:
+        return None
+    # With no configuration this is every active ledger; the rule narrows it.
+    rows = get_allowed_ledgers(vt, side, company_id=company_id)
+    if rule:
+        rows = [r for r in rows if r.get("group_code") in rule[0]]
+    return sorted({r["name"] for r in rows if r.get("name")})
+
+
 def validate_voucher_ledger_groups(voucher_type, ledger_entries, company_id=None):
     """
     Enforce group rules per voucher type using dynamic database configuration,

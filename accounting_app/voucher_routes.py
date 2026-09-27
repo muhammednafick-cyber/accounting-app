@@ -231,8 +231,12 @@ def _voucher_form_context(voucher_type, company_id):
         "locations": locations,
         "selected_location_name": None,
         "purchase_vouchers": [],
-        "allowed_ledgers_dr": allowed_dr,
-        "allowed_ledgers_cr": allowed_cr,
+        # Names, as the normal page gets them. The page filters its ledger
+        # dropdowns with `new Set(allowed).has(ledger_name)`; handed the
+        # records instead, nothing matched and every dropdown came back empty
+        # whenever a save was rejected and the form redrawn.
+        "allowed_ledgers_dr": [l["name"] for l in allowed_dr],
+        "allowed_ledgers_cr": [l["name"] for l in allowed_cr],
         "username": current_user.username,
     }
 

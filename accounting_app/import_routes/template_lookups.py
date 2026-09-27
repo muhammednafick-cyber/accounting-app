@@ -200,3 +200,120 @@ def apply_lookups(workbook, worksheet, headers, company_id, overrides=None,
         })
         applied += 1
     return applied
+
+
+# ---------------------------------------------------------------------------
+# Ledger columns restricted by the Voucher Configuration
+# ---------------------------------------------------------------------------
+#
+# A plain "Ledger Name" list offers every ledger in the company, on both sides.
+# The import then refuses any line the Voucher Configuration or the built-in
+# rules forbid - a Receipt debited to anything but Cash or Bank, say - so the
+# sheet let you pick values it would reject. These columns get the same list
+# the import accepts instead, taken from models.allowed_ledger_names.
+
+# Ledger columns whose side is fixed by the voucher type.
+FIXED_SIDE_COLUMNS = {
+    ("Sales", "party ledger name"): "Debit",
+    ("Sales", "sales ledger"): "Credit",
+    ("Purchase", "party ledger name"): "Credit",
+}
+
+
+def restricted_ledger_columns(voucher_type, headers, company_id):
+    """What to restrict, as a list of plans. Empty when nothing is restricted,
+    and the ordinary all-ledgers dropdown is right."""
+    from accounting_app.models import allowed_ledger_names
+
+    lower = [str(h).strip().lower() for h in headers]
+    plans = []
+
+    # One ledger column whose side is chosen per row in the Type column.
+    if "ledger name" in lower and "type" in lower:
+        debit = allowed_ledger_names(voucher_type, "Debit", company_id=company_id)
+        credit = allowed_ledger_names(voucher_type, "Credit", company_id=company_id)
+        if debit is not None or credit is not None:
+            plans.append({"kind": "by_type", "column": lower.index("ledger name"),
+                          "type_column": lower.index("type"),
+                          "Debit": debit, "Credit": credit,
+                          "header": headers[lower.index("ledger name")]})
+
+    for (vt, heading), side in FIXED_SIDE_COLUMNS.items():
+        if vt == voucher_type and heading in lower:
+            names = allowed_ledger_names(voucher_type, side, company_id=company_id)
+            if names is not None:
+                plans.append({"kind": "fixed", "column": lower.index(heading),
+                              "side": side, "names": names,
+                              "header": headers[lower.index(heading)]})
+    return plans
+
+
+def write_restricted_ledger_lists(workbook, worksheet, voucher_type, plans,
+                                  company_id, first_row=1):
+    """Put each restricted list on the reference sheet and point its column's
+    dropdown at it. For a by-Type column the list follows that row's Type."""
+    if not plans:
+        return 0
+
+    reference = workbook.get_worksheet_by_name(REFERENCE_SHEET)
+    if reference is None:
+        reference = workbook.add_worksheet(REFERENCE_SHEET)
+        reference.set_column(0, 20, 26)
+    title_fmt = workbook.add_format({
+        "bold": True, "bg_color": "#245C56", "font_color": "#FFFFFF"})
+    next_col = [0 if reference.dim_colmax is None else reference.dim_colmax + 1]
+    all_ledgers = None
+
+    def every_ledger():
+        nonlocal all_ledgers
+        if all_ledgers is None:
+            all_ledgers = load_lookups(company_id, {"ledger"}).get("ledger") or []
+        return all_ledgers
+
+    def write_list(title, names, defined_name):
+        col = next_col[0]
+        next_col[0] += 1
+        reference.write(0, col, title, title_fmt)
+        entries = names or ["(none allowed - see Voucher Configuration)"]
+        for row, value in enumerate(entries, start=1):
+            reference.write(row, col, value)
+        letter = xl_col_to_name(col)
+        workbook.define_name(
+            defined_name,
+            f"='{REFERENCE_SHEET}'!${letter}$2:${letter}${len(entries) + 1}")
+
+    applied = 0
+    for plan in plans:
+        column = plan["column"]
+        if plan["kind"] == "by_type":
+            debit = plan["Debit"] if plan["Debit"] is not None else every_ledger()
+            credit = plan["Credit"] if plan["Credit"] is not None else every_ledger()
+            either = sorted(set(debit) | set(credit))
+            write_list(f"{voucher_type} Debit ledgers", debit, "LEDGERS_DEBIT")
+            write_list(f"{voucher_type} Credit ledgers", credit, "LEDGERS_CREDIT")
+            write_list(f"{voucher_type} ledgers (either side)", either, "LEDGERS_EITHER")
+            type_cell = f"${xl_col_to_name(plan['type_column'])}{first_row + 1}"
+            source = (f'=INDIRECT(IF({type_cell}="Credit","LEDGERS_CREDIT",'
+                      f'IF({type_cell}="Debit","LEDGERS_DEBIT","LEDGERS_EITHER")))')
+            message = (f"Choose the Type first: the ledgers allowed on the Debit "
+                       f"and Credit side of a {voucher_type} differ.")
+        else:
+            name = "LEDGERS_" + plan["side"].upper() + "_" + str(column)
+            write_list(f"{voucher_type} {plan['header']} ({plan['side']})",
+                       plan["names"], name)
+            source = "=" + name
+            message = (f"Only the ledgers allowed on the {plan['side']} side of a "
+                       f"{voucher_type}.")
+        worksheet.data_validation(first_row, column, VALIDATION_ROWS, column, {
+            "validate": "list",
+            "source": source,
+            "input_title": "Pick a Ledger"[:32],
+            "input_message": message[:255],
+            "error_title": "Ledger not allowed"[:32],
+            "error_message": (f"That ledger is not allowed there on a "
+                              f"{voucher_type} - see Setup > Voucher "
+                              f"Configuration, or the '{REFERENCE_SHEET}' "
+                              f"sheet for the lists.")[:255],
+        })
+        applied += 1
+    return applied
