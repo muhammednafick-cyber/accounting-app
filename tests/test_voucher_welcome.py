@@ -44,7 +44,11 @@ class VoucherWelcomeTests(unittest.TestCase):
                 continue
             self.assertTrue(examples, vt)
             for example in examples:
-                parsed = parse(example)
+                # The chatbot takes a VAT phrase ("incl VAT") out of an Expense
+                # before sending it (parseVatPhrase), so the server never sees it.
+                sent = re.sub(r"\s*\b(?:incl|including|with|plus|excl)\s+vat\b", "",
+                              example, flags=re.I)
+                parsed = parse(sent)
                 self.assertIsNotNone(parsed, "%s: %r is not understood" % (vt, example))
                 self.assertEqual(parsed["voucher_type"], vt, example)
                 self.assertTrue(parsed["amount"], example)

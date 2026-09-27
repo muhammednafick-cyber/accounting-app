@@ -363,7 +363,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         ${hasVat ? `
                         <div style="margin-bottom: 10px;">
                             <label style="display: block; font-weight: bold; margin-bottom: 5px;">VAT Input Ledger (VAT: ${ed.vat_amount}):</label>
-                            <input type="text" id="aiExpenseVatLedger" class="form-control" list="aiVatLedgerList" placeholder="e.g., VAT Input, Input VAT">
+                            <input type="text" id="aiExpenseVatLedger" class="form-control" list="aiVatLedgerList" value="Input VAT 5%" placeholder="e.g., Input VAT 5%">
                             <datalist id="aiVatLedgerList"></datalist>
                         </div>
                         ` : ''}
@@ -416,9 +416,15 @@ document.addEventListener('DOMContentLoaded', function () {
                             });
                         }
 
-                        // Also populate VAT ledger list with same debit ledgers
+                        // The VAT ledger list: Input VAT 5% first - the ledger
+                        // the Expense page books VAT to - then the others.
                         if (hasVat) {
                             const vatList = document.getElementById('aiVatLedgerList');
+                            if (vatList) {
+                                const opt = document.createElement('option');
+                                opt.value = 'Input VAT 5%';
+                                vatList.appendChild(opt);
+                            }
                             if (vatList && Array.isArray(debitLedgers)) {
                                 debitLedgers.forEach(l => {
                                     const opt = document.createElement('option');
@@ -697,6 +703,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 'expense 300 for Fuel by cash today',
                 'spent 85 on Stationery by bank yesterday',
                 'expense of 1200 for Rent by bank 01-09-2026',
+                'expense 105 incl VAT for Fuel by cash today',
             ],
         },
     };
@@ -1004,8 +1011,62 @@ document.addEventListener('DOMContentLoaded', function () {
         const entries = Array.isArray(d.ledgerEntries) ? d.ledgerEntries : [];
         const debits = entries.filter(e => e.type === 'Debit').map(e => e.ledgerName).filter(Boolean);
         const credits = entries.filter(e => e.type === 'Credit').map(e => e.ledgerName).filter(Boolean);
-        const cc = d.costCenterName ? `\nCost Center: ${d.costCenterName}` : '';
+        const cc = (d.costCenterName ? `\nCost Center: ${d.costCenterName}` : '')
+            + (d.vatAmount ? `\nVAT included: ${Number(d.vatAmount).toFixed(2)}` : '');
         return `Type: ${d.voucherType}\nDate: ${date}\nAmount: ${amount}\nDebit: ${debits.join(', ')}\nCredit: ${credits.join(', ')}${cc}\nNarration: ${narration}`;
+    }
+
+    // VAT in a typed Expense. "incl VAT" / "with VAT": the amount includes 5%
+    // VAT. "+ VAT" / "plus VAT" / "excl VAT": 5% goes on top. "VAT 15": the
+    // amount includes 15 of VAT. The phrase is taken out of the message before
+    // it is read, so it does not end up in the narration or the ledger search.
+    function parseVatPhrase(text) {
+        let t = String(text || '');
+        let mode = null;
+        let value = null;
+        const pct = '(?:5\\s*%\\s*)?';
+        const explicit = t.match(/\bvat\s*(?:of|amount|amt|=|:)?\s*(\d+(?:\.\d{1,2})?)(?!\s*%)/i);
+        if (explicit) {
+            mode = 'amount';
+            value = Number(explicit[1]);
+            t = t.replace(explicit[0], ' ');
+        }
+        const excl = new RegExp('(?:\\+|\\bplus|\\bexcl(?:uding|usive(?:\\s+of)?)?\\.?|\\bbefore)\\s*' + pct + 'vat\\b', 'i');
+        const incl = new RegExp('\\b(?:incl(?:uding|usive(?:\\s+of)?)?\\.?|with)\\s*' + pct + 'vat\\b', 'i');
+        const bare = new RegExp('\\b' + pct + 'vat\\b', 'i');
+        if (excl.test(t)) {
+            if (!mode) mode = 'excl';
+            t = t.replace(excl, ' ');
+        } else if (incl.test(t)) {
+            if (!mode) mode = 'incl';
+            t = t.replace(incl, ' ');
+        } else if (bare.test(t)) {
+            if (!mode) mode = 'incl';
+            t = t.replace(bare, ' ');
+        }
+        return { mode, value, cleaned: t.replace(/\s+/g, ' ').trim() };
+    }
+
+    // Applies a parsed VAT phrase to the voucher being built. The Amount stays
+    // the total paid; vatAmount is the part of it that is VAT.
+    function applyVatPhrase(vat, current) {
+        if (!vat || !vat.mode) return;
+        if (!(vaBootstrap && vaBootstrap.vatApplicable)) {
+            globalChatAppendMessage('bot', 'VAT is not enabled for this company, so no VAT was added.');
+            return;
+        }
+        const amount = typeof current.amount === 'number' ? current.amount : null;
+        if (vat.mode === 'amount') {
+            current.vatAmount = Math.round(vat.value * 100) / 100;
+        } else if (amount == null) {
+            return;
+        } else if (vat.mode === 'excl') {
+            const v = Math.round(amount * 5) / 100;
+            current.vatAmount = v;
+            current.amount = Math.round((amount + v) * 100) / 100;
+        } else {
+            current.vatAmount = Math.round(amount * 500 / 105) / 100;
+        }
     }
 
     function tryParseOneLineVoucher(text) {
@@ -1047,9 +1108,13 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         if (draft.voucherType === 'Expense') {
-            entries.forEach(() => {
-                params.append('ledger_vat_applicable[]', '0');
-                params.append('ledger_vat_amount[]', '0');
+            // The VAT rides on the expense (Debit) line, as on the Expense
+            // page; the server books it to Input VAT 5%.
+            const vat = Number(draft.vatAmount) || 0;
+            entries.forEach((e) => {
+                const onThis = vat > 0 && e.type === 'Debit';
+                params.append('ledger_vat_applicable[]', onThis ? '1' : '0');
+                params.append('ledger_vat_amount[]', onThis ? vat.toFixed(2) : '0');
             });
         }
 
@@ -1491,8 +1556,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 date,
                 { key: 'expenseLedgerName', label: 'Expense Account', kind: 'ledger', required: true },
                 { key: 'accountLedgerName', label: 'Paid From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
-                amount, narration
-            ],
+                Object.assign({}, amount, { label: 'Total Paid' }),
+            ].concat((vaBootstrap && vaBootstrap.vatApplicable)
+                ? [{ key: 'vatAmount', label: 'VAT included', kind: 'vat' }] : [])
+             .concat([narration]),
             'Service Income': [
                 date,
                 { key: 'incomeLedgerName', label: 'Income Account', kind: 'ledger', required: true },
@@ -1547,6 +1614,7 @@ document.addEventListener('DOMContentLoaded', function () {
         let value = current[field.key];
         if (field.kind === 'date') return vrcIsoToShown(value);
         if (field.kind === 'amount') return (typeof value === 'number') ? value.toFixed(2) : '';
+        if (field.kind === 'vat') return (typeof value === 'number' && value > 0) ? value.toFixed(2) : '';
         return value === undefined || value === null ? '' : value;
     }
 
@@ -1585,6 +1653,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 control = '<input type="number" step="0.01" min="0" class="vrc-input' + flag +
                     '" data-key="amount" data-kind="amount" value="' + vrcEscape(value) +
                     '" placeholder="0.00">';
+            } else if (f.kind === 'vat') {
+                // Blank = no VAT. The button fills in the 5% contained in the
+                // total, the usual case for a receipt.
+                control = '<div style="display:flex;gap:6px;align-items:center;">' +
+                    '<input type="number" step="0.01" min="0" class="vrc-input" data-key="vatAmount"' +
+                    ' data-kind="vat" value="' + vrcEscape(value) + '" placeholder="0.00 if none" style="flex:1;">' +
+                    '<button type="button" class="btn vrc-vat5" title="5% VAT included in the total">5%</button></div>';
             } else if (f.kind === 'date') {
                 control = '<input type="text" class="vrc-input' + flag +
                     '" data-key="date" data-kind="date" value="' + vrcEscape(value) +
@@ -1637,6 +1712,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (kind === 'amount') {
                     const n = parseFloat(input.value);
                     assistantState.current.amount = isFinite(n) ? n : null;
+                } else if (kind === 'vat') {
+                    const n = parseFloat(input.value);
+                    assistantState.current.vatAmount = isFinite(n) && n > 0 ? n : 0;
                 } else if (kind === 'date') {
                     assistantState.current.date = vrcShownToIso(input.value);
                 } else {
@@ -1646,6 +1724,22 @@ document.addEventListener('DOMContentLoaded', function () {
                 errorEl.style.display = 'none';
             });
         });
+
+        const vat5 = card.querySelector('.vrc-vat5');
+        if (vat5) {
+            vat5.addEventListener('click', function () {
+                const total = assistantState.current.amount;
+                const vatInput = card.querySelector('.vrc-input[data-kind="vat"]');
+                if (typeof total !== 'number' || !(total > 0)) {
+                    fail('Enter the total paid first.');
+                    return;
+                }
+                const v = Math.round(total * 500 / 105) / 100;
+                assistantState.current.vatAmount = v;
+                if (vatInput) vatInput.value = v.toFixed(2);
+                errorEl.style.display = 'none';
+            });
+        }
 
         card.querySelector('.vrc-save').addEventListener('click', async function () {
             let draft;
@@ -1716,6 +1810,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (needCC && !normalizeText(c.costCenterName)) throw new Error('Cost Center is required');
 
         let ledgerEntries = [];
+        let vatAmount = 0;
         if (vt === 'Receipt') {
             if (!c.partyLedgerName) throw new Error('Party is required');
             if (!c.accountLedgerName) throw new Error('Cash/Bank account is required');
@@ -1740,8 +1835,13 @@ document.addEventListener('DOMContentLoaded', function () {
         } else if (vt === 'Expense') {
             if (!c.expenseLedgerName) throw new Error('Expense ledger is required');
             if (!c.accountLedgerName) throw new Error('Paid from account is required');
+            // The total paid is credited; the expense is debited without the
+            // VAT, which the server books to Input VAT 5%.
+            vatAmount = Math.round((Number(c.vatAmount) || 0) * 100) / 100;
+            if (vatAmount < 0) throw new Error('VAT cannot be negative');
+            if (vatAmount >= c.amount) throw new Error('VAT must be less than the total paid');
             ledgerEntries = [
-                { ledgerName: c.expenseLedgerName, amount: c.amount, type: 'Debit' },
+                { ledgerName: c.expenseLedgerName, amount: Math.round((c.amount - vatAmount) * 100) / 100, type: 'Debit' },
                 { ledgerName: c.accountLedgerName, amount: c.amount, type: 'Credit' },
             ];
         } else if (vt === 'Service Income') {
@@ -1763,6 +1863,7 @@ document.addEventListener('DOMContentLoaded', function () {
             narration,
             costCenterName: normalizeText(c.costCenterName),
             ledgerEntries,
+            vatAmount,
             createdAt: new Date().toISOString(),
         };
     }
@@ -2353,11 +2454,13 @@ document.addEventListener('DOMContentLoaded', function () {
             // Parse the message, then show everything understood in one
             // editable card. Anything the parser missed is left blank and
             // highlighted for the user to fill in - no question chain.
-            const aiData = await analyzeMessageWithAI(text);
+            const vatPhrase = vt === 'Expense' ? parseVatPhrase(text) : null;
+            const aiData = await analyzeMessageWithAI(vatPhrase && vatPhrase.mode ? vatPhrase.cleaned : text);
             if (!aiData) return; // Error already shown in the status line
             const parsed = convertAiDataToParsed(aiData, vt);
 
             if (parsed.amount != null) assistantState.current.amount = parsed.amount;
+            applyVatPhrase(vatPhrase, assistantState.current);
             if (parsed.date) assistantState.current.date = parsed.date;
             if (parsed.narration) assistantState.current.narration = parsed.narration;
 
