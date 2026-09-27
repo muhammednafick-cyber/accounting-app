@@ -72,5 +72,75 @@ class PostingTests(unittest.TestCase):
                       'value="Input VAT 5%"', _script())
 
 
+SUPPLIER_RUNNER = r'''
+const fs = require("fs");
+const s = fs.readFileSync(process.argv[1], "utf8");
+const a = s.indexOf("    function parseSupplierPhrase"), b = s.indexOf("    function resolveCreditor");
+global.normalizeText = (x) => (x || "").toString().trim();
+eval(s.slice(a, b).replace("function parseSupplierPhrase", "global.parseSupplierPhrase = function"));
+console.log(JSON.stringify(JSON.parse(process.argv[2]).map((t) => parseSupplierPhrase(t))));
+'''
+
+
+@unittest.skipUnless(shutil.which('node'), 'needs node')
+class SupplierPhraseTests(unittest.TestCase):
+    """An Expense bought on credit: the supplier is credited, not Cash/Bank."""
+
+    def test_phrases(self):
+        cases = ['expense 500 for Repairs from ABC Garage on credit invoice 7781',
+                 'expense 500 on credit from ABC Garage for Repairs today',
+                 'expense 300 payable to Nafi Trading for Rent inv no INV-55',
+                 'expense 300 for Fuel by cash today',
+                 'expense 200 for invoice printing by cash']
+        result = subprocess.run(
+            ['node', '-e', SUPPLIER_RUNNER, os.path.join(ROOT, 'static', 'script.js'),
+             json.dumps(cases)], capture_output=True, text=True, check=True)
+        got = [(g['supplier'], g['invoiceRef'], g['cleaned']) for g in json.loads(result.stdout)]
+        self.assertEqual(got, [
+            ('ABC Garage', '7781', 'expense 500 for Repairs'),
+            ('ABC Garage', None, 'expense 500 for Repairs today'),
+            ('Nafi Trading', 'INV-55', 'expense 300 for Rent'),
+            (None, None, 'expense 300 for Fuel by cash today'),
+            (None, None, 'expense 200 for invoice printing by cash'),
+        ])
+
+
+class ExpenseCardTests(unittest.TestCase):
+
+    def test_paid_from_takes_a_supplier_and_the_lists_follow_the_configuration(self):
+        s = _script()
+        self.assertIn("label: 'Paid From / Supplier'", s)
+        self.assertIn("only: CASH_BANK_GROUPS.concat([CREDITOR_GROUP]), side: 'Credit'", s)
+        self.assertIn("const allowed = field.side ? byType[field.side] : null;", s)
+
+    def test_the_bootstrap_carries_the_configured_lists(self):
+        import contextlib
+        import sys
+        sys.path.insert(0, ROOT)
+        with contextlib.redirect_stdout(io.StringIO()):
+            import app as appmod
+            from database.config import get_connection
+            conn = get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM users WHERE username = 'admin'")
+                user = cur.fetchone()
+            finally:
+                conn.close()
+        if not user:
+            self.skipTest('needs the admin user')
+        client = appmod.app.test_client()
+        with client.session_transaction() as sess:
+            sess['_user_id'] = str(user[0])
+            sess['_fresh'] = True
+            sess['company_id'] = 1
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = client.get('/api/voucher_assistant_bootstrap').get_json()
+        allowed = data['allowed_ledgers']
+        self.assertEqual(set(allowed), {'Receipt', 'Payment', 'Contra', 'Expense', 'Service Income'})
+        # Receipt Debit is Cash/Bank by the built-in rule, so it is a list.
+        self.assertIsInstance(allowed['Receipt']['Debit'], list)
+
+
 if __name__ == '__main__':
     unittest.main()

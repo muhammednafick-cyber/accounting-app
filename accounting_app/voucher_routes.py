@@ -118,6 +118,20 @@ def search_purchase_vouchers():
         return jsonify({"success": False, "message": str(e)}), 500
 
 
+CHAT_TYPED_VOUCHERS = ("Receipt", "Payment", "Contra", "Expense", "Service Income")
+
+
+def _chat_allowed_ledgers():
+    from accounting_app.models import allowed_ledger_names
+    from database import get_current_company_id
+    company_id = get_current_company_id()
+    return {
+        vt: {side: allowed_ledger_names(vt, side, company_id=company_id)
+             for side in ("Debit", "Credit")}
+        for vt in CHAT_TYPED_VOUCHERS
+    }
+
+
 @voucher_bp.route("/api/voucher_assistant_bootstrap", methods=["GET"])
 @login_required
 def voucher_assistant_bootstrap():
@@ -139,6 +153,9 @@ def voucher_assistant_bootstrap():
                 # assistant reads this rather than keeping its own copy, so the
                 # two can't drift apart.
                 "cost_center_types": sorted(COST_CENTER_ALLOWED_TYPES),
+                # What the Voucher Configuration allows per side, for the
+                # chat's ledger lists - null where any ledger will do.
+                "allowed_ledgers": _chat_allowed_ledgers(),
             }
         )
     except Exception as e:

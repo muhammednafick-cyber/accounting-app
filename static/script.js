@@ -704,6 +704,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 'spent 85 on Stationery by bank yesterday',
                 'expense of 1200 for Rent by bank 01-09-2026',
                 'expense 105 incl VAT for Fuel by cash today',
+                'expense 500 for Repairs from ABC Garage on credit invoice 7781',
             ],
         },
     };
@@ -920,6 +921,7 @@ document.addEventListener('DOMContentLoaded', function () {
             costCenterApplicable: !!data.cost_center_applicable,
             costCenterMandatory: !!data.cost_center_mandatory,
             costCenterTypes: Array.isArray(data.cost_center_types) ? data.cost_center_types : [],
+            allowedLedgers: (data.allowed_ledgers && typeof data.allowed_ledgers === 'object') ? data.allowed_ledgers : {},
         };
         return vaBootstrap;
     }
@@ -1067,6 +1069,39 @@ document.addEventListener('DOMContentLoaded', function () {
         } else {
             current.vatAmount = Math.round(amount * 500 / 105) / 100;
         }
+    }
+
+    // A supplier and invoice number in a typed Expense bought on credit:
+    // "from ABC Garage on credit", "on credit from ABC Garage", "payable to
+    // ABC Garage", "invoice INV-55". Taken out of the message before it is
+    // read, like the VAT phrase.
+    function parseSupplierPhrase(text) {
+        let t = String(text || '');
+        let supplier = null;
+        let invoiceRef = null;
+        const inv = t.match(/\b(?:inv(?:oice)?|bill)\s*(?:no\.?|number|#)?\s*[:#]?\s*([A-Za-z0-9][\w\-\/]*\d[\w\-\/]*)/i);
+        if (inv) {
+            invoiceRef = inv[1];
+            t = t.replace(inv[0], ' ');
+        }
+        const stop = '(?=\\s+(?:by|for|on|today|yesterday|date|narration|note|incl|including|with|plus|excl|vat)\\b|\\s*$)';
+        const after = t.match(/\bfrom\s+(.+?)\s+on\s+credit\b/i);
+        const lead = !after && t.match(new RegExp('\\b(?:on\\s+credit\\s+(?:from|to)|payable\\s+to|owed\\s+to)\\s+(.+?)' + stop, 'i'));
+        const m = after || lead;
+        if (m) {
+            supplier = normalizeText(m[1]);
+            t = t.replace(m[0], ' ');
+        }
+        return { supplier, invoiceRef, cleaned: t.replace(/\s+/g, ' ').trim() };
+    }
+
+    function resolveCreditor(name) {
+        const all = (vaBootstrap && vaBootstrap.ledgers) ? vaBootstrap.ledgers : [];
+        const matches = findLedgerCandidates(name, 8).filter(n => {
+            const l = all.find(x => x.name === n);
+            return l && l.group_code === CREDITOR_GROUP;
+        });
+        return matches.length === 1 ? matches[0] : '';
     }
 
     function tryParseOneLineVoucher(text) {
@@ -1523,6 +1558,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // much is still to come.
 
     const CASH_BANK_GROUPS = ['G005', 'G006'];
+    const CREDITOR_GROUP = 'G008';
 
     // Per voucher type: which fields to show, in order.
     //   key   - property on assistantState.current
@@ -1536,34 +1572,36 @@ document.addEventListener('DOMContentLoaded', function () {
         const map = {
             Receipt: [
                 date,
-                { key: 'partyLedgerName', label: 'Received From', kind: 'ledger', required: true },
-                { key: 'accountLedgerName', label: 'Into (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                { key: 'partyLedgerName', label: 'Received From', kind: 'ledger', required: true, side: 'Credit' },
+                { key: 'accountLedgerName', label: 'Into (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS, side: 'Debit' },
                 amount, narration
             ],
             Payment: [
                 date,
-                { key: 'partyLedgerName', label: 'Paid To', kind: 'ledger', required: true },
-                { key: 'accountLedgerName', label: 'From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                { key: 'partyLedgerName', label: 'Paid To', kind: 'ledger', required: true, side: 'Debit' },
+                { key: 'accountLedgerName', label: 'From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS, side: 'Credit' },
                 amount, narration
             ],
             Contra: [
                 date,
-                { key: 'fromLedgerName', label: 'From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
-                { key: 'toLedgerName', label: 'To (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                { key: 'fromLedgerName', label: 'From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS, side: 'Credit' },
+                { key: 'toLedgerName', label: 'To (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS, side: 'Debit' },
                 amount, narration
             ],
             Expense: [
                 date,
-                { key: 'expenseLedgerName', label: 'Expense Account', kind: 'ledger', required: true },
-                { key: 'accountLedgerName', label: 'Paid From (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
-                Object.assign({}, amount, { label: 'Total Paid' }),
+                { key: 'expenseLedgerName', label: 'Expense Account', kind: 'ledger', required: true, side: 'Debit' },
+                // Cash, Bank - or a supplier, for an expense bought on credit.
+                { key: 'accountLedgerName', label: 'Paid From / Supplier', kind: 'ledger', required: true,
+                  only: CASH_BANK_GROUPS.concat([CREDITOR_GROUP]), side: 'Credit' },
+                Object.assign({}, amount, { label: 'Total' }),
             ].concat((vaBootstrap && vaBootstrap.vatApplicable)
                 ? [{ key: 'vatAmount', label: 'VAT included', kind: 'vat' }] : [])
-             .concat([narration]),
+             .concat([{ key: 'originalInvoiceRef', label: 'Supplier Invoice No.', kind: 'text' }, narration]),
             'Service Income': [
                 date,
-                { key: 'incomeLedgerName', label: 'Income Account', kind: 'ledger', required: true },
-                { key: 'accountLedgerName', label: 'Received Into (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS },
+                { key: 'incomeLedgerName', label: 'Income Account', kind: 'ledger', required: true, side: 'Credit' },
+                { key: 'accountLedgerName', label: 'Received Into (Cash/Bank)', kind: 'ledger', required: true, only: CASH_BANK_GROUPS, side: 'Debit' },
                 amount, narration
             ]
         };
@@ -1585,7 +1623,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function vrcLedgerOptions(field) {
         const all = (vaBootstrap && vaBootstrap.ledgers) ? vaBootstrap.ledgers : [];
-        const usable = field.only ? all.filter(l => field.only.indexOf(l.group_code) !== -1) : all;
+        let usable = field.only ? all.filter(l => field.only.indexOf(l.group_code) !== -1) : all;
+        // The Voucher Configuration under Setup, as the save will apply it.
+        const byType = (vaBootstrap && vaBootstrap.allowedLedgers || {})[assistantState.voucherType] || {};
+        const allowed = field.side ? byType[field.side] : null;
+        if (Array.isArray(allowed)) {
+            const set = new Set(allowed);
+            usable = usable.filter(l => set.has(l.name));
+        }
         return usable.map(l => '<option value="' + vrcEscape(l.name) + '"></option>').join('');
     }
 
@@ -1834,8 +1879,8 @@ document.addEventListener('DOMContentLoaded', function () {
             ];
         } else if (vt === 'Expense') {
             if (!c.expenseLedgerName) throw new Error('Expense ledger is required');
-            if (!c.accountLedgerName) throw new Error('Paid from account is required');
-            // The total paid is credited; the expense is debited without the
+            if (!c.accountLedgerName) throw new Error('Paid from account or supplier is required');
+            // The total is credited - to Cash/Bank, or to the supplier on credit; the expense is debited without the
             // VAT, which the server books to Input VAT 5%.
             vatAmount = Math.round((Number(c.vatAmount) || 0) * 100) / 100;
             if (vatAmount < 0) throw new Error('VAT cannot be negative');
@@ -1864,6 +1909,7 @@ document.addEventListener('DOMContentLoaded', function () {
             costCenterName: normalizeText(c.costCenterName),
             ledgerEntries,
             vatAmount,
+            originalInvoiceRef: vt === 'Expense' ? normalizeText(c.originalInvoiceRef) : '',
             createdAt: new Date().toISOString(),
         };
     }
@@ -2454,8 +2500,12 @@ document.addEventListener('DOMContentLoaded', function () {
             // Parse the message, then show everything understood in one
             // editable card. Anything the parser missed is left blank and
             // highlighted for the user to fill in - no question chain.
-            const vatPhrase = vt === 'Expense' ? parseVatPhrase(text) : null;
-            const aiData = await analyzeMessageWithAI(vatPhrase && vatPhrase.mode ? vatPhrase.cleaned : text);
+            let sendText = text;
+            const vatPhrase = vt === 'Expense' ? parseVatPhrase(sendText) : null;
+            if (vatPhrase && vatPhrase.mode) sendText = vatPhrase.cleaned;
+            const supplierPhrase = vt === 'Expense' ? parseSupplierPhrase(sendText) : null;
+            if (supplierPhrase && (supplierPhrase.supplier || supplierPhrase.invoiceRef)) sendText = supplierPhrase.cleaned;
+            const aiData = await analyzeMessageWithAI(sendText);
             if (!aiData) return; // Error already shown in the status line
             const parsed = convertAiDataToParsed(aiData, vt);
 
@@ -2494,6 +2544,14 @@ document.addEventListener('DOMContentLoaded', function () {
                 assistantState.current.expenseLedgerName =
                     resolve(parsed.narration, false) || '';
                 assistantState.current.accountLedgerName = resolve(cashHint, true) || '';
+                // Bought on credit: the supplier is credited instead of Cash/Bank.
+                if (supplierPhrase && supplierPhrase.supplier) {
+                    assistantState.current.accountLedgerName =
+                        resolveCreditor(supplierPhrase.supplier) || supplierPhrase.supplier;
+                }
+                if (supplierPhrase && supplierPhrase.invoiceRef) {
+                    assistantState.current.originalInvoiceRef = supplierPhrase.invoiceRef;
+                }
             } else if (vt === 'Service Income') {
                 assistantState.current.incomeLedgerName =
                     resolve(parsed.narration, false) || '';
