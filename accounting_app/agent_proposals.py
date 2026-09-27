@@ -114,6 +114,8 @@ def validate_voucher_proposal(payload, company_id):
             f"The entry does not balance: debits {debit:,.2f} against credits "
             f"{credit:,.2f}. Every voucher must have equal sides.")
 
+    _check_configuration(voucher_type, tidied, company_id)
+
     return {
         "voucher_type": voucher_type,
         "date": date,
@@ -121,6 +123,20 @@ def validate_voucher_proposal(payload, company_id):
         "ledger_entries": tidied,
         "totals": {"debit": round(debit, 2), "credit": round(credit, 2)},
     }
+
+
+def _check_configuration(voucher_type, ledger_entries, company_id):
+    """The Voucher Configuration (Setup) and the built-in rules - a Receipt is
+    debited to Cash or Bank, and so on - as a typed voucher meets them. Checked
+    here so the agent learns which ledger is not allowed and can pick another;
+    checked again on Approve, as the configuration may change in between."""
+    from .models import validate_voucher_ledger_groups
+    ok, err = validate_voucher_ledger_groups(voucher_type, ledger_entries,
+                                             company_id=company_id)
+    if not ok:
+        raise ProposalRejected(
+            f"{err} The Voucher Configuration under Setup decides which ledgers "
+            f"a {voucher_type} may use on each side; use a ledger it allows.")
 
 
 def _ledgers(company_id):
@@ -257,6 +273,9 @@ def validate_purchase_proposal(payload, company_id):
                 f"{vat_amount:,.2f} VAT) but the invoice total given is "
                 f"{stated:,.2f}. Re-read the invoice rather than posting a "
                 "figure that does not match it.")
+
+    _check_configuration("Purchase", [{"ledger_name": supplier, "type": "Credit",
+                                       "amount": total}], company_id)
 
     ledger_entries = []
     if vat_amount:

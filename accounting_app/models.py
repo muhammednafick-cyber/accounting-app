@@ -460,6 +460,14 @@ def allowed_ledger_names(voucher_type, side, company_id=None):
     return sorted({r["name"] for r in rows if r.get("name")})
 
 
+# The VAT ledgers the application books itself. The voucher page never lets a
+# person pick them as a line - it adds the VAT - so the Voucher Configuration
+# does not govern them. The chatbot's typed Expense and an agent's proposal send
+# the VAT as its own line, and checking it refused every such voucher with VAT
+# once the Expense Debit side was configured.
+SYSTEM_VAT_LEDGERS = frozenset({"Input VAT 5%", "Output VAT 5%"})
+
+
 def validate_voucher_ledger_groups(voucher_type, ledger_entries, company_id=None):
     """
     Enforce group rules per voucher type using dynamic database configuration,
@@ -497,6 +505,10 @@ def validate_voucher_ledger_groups(voucher_type, ledger_entries, company_id=None
     except ImportError:
         print("Warning: Could not import voucher_config_db")
         return True, ""
+
+    # The configuration governs the lines a person chooses, not the VAT lines.
+    ledger_entries = [e for e in ledger_entries
+                      if e.get("ledger_name") not in SYSTEM_VAT_LEDGERS]
 
     # Check Credit Side
     credit_ledgers = [e for e in ledger_entries if e["type"] == "Credit"]

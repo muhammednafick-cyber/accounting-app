@@ -187,6 +187,18 @@ def _post(proposal, company_id):
         raise ValueError("This purchase carries no item lines and would record "
                          "the cost without receiving the goods.")
 
+    # The Voucher Configuration and the built-in rules, as a typed voucher
+    # meets them on save - add_voucher itself checks neither, so Approve used
+    # to post a proposal the voucher screen would have refused. Checked now, not
+    # only when proposed: the configuration may have changed since. A purchase's
+    # item lines debit Inventory, which the agent does not choose, so only its
+    # ledger lines are checked.
+    from .models import validate_voucher_ledger_groups
+    ok, err = validate_voucher_ledger_groups(
+        payload["voucher_type"], payload["ledger_entries"], company_id=company_id)
+    if not ok:
+        raise ValueError(err)
+
     return add_voucher(
         payload["voucher_type"],
         parse_date(payload["date"]),

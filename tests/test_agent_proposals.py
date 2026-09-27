@@ -285,7 +285,9 @@ class StockVoucherTests(unittest.TestCase):
     def test_money_only_vouchers_are_still_allowed(self):
         for kind in ("Payment", "Receipt", "Contra", "Journal", "Expense",
                      "Service Income", "Service Income Return"):
-            with patch.object(proposals, "_ledgers", return_value=LEDGERS):
+            # Only the type allowlist is under test; one Cash/Rent entry stands
+            # in for every type, which the Contra cash rule would rightly refuse.
+            with patch.object(proposals, "_ledgers", return_value=LEDGERS),                     patch.object(proposals, "_check_configuration"):
                 checked = proposals.validate_voucher_proposal(
                     balanced(voucher_type=kind), company_id=1)
             self.assertEqual(checked["voucher_type"], kind)
