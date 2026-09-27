@@ -903,7 +903,80 @@ Charges on Purchase Voucher
     const cashBankOptions = ledgersData.filter(l => ['G005', 'G006'].includes(l.group_code)).map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
     const allLedgerOptions = ledgersData.map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
     // Sales / Sales Return item lines book revenue: only ledgers under the Sales group (G001)
-    const salesItemLedgerOptions = ledgersData.filter(l => l.group_code === 'G001').map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+    // The configured list for a Sales / Sales Return item's ledger, or null
+    // when the Voucher Configuration does not restrict it - then the Sales
+    // group, as before.
+    const itemLedgerAllowed = {{ (item_ledger_allowed if item_ledger_allowed is defined else none) | tojson }};
+    const salesItemLedgerOptions = (Array.isArray(itemLedgerAllowed)
+            ? ledgersData.filter(l => itemLedgerAllowed.includes(l.ledger_name))
+            : ledgersData.filter(l => l.group_code === 'G001'))
+        .map(l => `<option value="${l.ledger_name}">${l.ledger_name}</option>`).join('');
+
+    // ------------------------------------------------------------------
+    // Voucher Configuration on item ledgers.
+    //
+    // Sales / Sales Return: the configured list (or the Sales group).
+    // Stock Adjustment: each row's ledger list follows that row's own Ledger
+    // Type, as the ledger lines on other vouchers follow theirs - it used to
+    // offer every ledger whatever the configuration said.
+    // The server checks the same rules on save (item_ledger_rule_entries).
+    // ------------------------------------------------------------------
+    function itemLedgerNamesFor(row) {
+        if (voucherType === 'Stock Adjustment') {
+            const typeSelect = row.querySelector('select[name="item_type[]"]');
+            const side = (typeSelect && typeSelect.value) || 'Debit';
+            const allowed = side === 'Credit' ? allowedLedgersCr : allowedLedgersDr;
+            const pool = ledgersData.filter(l => !vatLedgers.includes(l.ledger_name));
+            const names = pool.map(l => l.ledger_name);
+            if (!Array.isArray(allowed) || !allowed.length) return names;
+            const set = new Set(allowed);
+            return names.filter(n => set.has(n));
+        }
+        if (voucherType === 'Sales' || voucherType === 'Sales Return') {
+            return Array.isArray(itemLedgerAllowed)
+                ? itemLedgerAllowed.slice()
+                : ledgersData.filter(l => l.group_code === 'G001').map(l => l.ledger_name);
+        }
+        return null;
+    }
+
+    function applyItemLedgerRules(row) {
+        const select = row && row.querySelector('select[name="item_ledger_name[]"]');
+        if (!select) return;
+        const names = itemLedgerNamesFor(row);
+        if (!names) return;
+        const current = select.value;
+        select.innerHTML = '';
+        select.appendChild(document.createElement('option'));
+        names.forEach((n) => {
+            const opt = document.createElement('option');
+            opt.value = n;
+            opt.textContent = n;
+            select.appendChild(opt);
+        });
+        // A value the configuration no longer allows is cleared rather than
+        // kept, so the save is not refused for a choice the page offered.
+        select.value = names.includes(current) ? current : '';
+        if (window.jQuery && jQuery(select).data('select2')) jQuery(select).trigger('change.select2');
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const body = document.querySelector('#itemTable tbody');
+        if (!body) return;
+        body.querySelectorAll('tr').forEach(applyItemLedgerRules);
+        // Rows added later - new lines, pulled orders, returns.
+        new MutationObserver((changes) => {
+            changes.forEach((c) => c.addedNodes.forEach((node) => {
+                if (node.nodeType === 1 && node.tagName === 'TR') applyItemLedgerRules(node);
+            }));
+        }).observe(body, { childList: true });
+        // A Stock Adjustment row's list follows its Ledger Type.
+        body.addEventListener('change', (e) => {
+            if (e.target && e.target.matches('select[name="item_type[]"]')) {
+                applyItemLedgerRules(e.target.closest('tr'));
+            }
+        });
+    });
 
     function normalizeText(s) {
         return (s || '').toString().trim();

@@ -400,6 +400,39 @@ def check_built_in_side_rules(voucher_type, ledger_entries, company_id):
     return True, ""
 
 
+# Item lines where the person picks the ledger, and the side it posts to. A
+# Sales item's ledger is its sales ledger (Credit); a Sales Return reverses it.
+# A Stock Adjustment row carries its own Debit/Credit - see below.
+ITEM_LEDGER_SIDE = {"Sales": "Credit", "Sales Return": "Debit"}
+
+
+def item_ledger_rule_entries(voucher_type, item_entries):
+    """Item lines, as ledger lines the Voucher Configuration can be checked on.
+
+    Only where a person chose the ledger: the sales ledger on a Sales or Sales
+    Return item, and the ledger on each Stock Adjustment row (with that row's
+    own Debit/Credit). An import line whose sales ledger was left blank - and
+    so defaulted - carries item_ledger_chosen=False and is skipped, as the
+    person did not pick it.
+    """
+    vt = (voucher_type or "").strip()
+    out = []
+    for entry in item_entries or []:
+        if entry.get("item_ledger_chosen") is False:
+            continue
+        name = str(entry.get("ledger_name") or entry.get("item_ledger_name") or "").strip()
+        if not name:
+            continue
+        if vt == "Stock Adjustment":
+            side = str(entry.get("type") or entry.get("item_type") or "").strip().title()
+        else:
+            side = ITEM_LEDGER_SIDE.get(vt)
+        if side in ("Debit", "Credit"):
+            out.append({"ledger_name": name, "amount": entry.get("amount") or 0,
+                        "type": side})
+    return out
+
+
 def allowed_ledger_names(voucher_type, side, company_id=None):
     """The ledgers a voucher of this type may use on this side - exactly what
     validate_voucher_ledger_groups below will accept - or None when any active

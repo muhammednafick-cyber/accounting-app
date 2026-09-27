@@ -2336,6 +2336,10 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
                     "unit_price": rate,
                     "item_amount": amount,
                     "item_ledger_name": item_ledger, # This ledger will be used for Revenue/Expense booking
+                    # Whether the sheet named it (the Sales Ledger column) or it
+                    # defaulted - only a chosen one is checked against the
+                    # Voucher Configuration.
+                    "item_ledger_chosen": bool(str(row.get("Sales Ledger") or "").strip()),
                     "item_type": item_type,
                     "cost_center": row.get("Cost Center", ""),
                     "weight_kg": float(row.get("Weight (KG)") or 0)
@@ -2367,7 +2371,11 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
                          voucher["ledger_entries"].append({
                              "ledger_name": vat_ledger,
                              "amount": vat_amount,
-                             "ledger_type": vat_type
+                             "ledger_type": vat_type,
+                             # Added by the import, not chosen in the sheet:
+                             # not checked against the Voucher Configuration,
+                             # just as a manual save does not check it.
+                             "auto_line": True,
                          })
 
                 # Discount Entry (if any)
@@ -2396,7 +2404,8 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
                     voucher["ledger_entries"].append({
                         "ledger_name": disc_ledger,
                         "amount": discount_val,
-                        "ledger_type": disc_type
+                        "ledger_type": disc_type,
+                        "auto_line": True,      # added by the import
                     })
             
             # Party Ledger Entry (Total)
@@ -2531,14 +2540,16 @@ def _group_voucher_rows(voucher_type, rows, company_id=None):
                 voucher["ledger_entries"].append({
                     "ledger_name": "Output VAT 5%",
                     "amount": round(total_output_vat, 2),
-                    "ledger_type": "Credit"
+                    "ledger_type": "Credit",
+                    "auto_line": True,          # added by the import
                 })
             
             if total_input_vat > 0:
                 voucher["ledger_entries"].append({
                     "ledger_name": "Input VAT 5%",
                     "amount": round(total_input_vat, 2),
-                    "ledger_type": "Debit"
+                    "ledger_type": "Debit",
+                    "auto_line": True,          # added by the import
                 })
         
         grouped_vouchers.append(voucher)

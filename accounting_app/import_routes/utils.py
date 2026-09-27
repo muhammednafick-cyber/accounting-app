@@ -352,13 +352,25 @@ def validate_single_voucher(import_type, data, company_id=None):
             print(msg)
             return False, msg
 
+    # Only the lines the sheet chose. VAT and discount lines the import adds
+    # itself are marked auto_line and left out, as a manual save leaves them
+    # out: checked against the configuration they refused every Expense with
+    # VAT once Expense Debit was configured, and every Sales with a discount.
     ledger_entries_for_rule = []
     for entry in data["ledger_entries"]:
+        if entry.get("auto_line"):
+            continue
         ledger_entries_for_rule.append({
             "ledger_name": entry["ledger_name"],
             "amount": entry["amount"],
             "type": entry["ledger_type"],
         })
+    # The sales ledger chosen on each Sales / Sales Return line was never
+    # checked at all.
+    from accounting_app.models import ITEM_LEDGER_SIDE, item_ledger_rule_entries
+    if import_type in ITEM_LEDGER_SIDE:
+        ledger_entries_for_rule.extend(
+            item_ledger_rule_entries(import_type, data.get("item_entries") or []))
 
     is_valid, err = validate_voucher_ledger_groups(import_type, ledger_entries_for_rule, company_id=company_id)
     if not is_valid:

@@ -181,6 +181,16 @@ def _cost_center_name(center_code, company_id):
         return None
 
 
+def _item_ledger_allowed(voucher_type, company_id):
+    """The configured list for an item line's ledger, or None when the
+    configuration does not restrict it (the page then keeps its usual list)."""
+    from accounting_app.models import ITEM_LEDGER_SIDE, allowed_ledger_names
+    side = ITEM_LEDGER_SIDE.get(voucher_type)
+    if not side:
+        return None
+    return allowed_ledger_names(voucher_type, side, company_id=company_id)
+
+
 def _voucher_form_context(voucher_type, company_id):
     """Everything voucher.html needs to draw an entry form.
 
@@ -237,6 +247,7 @@ def _voucher_form_context(voucher_type, company_id):
         # whenever a save was rejected and the form redrawn.
         "allowed_ledgers_dr": [l["name"] for l in allowed_dr],
         "allowed_ledgers_cr": [l["name"] for l in allowed_cr],
+        "item_ledger_allowed": _item_ledger_allowed(voucher_type, company_id),
         "username": current_user.username,
     }
 
@@ -483,6 +494,7 @@ def voucher(voucher_type):
             purchase_vouchers=purchase_vouchers,
             allowed_ledgers_dr=allowed_ledgers_dr,
             allowed_ledgers_cr=allowed_ledgers_cr,
+            item_ledger_allowed=_item_ledger_allowed(voucher_type, company_id),
         )
     except Exception as e:
         print(f"Error in voucher: {str(e)}")
@@ -1019,6 +1031,20 @@ def add_voucher_route():
         msg = "; ".join(dict.fromkeys(validation_errors))  # dedupe, keep order
         print(f"Manual entry validation failed for {voucher_type}: {msg}")
         return _reject_voucher(msg, voucher_type)
+
+    # The Voucher Configuration on the ledgers chosen per item line - the sales
+    # ledger on Sales and Sales Return, and each Stock Adjustment row's ledger
+    # on its own side. The ledger-line check above never saw these: a Stock
+    # Adjustment has no ledger lines at all, so its result was ignored and the
+    # configuration never applied to it.
+    from accounting_app.models import item_ledger_rule_entries
+    item_rule_entries = item_ledger_rule_entries(voucher_type, item_entries)
+    if item_rule_entries:
+        ok, err = validate_voucher_ledger_groups(voucher_type, item_rule_entries,
+                                                 company_id=company_id)
+        if not ok:
+            print(f"Item ledger configuration check failed: {err}")
+            return _reject_voucher(err, voucher_type)
 
     # Mandatory Cost Center Check
     if company.get("cost_center_applicable") and company.get("cost_center_mandatory") and voucher_type in COST_CENTER_ALLOWED_TYPES:
