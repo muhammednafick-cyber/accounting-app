@@ -55,8 +55,13 @@
                         case 'Contra': urlType = 'contra'; break;
                         case 'Journal': urlType = 'journal'; break;
                         case 'Expense': urlType = 'expense'; break;
+                        case 'Service Income': urlType = 'service_income'; break;
+                        case 'Service Income Return': urlType = 'service_income_return'; break;
                         default:
-                            feedback.textContent = `Editing not supported for type: ${dbType}`;
+                            // Stock vouchers cannot be edited in place: changing
+                            // an item line means re-costing everything after it.
+                            feedback.textContent = `A ${dbType} voucher carries stock, so it cannot be edited here. `
+                                + `Reverse it (Vouchers > Reverse Voucher) and enter it again.`;
                             feedback.className = "form-text text-danger";
                             return;
                     }

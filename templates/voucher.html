@@ -268,7 +268,8 @@ Charges on Purchase Voucher
 </p>
 {% endif %}
 
-{% if voucher_type in ['Receipt', 'Payment', 'Contra', 'Journal', 'Expense'] %}
+{% if voucher_type in ['Receipt', 'Payment', 'Contra', 'Journal', 'Expense',
+                       'Service Income', 'Service Income Return'] %}
 <div class="form-section" style="background-color: #e8f4fc; border-color: #b6e0fe;">
     <h2>Edit Voucher</h2>
     <div class="form-row">
@@ -2317,8 +2318,16 @@ Charges on Purchase Voucher
         const oirInput = document.getElementById('original_invoice_ref');
         if (oirInput) oirInput.value = header.original_invoice_ref || '';
 
+        // The box only accepts DD-MM-YYYY (its pattern). Filled with the
+        // stored YYYY-MM-DD, the browser refused to submit the form at all,
+        // so an edited Expense could never be saved.
         const oidInput = document.getElementById('original_invoice_date');
-        if (oidInput) oidInput.value = header.original_invoice_date || '';
+        if (oidInput) {
+            const raw = header.original_invoice_date || '';
+            const p = raw.split('-');
+            oidInput.value = (p.length === 3 && p[0].length === 4) ? `${p[2]}-${p[1]}-${p[0]}` : raw;
+            if (oidInput._flatpickr) oidInput._flatpickr.setDate(oidInput.value, false, 'd-m-Y');
+        }
 
 
         // Clear existing rows
@@ -2328,6 +2337,9 @@ Charges on Purchase Voucher
         (data.ledger_entries || []).forEach(l => {
             addLedgerRowWithData(l);
         });
+        // The totals strip only recalculates on input, so it went on showing
+        // the empty form's figures - or an imbalance - for a loaded voucher.
+        if (window.recalcBalance) window.recalcBalance();
 
         // Scroll to form
         form.scrollIntoView({ behavior: "smooth" });
@@ -4098,6 +4110,7 @@ Charges on Purchase Voucher
         // short delay after any click inside the section too.
         document.addEventListener('click', () => setTimeout(recalcBalance, 60));
         window.recalcBalance = recalcBalance;
+        window.voucherInjectedVat = injectedVat;
         recalcBalance();
     })();
 
@@ -4190,6 +4203,13 @@ Charges on Purchase Voucher
             if (!named && !STOCK_ONLY.includes(voucherType))
                 problems.push(problem(rows[0]?.querySelector('[name="ledger_name[]"]'),
                     'At least one ledger entry is required', 'Select a ledger'));
+
+            // The VAT the server adds on saving (Expense, Service Income and
+            // its return) counts too - left out, every such voucher with VAT
+            // was called unbalanced, a new one and an edited one alike.
+            const addedVat = window.voucherInjectedVat ? window.voucherInjectedVat() : { amount: 0 };
+            if (addedVat.side === 'Debit') debit += addedVat.amount;
+            else if (addedVat.side === 'Credit') credit += addedVat.amount;
 
             // Item vouchers balance against lines the server builds on saving,
             // so only a ledger-only voucher can be checked here.

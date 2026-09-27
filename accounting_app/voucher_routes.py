@@ -67,7 +67,12 @@ def _normalize_voucher_type(vt):
         "inventory_transfer": "Inventory Transfer",
         "additional_charges": "Additional Charge",
     }
-    return mapping.get(vt, vt)
+    # "service income", "Service%20Income" and "service_income" are the same
+    # page; only the underscore form used to be recognised, and the others
+    # opened a page that did not know its own type - no VAT columns, no
+    # cost centres, nothing loaded for an edit.
+    key = (vt or "").strip().lower().replace(" ", "_")
+    return mapping.get(key, vt)
 
 
 @voucher_bp.route("/api/search_purchase_vouchers", methods=["GET"])
@@ -1350,6 +1355,56 @@ def _bill_orders(voucher_number, order_item_ids, quantities, company_id):
     return f" ({'; '.join(sorted(statuses))} on the linked order)"
 
 
+# Where ledger-level VAT sits: the side of the lines it is charged on, and the
+# ledger it is booked to. The same pairs the add and update paths inject.
+LEDGER_VAT_SIDE = {
+    "Expense": ("Debit", "Input VAT 5%"),
+    "Service Income": ("Credit", "Output VAT 5%"),
+    "Service Income Return": ("Debit", "Output VAT 5%"),
+}
+
+
+def _restore_line_vat(voucher_type, entries):
+    """Put a voucher's VAT back on the lines it was charged on.
+
+    The VAT is stored as one Input/Output VAT line; the entry screen keeps it
+    per line (the VAT tick and amount) and hides the VAT line itself. Without
+    this an edited Expense showed its expense line with no VAT and totals that
+    did not balance, so it could not be saved as it was.
+    """
+    side_ledger = LEDGER_VAT_SIDE.get(voucher_type)
+    if not side_ledger:
+        return
+    side, vat_ledger = side_ledger
+    lines = [e for e in entries
+             if e.get("type") == side and e.get("ledger_name") not in ("Input VAT 5%", "Output VAT 5%")]
+    vat_total = round(sum(float(e.get("amount") or 0) for e in entries
+                          if e.get("ledger_name") == vat_ledger and e.get("type") == side), 2)
+    for e in entries:
+        e.setdefault("vat_applicable", False)
+        e.setdefault("vat_percent", 5)
+        e.setdefault("vat_amount", 0)
+    base = sum(float(e.get("amount") or 0) for e in lines)
+    if vat_total <= 0 or base <= 0:
+        return
+    # 5% on every line when that is what was charged; otherwise shared out in
+    # proportion to the lines, at whatever rate that comes to.
+    at_five = abs(round(base * 0.05, 2) - vat_total) <= 0.01 * len(lines) + 0.01
+    given = 0.0
+    for i, e in enumerate(lines):
+        amount = float(e.get("amount") or 0)
+        if i == len(lines) - 1:
+            vat = round(vat_total - given, 2)
+        elif at_five:
+            vat = round(amount * 0.05, 2)
+        else:
+            vat = round(vat_total * amount / base, 2)
+        given += vat
+        e["vat_applicable"] = vat > 0
+        e["vat_amount"] = vat
+        e["vat_percent"] = 5 if at_five else (round(vat / amount * 100, 2) if amount else 0)
+
+
 @voucher_bp.route("/api/get_voucher_details")
 @login_required
 def api_get_voucher_details():
@@ -1367,6 +1422,14 @@ def api_get_voucher_details():
         header = data["voucher"]
         header["cost_center_name"] = _cost_center_name(
             header.get("cost_center_code"), company_id)
+        # Each line's cost centre too - the edit screen showed them blank.
+        names = {}
+        for entry in data.get("ledger_entries") or []:
+            code = entry.get("cost_center_code")
+            if code not in names:
+                names[code] = _cost_center_name(code, company_id)
+            entry["cost_center_name"] = names[code]
+        _restore_line_vat(header.get("voucher_type"), data.get("ledger_entries") or [])
         return jsonify({"success": True, "data": data})
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
@@ -1426,95 +1489,37 @@ def update_voucher_route():
                 "cost_center_code": cc_map.get(lcc_name) if lcc_name else None
             })
 
-        # --- VAT Injection Logic (Copied from add_voucher) ---
-        # Expense VAT (Journal vouchers never carry VAT)
-        if voucher_type == "Expense":
-            ledger_vat_applicable = request.form.getlist("ledger_vat_applicable[]")
-            ledger_vat_amounts = request.form.getlist("ledger_vat_amount[]")
-            total_input_vat = 0.0
-
-            # Ensure lists are aligned (zip stops at shortest, but usually they match)
-            for name, amount, type_, vat_app, vat_amt in zip(
-                ledger_names,
-                ledger_amounts,
-                ledger_types,
-                ledger_vat_applicable,
-                ledger_vat_amounts,
-            ):
-                if type_ == "Debit" and vat_app in ("1", "Yes", "Y", "true", "True"):
+        # Ledger-level VAT, read as the add path reads it. The checkbox array
+        # is not usable: unticked boxes are not submitted, so it is shorter
+        # than the rows and zipping it against them paired the wrong VAT with
+        # the wrong line. The VAT amount inputs are always submitted (0 when
+        # unticked), so they line up with the rows.
+        if voucher_type in LEDGER_VAT_SIDE:
+            vat_side, vat_ledger = LEDGER_VAT_SIDE[voucher_type]
+            vat_amounts = request.form.getlist("ledger_vat_amount[]")
+            vat_amounts += ["0"] * (len(ledger_types) - len(vat_amounts))
+            total_vat = 0.0
+            for type_, vat_amt in zip(ledger_types, vat_amounts):
+                if type_ == vat_side:
                     try:
-                        total_input_vat += float(vat_amt or 0)
+                        total_vat += float(vat_amt or 0)
                     except ValueError:
                         pass
+            if total_vat > 0:
+                ledger_entries.append({
+                    "ledger_name": vat_ledger,
+                    "amount": round(total_vat, 2),
+                    "type": vat_side,
+                })
 
-            if total_input_vat > 0:
-                ledger_entries.append(
-                    {
-                        "ledger_name": "Input VAT 5%",
-                        "amount": round(total_input_vat, 2),
-                        "type": "Debit",
-                    }
-                )
+        # The Voucher Configuration and the built-in rules, as on a new
+        # voucher - an edit could otherwise move a voucher onto a ledger the
+        # configuration forbids.
+        ok, err = validate_voucher_ledger_groups(
+            voucher_type, ledger_entries, company_id=get_current_company_id())
+        if not ok:
+            raise ValueError(err)
 
-        # Service Income VAT
-        if voucher_type == "Service Income":
-            ledger_vat_applicable = request.form.getlist("ledger_vat_applicable[]")
-            ledger_vat_amounts = request.form.getlist("ledger_vat_amount[]")
-            total_output_vat = 0.0
-
-            for name, amount, type_, vat_app, vat_amt in zip(
-                ledger_names,
-                ledger_amounts,
-                ledger_types,
-                ledger_vat_applicable,
-                ledger_vat_amounts,
-            ):
-                if type_ == "Credit" and vat_app in ("1", "Yes", "Y", "true", "True"):
-                    try:
-                        total_output_vat += float(vat_amt or 0)
-                    except ValueError:
-                        pass
-
-            if total_output_vat > 0:
-                ledger_entries.append(
-                    {
-                        "ledger_name": "Output VAT 5%",
-                        "amount": round(total_output_vat, 2),
-                        "type": "Credit",
-                    }
-                )
-
-        # Service Income Return VAT
-        if voucher_type == "Service Income Return":
-            ledger_vat_applicable = request.form.getlist("ledger_vat_applicable[]")
-            ledger_vat_amounts = request.form.getlist("ledger_vat_amount[]")
-            total_output_vat_reversal = 0.0
-
-            for name, amount, type_, vat_app, vat_amt in zip(
-                ledger_names,
-                ledger_amounts,
-                ledger_types,
-                ledger_vat_applicable,
-                ledger_vat_amounts,
-            ):
-                if type_ == "Debit" and vat_app in ("1", "Yes", "Y", "true", "True"):
-                    try:
-                        total_output_vat_reversal += float(vat_amt or 0)
-                    except ValueError:
-                        pass
-
-            if total_output_vat_reversal > 0:
-                ledger_entries.append(
-                    {
-                        "ledger_name": "Output VAT 5%",
-                        "amount": round(total_output_vat_reversal, 2),
-                        "type": "Debit",
-                    }
-                )
-
-            
-            
-            
         # Balance Validation
         total_debit_check = sum(e['amount'] for e in ledger_entries if e['type'] == 'Debit')
         total_credit_check = sum(e['amount'] for e in ledger_entries if e['type'] == 'Credit')
