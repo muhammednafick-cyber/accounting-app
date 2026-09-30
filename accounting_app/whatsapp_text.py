@@ -15,6 +15,7 @@ import re
 from html.parser import HTMLParser
 
 MAX_ROWS = 12
+MAX_VALUE_COLUMNS = 4     # a wider table keeps its first two and last two
 MAX_CHARS = 3900          # WhatsApp's limit is 4096; leave room for the footer
 MAX_FOLLOWUPS = 3
 
@@ -33,10 +34,14 @@ class _Converter(HTMLParser):
         self.followups = []
         self.in_followups = 0
         self.follow_text = None
+        self.lead = []             # the Agent's own words, moved to the top
+        self.in_say = 0
 
     # -- helpers
     def _emit(self, text):
-        if self.table is not None and self.row is not None and self.table.get("cell") is not None:
+        if self.in_say:
+            self.lead.append(text)
+        elif self.table is not None and self.row is not None and self.table.get("cell") is not None:
             self.table["cell"].append(text)
         elif self.in_followups:
             if self.follow_text is not None:
@@ -53,7 +58,7 @@ class _Converter(HTMLParser):
             return
         # Not shown on WhatsApp: download links (the reply offers PDF / EXCEL),
         # the "computed from" note, and the web chat's thumbs-up/down buttons.
-        if (tag in ("script", "style")
+        if (tag in ("script", "style", "svg", "canvas")
                 or (tag == "a" and "export_chat_result" in (a.get("href") or ""))
                 or (tag == "small" and ("rv-alt" in cls or "rv-src" in cls))
                 or (tag == "div" and "rv-feedback" in cls)):
@@ -61,6 +66,20 @@ class _Converter(HTMLParser):
             return
         if tag == "div" and "rv-followups" in cls:
             self.in_followups += 1
+            return
+        if self.in_say:
+            if tag == "div":
+                self.in_say += 1
+            elif tag == "br":
+                self._emit("\n")
+            return
+        if tag == "div" and "rv-agent-say" in cls:
+            self.in_say = 1
+            return
+        # A choice button ("did you mean ...") cannot be tapped in a message,
+        # so each becomes its own line; the channel numbers them.
+        if tag == "button" and "rv-pick" in cls:
+            self._emit("\n• ")
             return
         if self.in_followups:
             if tag == "div":
@@ -91,6 +110,10 @@ class _Converter(HTMLParser):
         if self.skip:
             if tag == self.skip_tag:
                 self.skip -= 1
+            return
+        if self.in_say:
+            if tag == "div":
+                self.in_say -= 1
             return
         if self.in_followups:
             if tag == "button" and self.follow_text is not None:
@@ -142,6 +165,11 @@ def _render_table(table):
                 continue
             name = head[i] if i < len(head) else ""
             rest.append(f"{name}: {value}" if name else value)
+        # A wide report (ageing has fourteen columns) is unreadable on a
+        # phone: keep the first two and the last two - usually the name and
+        # the total - and point at the file for the rest.
+        if len(rest) > MAX_VALUE_COLUMNS:
+            rest = rest[:2] + ["…"] + rest[-2:]
         lines.append(f"• *{label}*" + (" — " + " · ".join(rest) if rest else ""))
     if len(rows) > MAX_ROWS:
         lines.append(f"_…and {len(rows) - MAX_ROWS} more. Reply *PDF* for the full list._")
@@ -160,11 +188,15 @@ def to_whatsapp(html):
     parser.feed(html)
     parser.close()
     text = html_lib.unescape("".join(parser.out))
+    lead = html_lib.unescape("".join(parser.lead)).strip()
+    if lead:
+        # The Agent's summary first - it is the answer; the tables back it up.
+        text = lead + "\n_Written by AI from the figures below._\n\n" + text
 
     # Tidy: no stray spaces at line ends, at most one blank line, and no
     # "* *" left by a bold tag around nothing.
     text = text.replace("\xa0", " ")
-    text = re.sub(r"\*\s*\*", "", text)
+    text = text.replace("**", "")
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n[ \t]+", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()

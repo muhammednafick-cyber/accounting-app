@@ -52,12 +52,15 @@ SETTING_KEYS = {
     "graph_version": "whatsapp_graph_version",
     "ai_enabled": "whatsapp_ai_enabled",
     "enabled": "whatsapp_enabled",
+    "agent_mode": "whatsapp_agent_mode",
 }
+AGENT_MODES = ("offer", "auto", "off")
 
 COMMANDS_TEXT = (
     "*WhatsApp commands*\n"
     "• *HELP* — what you can ask\n"
     "• *PDF* / *EXCEL* — the last table as a file\n"
+    "• *AGENT* <question> — let AI work out a question that needs several reports\n"
     "• *COMPANY* — list your companies; *COMPANY 2* switches\n"
     "• *RESET* — start a new conversation\n"
     "• *UNLINK* — stop this number using your account"
@@ -69,6 +72,11 @@ COMMANDS_TEXT = (
 def setting(name, default=""):
     value = get_system_setting(SETTING_KEYS[name])
     return value if value not in (None, "") else default
+
+
+def agent_mode():
+    mode = setting("agent_mode", "offer")
+    return mode if mode in AGENT_MODES else "offer"
 
 
 def is_configured():
@@ -200,6 +208,7 @@ def _channel():
         send_document=lambda to, data, name, mime: send_document(to, data, name, mime),
         ai_enabled=lambda: setting("ai_enabled") == "1",
         commands_text=COMMANDS_TEXT,
+        agent_mode=lambda: agent_mode(),
         not_linked_text=("This number is not linked to a Prodata account yet.\n\n"
                          "In the app, open *WhatsApp* in the menu, choose *Link this "
                          "phone*, and send the code you are shown here."),
@@ -297,6 +306,9 @@ def whatsapp_settings():
                                "1" if request.form.get("ai_enabled") else "0")
             set_system_setting(SETTING_KEYS["enabled"],
                                "1" if request.form.get("enabled") else "0")
+            mode = request.form.get("agent_mode")
+            set_system_setting(SETTING_KEYS["agent_mode"],
+                               mode if mode in AGENT_MODES else "offer")
             flash("WhatsApp settings saved.", "success")
             return redirect(url_for("whatsapp_bp.whatsapp_settings"))
         if action == "check":
@@ -316,6 +328,7 @@ def whatsapp_settings():
         app_secret_state=ends(setting("app_secret")),
         ai_enabled=setting("ai_enabled") == "1",
         enabled=setting("enabled") == "1",
+        agent_mode=agent_mode(),
         configured=is_configured(),
         check=check,
     )

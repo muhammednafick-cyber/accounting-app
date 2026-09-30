@@ -24,7 +24,7 @@ class Channel:
     """What differs between WhatsApp and Telegram."""
 
     def __init__(self, key, label, send_text, send_document, ai_enabled,
-                 commands_text, not_linked_text):
+                 commands_text, not_linked_text, agent_mode=lambda: "offer"):
         self.key = key                      # "whatsapp" / "telegram"
         self.label = label                  # "WhatsApp" / "Telegram"
         self.send_text = send_text          # (ext_id, text) -> bool
@@ -32,6 +32,18 @@ class Channel:
         self.ai_enabled = ai_enabled        # () -> bool
         self.commands_text = commands_text
         self.not_linked_text = not_linked_text
+        # When the free reports get stuck: "off" never uses the Agent, "offer"
+        # asks first (reply AGENT), "auto" runs it straight away.
+        self.agent_mode = agent_mode        # () -> "off" | "offer" | "auto"
+
+    def agent_available(self):
+        return self.ai_enabled() and self.agent_mode() in ("offer", "auto")
+
+
+# What the engine answers when no single report fits: several near misses to
+# pick from, or an offer to let AI query the database.
+STUCK_INTENTS = ("suggestion", "need_permission")
+AGENT_WAIT_TEXT = "⏳ Working on it - this needs several reports, so it takes about a minute."
 
 
 def handle_text(channel, ext_id, text):
@@ -73,6 +85,32 @@ def handle_text(channel, ext_id, text):
             return
 
     command = text.lower()
+
+    # The answer to a choice offered last time: a number picks that report,
+    # AGENT hands the whole question to the Agent. Anything else is a new
+    # question, and the offer lapses.
+    pending = link.get("pending")
+    if pending:
+        db.set_pending(ext_id, None)
+        options = pending.get("options") or []
+        if command.isdigit() and 1 <= int(command) <= len(options):
+            text = command = options[int(command) - 1]
+        elif command == "agent":
+            _run_agent(channel, ext_id, link, pending.get("question") or "")
+            return
+
+    # "agent <question>" (Telegram: /agent <question>) asks the Agent directly.
+    agent_match = re.fullmatch(r"(?is)agent\b\s*(.*)", text)
+    if agent_match:
+        question = agent_match.group(1).strip()
+        if not question:
+            channel.send_text(ext_id, "Put your question after it, for example "
+                                      "*agent what is the stock worth and how much has "
+                                      "not moved in six months*.")
+            return
+        _run_agent(channel, ext_id, link, question)
+        return
+
     if command == "unlink":
         db.unlink_number(ext_id)
         channel.send_text(ext_id, f"Done - this {channel.label} chat is unlinked and can no "
@@ -153,6 +191,10 @@ def _ask(channel, ext_id, link, question, reset=False):
         channel.send_text(ext_id, "Sorry - I could not answer that. Please try again.")
         return
 
+    if reply.get("intent") in STUCK_INTENTS and _offer_or_run_agent(
+            channel, ext_id, link, question, reply):
+        return
+
     text, token = to_whatsapp(reply.get("response") or "")
     if reply.get("intent") == "help":
         text += "\n\n" + channel.commands_text
@@ -164,6 +206,74 @@ def _ask(channel, ext_id, link, question, reset=False):
     if MISS_INTENTS.get(reply.get("intent")):
         from database.chat_insights_db import record_miss
         record_miss(company_id, link["user_id"], question, MISS_INTENTS[reply["intent"]])
+
+
+def _offer_or_run_agent(channel, ext_id, link, question, reply):
+    """The free reports got stuck. Offer the choices (and the Agent), or run
+    the Agent straight away. True when the reply has been sent here."""
+    from .chat_context import take_pending
+
+    options = ((reply.get("data") or {}).get("options") or [])[:9]
+    agent_ok = channel.agent_available()
+    if reply.get("intent") == "need_permission":
+        if not agent_ok:
+            return False        # the engine's own "shall I use AI?" question
+        # The Agent replaces the engine's offer to query the database, so
+        # drop that offer rather than let a later "yes" pick it up.
+        take_pending()
+    if agent_ok and channel.agent_mode() == "auto":
+        _run_agent(channel, ext_id, link, question)
+        return True
+    if not options and not agent_ok:
+        return False
+
+    lines = []
+    if options:
+        lines.append("I'm not sure which report you meant:")
+        lines += [f"*{i}.* {label}" for i, label in enumerate(options, start=1)]
+        lines.append("")
+        lines.append("Reply with the number"
+                     + (", or *AGENT* to have AI work out the whole question "
+                        "(about a minute)." if agent_ok else "."))
+    else:
+        lines.append("I don't have a single report for that.")
+        lines.append("Reply *AGENT* to have AI work it out from your reports "
+                     "(about a minute), or ask it in different words.")
+    db.set_pending(ext_id, {"question": question, "options": options})
+    channel.send_text(ext_id, "\n".join(lines))
+    db.log_question(ext_id, link["user_id"], link["company_id"], question,
+                    reply.get("intent"))
+    return True
+
+
+def _run_agent(channel, ext_id, link, question):
+    """The Agent: several reports in turn, then a written summary. Only with
+    AI on, and never when an administrator has switched it off."""
+    from . import chat_agent
+    from .chat_context import use_conversation
+    from .chat_permissions import use_user
+
+    if not channel.ai_enabled():
+        channel.send_text(ext_id, "AI is switched off for this chat, so the Agent is not "
+                                  "available. Ask one thing at a time instead.")
+        return
+    if channel.agent_mode() == "off":
+        channel.send_text(ext_id, "The Agent is switched off by your administrator. "
+                                  "Ask one thing at a time instead.")
+        return
+    if not question:
+        channel.send_text(ext_id, "What should the Agent work out?")
+        return
+
+    company_id = link["company_id"]
+    use_conversation(f"{channel.key}-{ext_id}-{company_id}")
+    use_user(link["user_id"])
+    channel.send_text(ext_id, AGENT_WAIT_TEXT)
+    reply = chat_agent.run(question, company_id, history=[])
+    text, token = to_whatsapp(reply.get("response") or "")
+    channel.send_text(ext_id, text or "The Agent could not find an answer to that.")
+    db.touch(ext_id, last_token=token)
+    db.log_question(ext_id, link["user_id"], company_id, question, "agent")
 
 
 def _send_last_result(channel, ext_id, link, fmt):

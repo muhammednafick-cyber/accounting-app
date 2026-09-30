@@ -42,12 +42,15 @@ SETTING_KEYS = {
     "bot_username": "telegram_bot_username",
     "ai_enabled": "telegram_ai_enabled",
     "enabled": "telegram_enabled",
+    "agent_mode": "telegram_agent_mode",
 }
+AGENT_MODES = ("offer", "auto", "off")
 
 COMMANDS_TEXT = (
     "*Commands*\n"
     "• /help — what you can ask\n"
     "• /pdf or /excel — the last table as a file\n"
+    "• /agent <question> — let AI work out a question that needs several reports\n"
     "• /company — list your companies; /company 2 switches\n"
     "• /reset — start a new conversation\n"
     "• /unlink — stop this chat using your account"
@@ -55,6 +58,7 @@ COMMANDS_TEXT = (
 
 BOT_COMMANDS = [
     {"command": "help", "description": "What you can ask"},
+    {"command": "agent", "description": "AI works out a question needing several reports"},
     {"command": "pdf", "description": "The last table as a PDF"},
     {"command": "excel", "description": "The last table as an Excel file"},
     {"command": "company", "description": "List or switch companies"},
@@ -68,6 +72,11 @@ BOT_COMMANDS = [
 def setting(name, default=""):
     value = get_system_setting(SETTING_KEYS[name])
     return value if value not in (None, "") else default
+
+
+def agent_mode():
+    mode = setting("agent_mode", "offer")
+    return mode if mode in AGENT_MODES else "offer"
 
 
 def is_configured():
@@ -139,6 +148,7 @@ def _channel():
         send_document=lambda to, data, name, mime: send_document(to, data, name, mime),
         ai_enabled=lambda: setting("ai_enabled") == "1",
         commands_text=COMMANDS_TEXT,
+        agent_mode=lambda: agent_mode(),
         not_linked_text=("This chat is not linked to a Prodata account yet.\n\n"
                          "In the app, open *Telegram* in the menu, choose *Get a link "
                          "code*, and tap the button it shows - or send the code here "
@@ -344,6 +354,9 @@ def telegram_settings():
                                "1" if request.form.get("ai_enabled") else "0")
             set_system_setting(SETTING_KEYS["enabled"],
                                "1" if request.form.get("enabled") else "0")
+            mode = request.form.get("agent_mode")
+            set_system_setting(SETTING_KEYS["agent_mode"],
+                               mode if mode in AGENT_MODES else "offer")
             if setting("bot_token"):
                 ok, message = _connect()
                 flash(message, "success" if ok else "error")
@@ -365,6 +378,7 @@ def telegram_settings():
         bot_username=setting("bot_username"),
         ai_enabled=setting("ai_enabled") == "1",
         enabled=setting("enabled") == "1",
+        agent_mode=agent_mode(),
         configured=is_configured(),
         status=_status(),
         webhook_url=_webhook_url(),

@@ -102,6 +102,17 @@
                     Off keeps WhatsApp free: those questions get the list of what can be asked.
                     On uses your OpenRouter key, which is billed.</span></label>
             </div>
+            <div class="form-group" style="max-width:520px;margin-top:6px;">
+                <label for="agent_mode">When no single report fits the question</label>
+                <select id="agent_mode" name="agent_mode">
+                    <option value="offer" {% if agent_mode == 'offer' %}selected{% endif %}>Offer the Agent - the person replies AGENT if they want it (recommended)</option>
+                    <option value="auto" {% if agent_mode == 'auto' %}selected{% endif %}>Use the Agent automatically</option>
+                    <option value="off" {% if agent_mode == 'off' %}selected{% endif %}>Never use the Agent - just list the closest reports</option>
+                </select>
+                <div class="wa-hint">The Agent runs several reports and writes a summary. It needs "Use AI" on,
+                    takes about a minute and makes several billed AI calls. Anyone can also ask for it
+                    directly with <strong>AGENT</strong> followed by the question.</div>
+            </div>
             <button type="submit" class="btn">Save</button>
         </form>
         <form method="POST" action="{{ url_for('whatsapp_bp.whatsapp_settings') }}" style="margin-top:10px;">

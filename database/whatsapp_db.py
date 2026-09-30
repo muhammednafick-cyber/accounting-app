@@ -15,6 +15,7 @@ Rows:
   linked   - wa_id set, code_hash NULL
 """
 import hashlib
+import json
 import secrets
 
 from .config import get_connection
@@ -43,6 +44,9 @@ def init_whatsapp_tables():
         """)
         cursor.execute("ALTER TABLE whatsapp_links ADD COLUMN IF NOT EXISTS "
                        "channel TEXT NOT NULL DEFAULT 'whatsapp'")
+        # The choice a chat was just offered ("reply 1, 2 or AGENT"), so the
+        # next message can be read as the answer to it.
+        cursor.execute("ALTER TABLE whatsapp_links ADD COLUMN IF NOT EXISTS pending TEXT")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_whatsapp_links_user "
                        "ON whatsapp_links(user_id)")
         # Meta may deliver the same message twice; each is answered once.
@@ -136,16 +140,32 @@ def _link_row(cursor, where, value, channel=None):
     params = (value, channel) if channel else (value,)
     cursor.execute(f"""
         SELECT user_id, company_id, wa_id, linked_at, last_used, last_token,
-               code_expires
+               code_expires, pending
         FROM whatsapp_links WHERE {where} = %s{extra}
         ORDER BY (wa_id IS NULL), id DESC LIMIT 1
     """, params)
     row = cursor.fetchone()
     if not row:
         return None
+    try:
+        pending = json.loads(row[7]) if row[7] else None
+    except (TypeError, ValueError):
+        pending = None
     return {"user_id": row[0], "company_id": row[1], "wa_id": row[2],
             "linked_at": row[3], "last_used": row[4], "last_token": row[5],
-            "code_expires": row[6]}
+            "code_expires": row[6], "pending": pending}
+
+
+def set_pending(wa_id, pending):
+    """Remember (or, with None, forget) the choice this chat was offered."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE whatsapp_links SET pending = %s WHERE wa_id = %s",
+                       (json.dumps(pending) if pending else None, wa_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def link_for_number(wa_id):
