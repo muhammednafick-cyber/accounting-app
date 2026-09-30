@@ -152,7 +152,10 @@ def create_app():
         # Meta calls the WhatsApp webhook, not a signed-in browser. It proves
         # itself with the app-secret signature on every delivery instead.
         if request.endpoint in ('whatsapp_bp.webhook_verify',
-                                'whatsapp_bp.webhook_receive'):
+                                'whatsapp_bp.webhook_receive',
+                                # Telegram, likewise, proves itself with the
+                                # secret token registered with its webhook.
+                                'telegram_bp.webhook'):
             return None
         
         # 2. Check Authentication
@@ -400,6 +403,10 @@ def create_app():
     from .whatsapp_routes import whatsapp_bp, webhook_receive
     app.register_blueprint(whatsapp_bp)
     csrf.exempt(webhook_receive)
+    # The same chat over Telegram; its webhook carries a secret token instead.
+    from .telegram_routes import telegram_bp, webhook as telegram_webhook
+    app.register_blueprint(telegram_bp)
+    csrf.exempt(telegram_webhook)
     try:
         from database.whatsapp_db import init_whatsapp_tables
         init_whatsapp_tables()

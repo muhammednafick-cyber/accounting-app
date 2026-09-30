@@ -207,6 +207,7 @@
                 <ul class="sidebar-children">
                     <li><a href="{{ url_for('ai_settings_bp.ai_settings') }}">AI Settings</a></li>
                     <li><a href="{{ url_for('whatsapp_bp.whatsapp_settings') }}">WhatsApp Settings</a></li>
+                    <li><a href="{{ url_for('telegram_bp.telegram_settings') }}">Telegram Settings</a></li>
                     <li><a href="{{ url_for('auth_bp.admin_management') }}">Admin Management</a></li>
                 </ul>
             </li>
@@ -218,6 +219,7 @@
             <li><a href="{{ url_for('agent_access_bp.agent_access') }}">Agent Access</a></li>
             {# Like Agent Access: a linked phone carries only its owner's access. #}
             <li><a href="{{ url_for('whatsapp_bp.whatsapp_link_page') }}">WhatsApp</a></li>
+            <li><a href="{{ url_for('telegram_bp.telegram_link_page') }}">Telegram</a></li>
             {% if can_access('vouchers') %}
             <li><a href="{{ url_for('agent_proposal_bp.agent_proposals') }}">Agent Proposals</a></li>
             {% endif %}

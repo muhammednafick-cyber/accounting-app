@@ -43,6 +43,7 @@ DESTINATIONS = [
     ('User Management', 'Setup', 'auth_bp.admin', {}, 'setup.user_management'),
     ('AI Settings', 'Admin', 'ai_settings_bp.ai_settings', {}, 'setup.user_management'),
     ('WhatsApp Settings', 'Admin', 'whatsapp_bp.whatsapp_settings', {}, 'setup.user_management'),
+    ('Telegram Settings', 'Admin', 'telegram_bp.telegram_settings', {}, 'setup.user_management'),
     ('Admin Management', 'Admin', 'auth_bp.admin_management', {}, 'setup.user_management'),
     ('Settlement / Matching', 'Modules', 'settlement_bp.index', {}, 'modules.settlement'),
     ('Balance Sheet', 'Reports > Financial Statements', 'report_bp.report_balance_sheet', {}, 'reports'),

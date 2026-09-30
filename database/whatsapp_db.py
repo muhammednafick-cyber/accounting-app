@@ -1,4 +1,9 @@
-"""WhatsApp: which phone numbers may ask the chatbot, and for whom.
+"""WhatsApp and Telegram: which chats may ask the chatbot, and for whom.
+
+One table serves both channels (the `channel` column). The external id is a
+WhatsApp phone number, or "tg:<chat id>" for Telegram, so the two can never
+collide in the unique wa_id column.
+
 
 A number is linked to one user and one company. Linking is proved by the phone
 itself: the app shows a one-time code, and the link is made only when that
@@ -36,6 +41,8 @@ def init_whatsapp_tables():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        cursor.execute("ALTER TABLE whatsapp_links ADD COLUMN IF NOT EXISTS "
+                       "channel TEXT NOT NULL DEFAULT 'whatsapp'")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_whatsapp_links_user "
                        "ON whatsapp_links(user_id)")
         # Meta may deliver the same message twice; each is answered once.
@@ -65,13 +72,14 @@ def _hash(code):
     return hashlib.sha256(str(code).strip().encode("utf-8")).hexdigest()
 
 
-def start_link(user_id, company_id):
-    """A fresh one-time code for this user. Any earlier pending code goes."""
+def start_link(user_id, company_id, channel="whatsapp"):
+    """A fresh one-time code for this user and channel. Any earlier pending
+    code for the same channel goes."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM whatsapp_links WHERE user_id = %s AND wa_id IS NULL",
-                       (user_id,))
+        cursor.execute("DELETE FROM whatsapp_links WHERE user_id = %s AND wa_id IS NULL "
+                       "AND channel = %s", (user_id, channel))
         for _ in range(5):
             code = f"{secrets.randbelow(10 ** 6):06d}"
             cursor.execute("""
@@ -81,16 +89,16 @@ def start_link(user_id, company_id):
             if not cursor.fetchone():
                 break
         cursor.execute("""
-            INSERT INTO whatsapp_links (user_id, company_id, code_hash, code_expires)
-            VALUES (%s, %s, %s, NOW() + (%s * INTERVAL '1 minute'))
-        """, (user_id, company_id, _hash(code), CODE_TTL_MINUTES))
+            INSERT INTO whatsapp_links (user_id, company_id, code_hash, code_expires, channel)
+            VALUES (%s, %s, %s, NOW() + (%s * INTERVAL '1 minute'), %s)
+        """, (user_id, company_id, _hash(code), CODE_TTL_MINUTES, channel))
         conn.commit()
         return code
     finally:
         conn.close()
 
 
-def complete_link(code, wa_id):
+def complete_link(code, wa_id, channel="whatsapp"):
     """Link wa_id with the pending code. (user_id, company_id), or None.
 
     The number replaces whatever it was linked to before, and the user's
@@ -102,13 +110,15 @@ def complete_link(code, wa_id):
         cursor.execute("""
             SELECT id, user_id, company_id FROM whatsapp_links
             WHERE wa_id IS NULL AND code_hash = %s AND code_expires > NOW()
-        """, (_hash(code),))
+              AND channel = %s
+        """, (_hash(code), channel))
         row = cursor.fetchone()
         if not row:
             return None
         link_id, user_id, company_id = row[0], row[1], row[2]
         cursor.execute("DELETE FROM whatsapp_links WHERE wa_id = %s OR "
-                       "(user_id = %s AND id <> %s)", (wa_id, user_id, link_id))
+                       "(user_id = %s AND channel = %s AND id <> %s)",
+                       (wa_id, user_id, channel, link_id))
         cursor.execute("""
             UPDATE whatsapp_links
             SET wa_id = %s, code_hash = NULL, code_expires = NULL,
@@ -121,13 +131,15 @@ def complete_link(code, wa_id):
         conn.close()
 
 
-def _link_row(cursor, where, value):
+def _link_row(cursor, where, value, channel=None):
+    extra = " AND channel = %s" if channel else ""
+    params = (value, channel) if channel else (value,)
     cursor.execute(f"""
         SELECT user_id, company_id, wa_id, linked_at, last_used, last_token,
                code_expires
-        FROM whatsapp_links WHERE {where} = %s
+        FROM whatsapp_links WHERE {where} = %s{extra}
         ORDER BY (wa_id IS NULL), id DESC LIMIT 1
-    """, (value,))
+    """, params)
     row = cursor.fetchone()
     if not row:
         return None
@@ -144,11 +156,11 @@ def link_for_number(wa_id):
         conn.close()
 
 
-def link_for_user(user_id):
-    """The user's linked number, else their pending code's row, else None."""
+def link_for_user(user_id, channel="whatsapp"):
+    """The user's linked chat on a channel, else their pending code's row."""
     conn = get_connection()
     try:
-        return _link_row(conn.cursor(), "user_id", user_id)
+        return _link_row(conn.cursor(), "user_id", user_id, channel)
     finally:
         conn.close()
 
@@ -189,11 +201,12 @@ def unlink_number(wa_id):
         conn.close()
 
 
-def unlink_user(user_id):
+def unlink_user(user_id, channel="whatsapp"):
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM whatsapp_links WHERE user_id = %s", (user_id,))
+        cursor.execute("DELETE FROM whatsapp_links WHERE user_id = %s AND channel = %s",
+                       (user_id, channel))
         conn.commit()
     finally:
         conn.close()

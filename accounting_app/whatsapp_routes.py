@@ -23,29 +23,25 @@ the OpenRouter key.
 """
 import hashlib
 import hmac
-import io
 import re
 import secrets
 import threading
 
 import requests
-from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
-                   render_template, request, url_for)
+from flask import (Blueprint, current_app, flash, redirect, render_template,
+                   request, url_for)
 from flask_login import current_user, login_required
 
 from database import whatsapp_db as db
-from database.master_db import (get_system_setting, get_user_by_id,
-                                get_user_companies, set_system_setting)
+from database.master_db import (get_system_setting, get_user_companies,
+                                set_system_setting)
 
 from .models import admin_required
-from .whatsapp_text import to_whatsapp
 
 whatsapp_bp = Blueprint("whatsapp_bp", __name__)
 
 DEFAULT_GRAPH_VERSION = "v23.0"
 GRAPH_URL = "https://graph.facebook.com"
-QUESTIONS_PER_MINUTE = 20
-LINK_TRIES_PER_HOUR = 5
 
 SETTING_KEYS = {
     "phone_number_id": "whatsapp_phone_number_id",
@@ -194,9 +190,25 @@ def _answer_in_context(app, message):
 
 # ------------------------------------------------------------------ answering
 
+def _channel():
+    """WhatsApp, for the shared answering code in chat_channels. The senders
+    are looked up at call time, so tests can replace send_text here."""
+    from .chat_channels import Channel
+    return Channel(
+        key="whatsapp", label="WhatsApp",
+        send_text=lambda to, text: send_text(to, text),
+        send_document=lambda to, data, name, mime: send_document(to, data, name, mime),
+        ai_enabled=lambda: setting("ai_enabled") == "1",
+        commands_text=COMMANDS_TEXT,
+        not_linked_text=("This number is not linked to a Prodata account yet.\n\n"
+                         "In the app, open *WhatsApp* in the menu, choose *Link this "
+                         "phone*, and send the code you are shown here."),
+    )
+
+
 def handle_message(message):
-    """Work out the reply to one incoming message and send it."""
-    from database.app_state_db import rate_limit_check
+    """Work out the reply to one incoming WhatsApp message and send it."""
+    from .chat_channels import handle_text
 
     wa_id = _digits(message.get("from"))
     if not wa_id:
@@ -205,163 +217,7 @@ def handle_message(message):
         send_text(wa_id, "I can only read text messages. Type your question, "
                          "for example *cash balance*.")
         return
-    text = ((message.get("text") or {}).get("body") or "").strip()
-    if not text:
-        return
-
-    allowed, retry_after = rate_limit_check("whatsapp", wa_id, QUESTIONS_PER_MINUTE, 60)
-    if not allowed:
-        send_text(wa_id, f"That is a lot of questions at once. Please wait {retry_after}s.")
-        return
-
-    # Linking: "LINK 123456", with the code the app showed.
-    link_match = re.fullmatch(r"(?i)link\s*(\d{6})", text)
-    if link_match:
-        _link(wa_id, link_match.group(1))
-        return
-
-    link = db.link_for_number(wa_id)
-    if not link:
-        send_text(wa_id, "This number is not linked to a Prodata account yet.\n\n"
-                         "In the app, open *WhatsApp* in the menu, choose *Link this "
-                         "phone*, and send the code you are shown here.")
-        return
-
-    user = get_user_by_id(link["user_id"])
-    companies = get_user_companies(link["user_id"]) if user else []
-    company = next((c for c in companies if c["id"] == link["company_id"]), None)
-    if not user:
-        db.unlink_number(wa_id)
-        send_text(wa_id, "The account this number was linked to no longer exists, "
-                         "so it has been unlinked.")
-        return
-    if not company:
-        send_text(wa_id, "Your account no longer has access to the company this number "
-                         "was linked to. Type *COMPANY* to choose another.")
-        if not re.fullmatch(r"(?i)company(\s+\d+)?", text):
-            return
-
-    command = text.lower()
-    if command == "unlink":
-        db.unlink_number(wa_id)
-        send_text(wa_id, "Done - this number is unlinked and can no longer ask about "
-                         "your accounts.")
-        return
-    if command in ("commands", "menu", "?"):
-        send_text(wa_id, COMMANDS_TEXT)
-        return
-    if command in ("pdf", "excel", "xlsx"):
-        _send_last_result(wa_id, link, "pdf" if command == "pdf" else "xlsx")
-        return
-    company_match = re.fullmatch(r"(?i)company(?:\s+(\d+))?", text)
-    if company_match:
-        _company(wa_id, link, companies, company_match.group(1))
-        return
-
-    _ask(wa_id, link, user, text, reset=command in ("reset", "new", "start over"))
-
-
-def _link(wa_id, code):
-    from database.app_state_db import rate_limit_check
-
-    allowed, _retry = rate_limit_check("whatsapp_link", wa_id, LINK_TRIES_PER_HOUR, 3600)
-    if not allowed:
-        send_text(wa_id, "Too many linking attempts. Try again in an hour.")
-        return
-    linked = db.complete_link(code, wa_id)
-    if not linked:
-        send_text(wa_id, "That code is not valid or has expired. In the app, open "
-                         "*WhatsApp* and create a new one.")
-        return
-    user = get_user_by_id(linked[0]) or {}
-    company = next((c for c in get_user_companies(linked[0])
-                    if c["id"] == linked[1]), {})
-    send_text(wa_id, f"✅ Linked to *{user.get('username', '')}* — "
-                     f"*{company.get('name', '')}*.\n\n"
-                     "Ask me anything you would ask the chat in the app, for example "
-                     "*cash balance* or *top customers this month*.\n\n" + COMMANDS_TEXT)
-
-
-def _company(wa_id, link, companies, choice):
-    if not companies:
-        send_text(wa_id, "Your account has no companies.")
-        return
-    if choice is None:
-        lines = [f"{i}. {c['name']}" + ("  ← current" if c["id"] == link["company_id"] else "")
-                 for i, c in enumerate(companies, start=1)]
-        send_text(wa_id, "*Your companies*\n" + "\n".join(lines)
-                  + "\n\nReply *COMPANY 2* (for example) to switch.")
-        return
-    index = int(choice) - 1
-    if not 0 <= index < len(companies):
-        send_text(wa_id, "There is no company with that number. Type *COMPANY* for the list.")
-        return
-    db.switch_company(wa_id, companies[index]["id"])
-    send_text(wa_id, f"Switched to *{companies[index]['name']}*.")
-
-
-def _ask(wa_id, link, user, question, reset=False):
-    """The question, answered by the same engine as the web chat."""
-    from .chat_context import reset as reset_conversation, use_conversation
-    from .chat_permissions import use_user
-    from .chatbot_service import process_chat_query
-
-    company_id = link["company_id"]
-    # A conversation per number and company, so "and last month?" follows on.
-    use_conversation(f"whatsapp-{wa_id}-{company_id}")
-    # The linked user's menu access decides what may be answered.
-    use_user(link["user_id"])
-    if reset:
-        reset_conversation()
-        send_text(wa_id, "New conversation started. What would you like to know?")
-        return
-
-    reply = process_chat_query(question, company_id,
-                               ai_enabled=setting("ai_enabled") == "1", history=[])
-    if "error" in reply:
-        send_text(wa_id, "Sorry - I could not answer that. Please try again.")
-        return
-
-    text, token = to_whatsapp(reply.get("response") or "")
-    if (reply.get("intent") == "help"):
-        text += "\n\n" + COMMANDS_TEXT
-    send_text(wa_id, text or "I have no answer for that.")
-    db.touch(wa_id, last_token=token)
-    db.log_question(wa_id, link["user_id"], company_id, question, reply.get("intent"))
-
-    from .chat_routes import MISS_INTENTS
-    if MISS_INTENTS.get(reply.get("intent")):
-        from database.chat_insights_db import record_miss
-        record_miss(company_id, link["user_id"], question, MISS_INTENTS[reply["intent"]])
-
-
-def _send_last_result(wa_id, link, fmt):
-    from .chat_export_store import load
-    from .export_routes import _chat_result_pdf
-
-    result = load(link.get("last_token"))
-    if not result:
-        send_text(wa_id, "There is no table to send yet - ask a question first, "
-                         "for example *trial balance*.")
-        return
-    title = re.sub(r"[^\w\- ]+", "", result.get("title") or "report").strip() or "report"
-    if fmt == "pdf":
-        pdf = _chat_result_pdf(result)
-        if pdf is None:
-            send_text(wa_id, "PDF files are not available on this server. Reply *EXCEL* instead.")
-            return
-        ok = send_document(wa_id, pdf.getvalue(), title + ".pdf", "application/pdf")
-    else:
-        import pandas as pd
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            pd.DataFrame(result["rows"], columns=result["columns"]).to_excel(
-                writer, index=False, sheet_name="Data")
-        ok = send_document(
-            wa_id, buffer.getvalue(), title + ".xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    if not ok:
-        send_text(wa_id, "Sorry - the file could not be sent. Please try again.")
+    handle_text(_channel(), wa_id, (message.get("text") or {}).get("body") or "")
 
 
 # ------------------------------------------------------------------ user page
