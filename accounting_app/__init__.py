@@ -148,6 +148,12 @@ def create_app():
         # the sign-in page would be an unreadable answer to a valid request.
         if (request.endpoint or '').startswith('mcp_bp.'):
             return None
+
+        # Meta calls the WhatsApp webhook, not a signed-in browser. It proves
+        # itself with the app-secret signature on every delivery instead.
+        if request.endpoint in ('whatsapp_bp.webhook_verify',
+                                'whatsapp_bp.webhook_receive'):
+            return None
         
         # 2. Check Authentication
         if not current_user.is_authenticated:
@@ -388,6 +394,17 @@ def create_app():
         print(f"api_tokens table not ready (non-fatal): {e}")
     app.register_blueprint(api_bp)
     app.register_blueprint(ai_settings_bp)
+    # The General Chat over WhatsApp. Only the webhook is exempt from CSRF:
+    # Meta cannot send a CSRF token, and signs each delivery instead. The
+    # linking and settings pages keep their tokens.
+    from .whatsapp_routes import whatsapp_bp, webhook_receive
+    app.register_blueprint(whatsapp_bp)
+    csrf.exempt(webhook_receive)
+    try:
+        from database.whatsapp_db import init_whatsapp_tables
+        init_whatsapp_tables()
+    except Exception as e:
+        print(f"whatsapp tables not ready (non-fatal): {e}")
     
     @app.after_request
     def update_last_active(response):
