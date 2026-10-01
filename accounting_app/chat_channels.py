@@ -10,6 +10,7 @@ different one converts it in its own send_text.
 """
 import io
 import re
+import time
 
 from database import whatsapp_db as db
 from database.master_db import get_user_by_id, get_user_companies
@@ -40,10 +41,45 @@ class Channel:
         return self.ai_enabled() and self.agent_mode() in ("offer", "auto")
 
 
+# Messages that are commands, never questions - not sent to the Agent.
+COMMAND_WORDS = ("unlink", "commands", "menu", "?", "pdf", "excel", "xlsx",
+                 "reset", "new", "start over", "help")
+
 # What the engine answers when no single report fits: several near misses to
 # pick from, or an offer to let AI query the database.
 STUCK_INTENTS = ("suggestion", "need_permission")
 AGENT_WAIT_TEXT = "⏳ Working on it - this needs several reports, so it takes about a minute."
+
+# After an Agent answer, follow-ups go back to the Agent with the conversation
+# so far - for this long, or until a clearly new question is asked.
+AGENT_SESSION_SECONDS = 15 * 60
+AGENT_HISTORY_MESSAGES = 8
+AGENT_FOLLOWUP_NOTE = ("_Ask a follow-up and I'll carry on from this. "
+                       "Send RESET to start fresh._")
+
+# A message that leans on the previous answer rather than standing alone:
+# "give it as summary", "what about last year", "I asked about Almarai",
+# "not item wise", "and the closing balance?".
+FOLLOWUP_START = re.compile(
+    r"^\s*(?:and|but|also|so|ok|okay|now|then|why|how come|what about|how about|"
+    r"i asked|i meant|i mean|i said|not|no|instead|only|just|same|give|show|make|"
+    r"split|break|explain|compare|can you|could you|please|again|more|less)\b", re.I)
+FOLLOWUP_WORD = re.compile(
+    r"\b(?:it|its|this|that|these|those|them|they|their|same|above|previous|earlier|"
+    r"instead|wise|summary|summarise|summarize|briefly|detail|details|total|totals|"
+    r"why|matching|match|wrong|correct)\b", re.I)
+
+
+def looks_like_followup(text):
+    return bool(FOLLOWUP_START.search(text or "") or FOLLOWUP_WORD.search(text or ""))
+
+
+def _agent_session(link):
+    """The Agent conversation still in progress in this chat, or None."""
+    state = link.get("agent_state") or {}
+    if state.get("history") and time.time() - float(state.get("at") or 0) < AGENT_SESSION_SECONDS:
+        return state
+    return None
 
 
 def handle_text(channel, ext_id, text):
@@ -109,6 +145,13 @@ def handle_text(channel, ext_id, text):
                                       "not moved in six months*.")
             return
         _run_agent(channel, ext_id, link, question)
+        return
+
+    session = _agent_session(link)
+    if (session and channel.agent_available() and command not in COMMAND_WORDS
+            and not re.fullmatch(r"(?i)company(\s+\d+)?", text)
+            and looks_like_followup(text)):
+        _run_agent(channel, ext_id, link, text, history=session.get("history"))
         return
 
     if command == "unlink":
@@ -183,6 +226,7 @@ def _ask(channel, ext_id, link, question, reset=False):
     use_user(link["user_id"])
     if reset:
         reset_conversation()
+        db.set_agent_state(ext_id, None)
         channel.send_text(ext_id, "New conversation started. What would you like to know?")
         return
 
@@ -194,6 +238,9 @@ def _ask(channel, ext_id, link, question, reset=False):
     if reply.get("intent") in STUCK_INTENTS and _offer_or_run_agent(
             channel, ext_id, link, question, reply):
         return
+
+    if link.get("agent_state"):
+        db.set_agent_state(ext_id, None)
 
     text, token = to_whatsapp(reply.get("response") or "")
     if reply.get("intent") == "help":
@@ -246,7 +293,7 @@ def _offer_or_run_agent(channel, ext_id, link, question, reply):
     return True
 
 
-def _run_agent(channel, ext_id, link, question):
+def _run_agent(channel, ext_id, link, question, history=None):
     """The Agent: several reports in turn, then a written summary. Only with
     AI on, and never when an administrator has switched it off."""
     from . import chat_agent
@@ -269,10 +316,33 @@ def _run_agent(channel, ext_id, link, question):
     use_conversation(f"{channel.key}-{ext_id}-{company_id}")
     use_user(link["user_id"])
     channel.send_text(ext_id, AGENT_WAIT_TEXT)
-    reply = chat_agent.run(question, company_id, history=[])
+    history = list(history or [])
+    reply = chat_agent.run(question, company_id, history=history)
+    data = reply.get("data") or {}
     text, token = to_whatsapp(reply.get("response") or "")
+    # On a phone the Agent's written answer is the reply; its tables - often
+    # one line per item - are offered as a file instead of filling the chat.
+    marker = "\n_Written by AI from the figures below._"
+    if marker in text:
+        used = ", ".join(dict.fromkeys(
+            name.replace("_", " ") for name in data.get("tools_used") or []))
+        text = (text.split(marker, 1)[0].rstrip()
+                + "\n\n_Written by AI from your reports" + (f" ({used})" if used else "")
+                + " - totals worked out by AI may be approximate._"
+                + ("\nReply *PDF* or *EXCEL* for the full figures." if token else ""))
+    if text:
+        text += "\n\n" + AGENT_FOLLOWUP_NOTE
     channel.send_text(ext_id, text or "The Agent could not find an answer to that.")
     db.touch(ext_id, last_token=token)
+
+    # What the next follow-up needs: the question, and what was answered -
+    # the Agent's own summary of it, not the tables.
+    remembered = data.get("memory") or (
+        "Answered using: " + ", ".join(data["tools_used"]) if data.get("tools_used") else "")
+    history += [{"role": "user", "content": question},
+                {"role": "assistant", "content": remembered or "No answer found."}]
+    db.set_agent_state(ext_id, {"at": time.time(),
+                                "history": history[-AGENT_HISTORY_MESSAGES:]})
     db.log_question(ext_id, link["user_id"], company_id, question, "agent")
 
 

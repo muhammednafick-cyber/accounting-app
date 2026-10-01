@@ -60,7 +60,8 @@ class FormattingTests(unittest.TestCase):
         self.assertIn("• *0* — C1: 1 · C2: 2 · … · C8: 8 · C9: 9", text)
 
 
-class AgentFlowTests(unittest.TestCase):
+class _AgentChatBase(unittest.TestCase):
+    """Shared set-up: a linked Telegram chat, the engine and the Agent mocked."""
 
     @classmethod
     def setUpClass(cls):
@@ -121,6 +122,10 @@ class AgentFlowTests(unittest.TestCase):
                              headers={"Content-Type": "application/json",
                                       "X-Telegram-Bot-Api-Secret-Token": SECRET})
 
+
+
+class AgentFlowTests(_AgentChatBase):
+
     QUESTION = "what is the stock worth and how much is non moving"
 
     def test_a_stuck_question_offers_numbers_and_the_agent(self):
@@ -175,6 +180,62 @@ class AgentFlowTests(unittest.TestCase):
         self.post("cash balance")
         self.assertEqual(self.sent[-1], "ok")
         self.assertEqual(self.agent_questions, [])
+
+
+class AgentConversationTests(_AgentChatBase):
+    """After an Agent answer, follow-ups carry on with the Agent and its
+    history; a clearly new question goes back to the free reports."""
+
+    def setUp(self):
+        super().setUp()
+        self.histories = []
+
+        def fake_agent(question, company_id, history=None, **kwargs):
+            self.agent_questions.append(question)
+            self.histories.append(list(history or []))
+            reply = dict(AGENT_REPLY)
+            reply["data"] = {"memory": f"Answered: {question}", "tools_used": ["closing_stock_value"]}
+            return reply
+        p = mock.patch("accounting_app.chat_agent.run", fake_agent)
+        p.start()
+        self.addCleanup(p.stop)
+        self.post("/agent what is the stock worth")
+
+    def test_a_follow_up_goes_to_the_agent_with_the_conversation(self):
+        self.post("Give it as summary")
+        self.assertEqual(self.agent_questions[-1], "Give it as summary")
+        self.assertEqual(self.histories[-1], [
+            {"role": "user", "content": "what is the stock worth"},
+            {"role": "assistant", "content": "Answered: what is the stock worth"}])
+        self.post("what about last year")
+        self.assertEqual(len(self.histories[-1]), 4)
+
+    def test_the_answer_says_follow_ups_work(self):
+        self.assertIn("Ask a follow-up", self.sent[-1])
+
+    def test_the_answer_is_the_summary_not_the_tables(self):
+        self.assertTrue(self.sent[-1].startswith("Stock is worth 651.75"))
+        self.assertNotIn("Closing stock*", self.sent[-1])
+        self.assertIn("Written by AI from your reports (closing stock value)", self.sent[-1])
+
+    def test_a_new_question_goes_to_the_reports_and_ends_it(self):
+        self.post("cash balance")
+        self.assertEqual(self.sent[-1], "ok")
+        self.post("what about last year")
+        self.assertEqual(self.agent_questions, ["what is the stock worth"])
+        self.assertEqual(self.asked[-1], "what about last year")
+
+    def test_reset_ends_it(self):
+        self.post("/reset")
+        self.post("give it as summary")
+        self.assertEqual(self.agent_questions, ["what is the stock worth"])
+
+    def test_it_ends_after_a_while(self):
+        state = db.link_for_number(self.ext_id)["agent_state"]
+        state["at"] -= 16 * 60
+        db.set_agent_state(self.ext_id, state)
+        self.post("give it as summary")
+        self.assertEqual(self.agent_questions, ["what is the stock worth"])
 
 
 if __name__ == "__main__":
