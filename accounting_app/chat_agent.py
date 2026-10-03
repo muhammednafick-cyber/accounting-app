@@ -31,11 +31,18 @@ from . import chat_permissions as P
 from . import chat_router as CR
 from . import chat_toolkit as TK
 
-# How many times round the loop before we stop and answer with what we have.
-# Six covers "compare these two things and tell me what moved"; past that the
-# question is usually one the model has misunderstood, and every extra step is
-# another call the company pays for.
-MAX_STEPS = 6
+# No step limit: the Agent keeps calling reports until it has what it needs,
+# because a fixed six steps cut off questions that genuinely need more (a party
+# reconciled across several statements, say). Two guards stop only a run that
+# has gone wrong, and both end with an answer written from what was gathered:
+#   * the same report asked for with the same arguments AGENT_REPEAT_LIMIT
+#     times - the model is going round in circles;
+#   * AGENT_TIME_LIMIT_SECONDS on one answer, well inside the server's 30
+#     minutes per request.
+# Every step is a billed model call; most questions still finish in two to four.
+MAX_STEPS = None
+AGENT_TIME_LIMIT_SECONDS = 10 * 60
+AGENT_REPEAT_LIMIT = 3
 
 # Rows fed back to the model per tool call. The user still sees every row - this
 # cap is only what goes back into the conversation, so a 4,000-row ledger dump
@@ -231,7 +238,9 @@ def _model():
     return get_ai_setting("openrouter_agent_model", None) or get_openrouter_model()
 
 
-def _ask_model(messages, tools):
+def _ask_model(messages, tools, tool_choice="auto"):
+    """One model call. tool_choice "none" makes it answer in words from what it
+    already has - the tools stay listed, because earlier turns refer to them."""
     from .chatbot_service import (OPENROUTER_URL, get_openrouter_api_key,
                                   openrouter_request)
 
@@ -244,7 +253,7 @@ def _ask_model(messages, tools):
         "model": _model(),
         "messages": messages,
         "tools": tools,
-        "tool_choice": "auto",
+        "tool_choice": tool_choice,
         "temperature": 0,
     }
     headers = {"Authorization": "Bearer " + api_key,
@@ -395,8 +404,18 @@ def run(question, company_id, history=None, progress=None):
 
     used = []        # (tool name, result) in the order they ran
     started = time.perf_counter()
+    seen_calls = {}  # (tool, arguments) -> how many times asked
+    stop_reason = None
 
-    for step in range(MAX_STEPS):
+    step = -1
+    while True:
+        step += 1
+        if MAX_STEPS is not None and step >= MAX_STEPS:
+            stop_reason = "I reached the step limit"
+            break
+        if time.perf_counter() - started > AGENT_TIME_LIMIT_SECONDS:
+            stop_reason = "this was taking too long"
+            break
         _tell(progress, "Reading your question" if step == 0
               else "Deciding what to look at next")
         try:
@@ -423,23 +442,44 @@ def run(question, company_id, history=None, progress=None):
         })
         for call in calls:
             name = (call.get("function") or {}).get("name")
-            _tell(progress, _describe_step(name))
-            result = _run_tool(name, _arguments(call), company_id)
-            if not result.get("isError"):
-                used.append((name, result))
+            arguments = _arguments(call)
+            key = (name, json.dumps(arguments, sort_keys=True, default=str))
+            seen_calls[key] = seen_calls.get(key, 0) + 1
+            if seen_calls[key] > AGENT_REPEAT_LIMIT:
+                # Asking for the same thing again will not change the answer.
+                stop_reason = "I kept asking for the same report"
+                result = {"isError": True,
+                          "content": [{"type": "text", "text": "Already run - see above."}]}
+            else:
+                _tell(progress, _describe_step(name))
+                result = _run_tool(name, arguments, company_id)
+                if not result.get("isError"):
+                    used.append((name, result))
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.get("id"),
                 "name": name,
                 "content": _feedback(result),
             })
+        if stop_reason:
+            break
 
-    # Out of steps. Everything gathered is still shown; only the closing
-    # sentence is missing, and saying so is better than inventing one.
-    return _compose(question, used, None,
-                    "I stopped after %d steps. Here is what I found - ask me "
-                    "something narrower if this isn't it." % MAX_STEPS,
-                    steps=MAX_STEPS, seconds=time.perf_counter() - started)
+    # A guard stopped it. Rather than end on a bare "here is what I found",
+    # have the model write its answer from everything gathered so far.
+    seconds = time.perf_counter() - started
+    _tell(progress, "Writing the answer")
+    try:
+        messages.append({"role": "user", "content": (
+            "Stop calling reports now and answer my question from the figures "
+            "you already have. Say plainly if something is still missing.")})
+        final = _ask_model(messages, tools, tool_choice="none")
+        prose = (final.get("content") or "").strip()
+    except AgentUnavailable:
+        prose = ""
+    return _compose(question, used, prose or None,
+                    "I stopped because %s. Here is what I found - ask me "
+                    "something narrower if this isn't it." % stop_reason,
+                    steps=step + 1, seconds=seconds)
 
 
 # ============================================================

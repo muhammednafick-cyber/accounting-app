@@ -30,8 +30,10 @@ class FakeModel(object):
         self.replies = list(replies)
         self.seen = []
 
-    def __call__(self, messages, tools):
+    def __call__(self, messages, tools, tool_choice="auto"):
         self.seen.append((list(messages), tools))
+        if tool_choice == "none":
+            return {"content": "Final answer from what was gathered.", "tool_calls": []}
         if not self.replies:
             return {"content": "done", "tool_calls": []}
         return self.replies.pop(0)
@@ -131,17 +133,59 @@ class LoopTests(unittest.TestCase):
         self.assertIn("permission", denied["content"].lower())
         self.assertEqual(reply["data"]["tools_used"], [])
 
-    def test_it_stops_after_the_step_cap(self):
-        # A model that never stops asking must not run up an unbounded bill.
+    def test_there_is_no_step_limit(self):
+        # Ten different reports in a row: it used to stop at six.
+        replies = [{"content": "", "tool_calls": [call("cash_balance", '{"n": %d}' % i,
+                                                       call_id="c%d" % i)]}
+                   for i in range(10)]
+        replies.append({"content": "All ten looked at.", "tool_calls": []})
+        A._ask_model = FakeModel(*replies)
+        reply = A.run("look at everything", company_id=1)
+
+        self.assertEqual(len(self.ran), 10)
+        self.assertIn("All ten looked at.", reply["response"])
+        self.assertIsNone(A.MAX_STEPS)
+
+    def test_going_round_in_circles_stops_and_still_answers(self):
+        # A model that keeps asking for the same report must not run up an
+        # unbounded bill - it is stopped, then asked for its answer.
         class Forever(object):
-            def __call__(self, messages, tools):
+            def __init__(self):
+                self.final = 0
+
+            def __call__(self, messages, tools, tool_choice="auto"):
+                if tool_choice == "none":
+                    self.final += 1
+                    return {"content": "Cash is 100.", "tool_calls": []}
+                return {"content": "", "tool_calls": [call("cash_balance")]}
+
+        model = Forever()
+        A._ask_model = model
+        reply = A.run("go forever", company_id=1)
+
+        self.assertEqual(len(self.ran), A.AGENT_REPEAT_LIMIT)
+        self.assertEqual(model.final, 1)
+        self.assertIn("Cash is 100.", reply["response"])
+
+    def test_a_run_past_the_time_limit_stops_and_answers(self):
+        saved = A.AGENT_TIME_LIMIT_SECONDS
+        A.AGENT_TIME_LIMIT_SECONDS = -1
+        self.addCleanup(setattr, A, "AGENT_TIME_LIMIT_SECONDS", saved)
+        A._ask_model = FakeModel({"content": "", "tool_calls": [call("cash_balance")]})
+        reply = A.run("slow question", company_id=1)
+        self.assertEqual(self.ran, [])
+        self.assertIn("Final answer from what was gathered.", reply["response"])
+
+    def test_if_the_closing_answer_fails_it_says_why_it_stopped(self):
+        class Forever(object):
+            def __call__(self, messages, tools, tool_choice="auto"):
+                if tool_choice == "none":
+                    raise A.AgentUnavailable("down")
                 return {"content": "", "tool_calls": [call("cash_balance")]}
 
         A._ask_model = Forever()
         reply = A.run("go forever", company_id=1)
-
-        self.assertEqual(len(self.ran), A.MAX_STEPS)
-        self.assertIn("stopped after", reply["response"])
+        self.assertIn("I stopped because I kept asking for the same report", reply["response"])
 
     def test_the_catalogue_is_only_what_this_user_may_run(self):
         names = [t["function"]["name"] for t in A._catalogue()]
